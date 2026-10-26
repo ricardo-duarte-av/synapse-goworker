@@ -1,0 +1,1573 @@
+[
+ {
+  "name": "simple_no_change",
+  "description": "Test no change to required state",
+  "prev": {
+   "type1": [
+    "state_key"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_add_type",
+  "description": "Test adding a type to the config",
+  "prev": {
+   "type1": [
+    "state_key"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key"
+   ],
+   "type2": [
+    "state_key"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type2",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ],
+    "type2": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type2",
+      "state_key": "state_key"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ],
+    "type2": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type2",
+      "state_key": "state_key"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_add_type_from_nothing",
+  "description": "Test adding a type to the config when previously requesting nothing",
+  "prev": {},
+  "request": {
+   "type1": [
+    "state_key"
+   ],
+   "type2": [
+    "state_key"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type2",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ],
+    "type2": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": "state_key"
+     },
+     {
+      "type": "type2",
+      "state_key": "state_key"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ],
+    "type2": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": "state_key"
+     },
+     {
+      "type": "type2",
+      "state_key": "state_key"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_add_state_key",
+  "description": "Test adding a state key to the config",
+  "prev": {
+   "type": [
+    "state_key1"
+   ]
+  },
+  "request": {
+   "type": [
+    "state_key1",
+    "state_key2"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type",
+    "state_key": "state_key2"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type": [
+     "state_key1",
+     "state_key2"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type",
+      "state_key": "state_key2"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type": [
+     "state_key1",
+     "state_key2"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type",
+      "state_key": "state_key2"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_retain_previous_state_keys",
+  "description": "Test adding a state key to the config and retaining a previously sent state_key",
+  "prev": {
+   "type": [
+    "state_key1"
+   ]
+  },
+  "request": {
+   "type": [
+    "state_key2",
+    "state_key3"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type",
+    "state_key": "state_key2"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type": [
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type",
+      "state_key": "state_key2"
+     },
+     {
+      "type": "type",
+      "state_key": "state_key3"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type": [
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type",
+      "state_key": "state_key2"
+     },
+     {
+      "type": "type",
+      "state_key": "state_key3"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_remove_type",
+  "description": "Test removing a type from the config when there are a matching state\n                delta does cause the persisted required state config to change\n\n                Test removing a type from the config when there are no matching state\n                deltas does *not* cause the persisted required state config to change",
+  "prev": {
+   "type1": [
+    "state_key"
+   ],
+   "type2": [
+    "state_key"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type2",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_remove_type_to_nothing",
+  "description": "Test removing a type from the config and no longer requesting any state",
+  "prev": {
+   "type1": [
+    "state_key"
+   ],
+   "type2": [
+    "state_key"
+   ]
+  },
+  "request": {},
+  "state_deltas": [
+   {
+    "type": "type2",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "simple_remove_state_key",
+  "description": "Test removing a state_key from the config",
+  "prev": {
+   "type": [
+    "state_key1",
+    "state_key2"
+   ]
+  },
+  "request": {
+   "type": [
+    "state_key1"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type",
+    "state_key": "state_key2"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type": [
+     "state_key1"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "type_wildcards_add",
+  "description": "Test adding a wildcard type causes the persisted required state config\n                to change and we request everything.\n\n                If a event type wildcard has been added or removed we don't try and do\n                anything fancy, and instead always update the effective room required\n                state config to match the request.",
+  "prev": {
+   "type1": [
+    "state_key2"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key2"
+   ],
+   "*": [
+    "state_key"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "other_type",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key2"
+    ],
+    "*": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "all"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "state_key2"
+    ],
+    "*": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "all"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "type_wildcards_remove",
+  "description": "Test removing a wildcard type causes the persisted required state config\n                to change and request nothing.\n\n                If a event type wildcard has been added or removed we don't try and do\n                anything fancy, and instead always update the effective room required\n                state config to match the request.",
+  "prev": {
+   "type1": [
+    "state_key2"
+   ],
+   "*": [
+    "state_key"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key2"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "other_type",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key2"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "state_key2"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_wildcards_add",
+  "description": "Test adding a wildcard state_key",
+  "prev": {
+   "type1": [
+    "state_key"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key"
+   ],
+   "type2": [
+    "*"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type2",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ],
+    "type2": [
+     "*"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type2",
+      "state_key": null
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ],
+    "type2": [
+     "*"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type2",
+      "state_key": null
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_wildcards_remove",
+  "description": "Test removing a wildcard state_key",
+  "prev": {
+   "type1": [
+    "state_key"
+   ],
+   "type2": [
+    "*"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type2",
+    "state_key": "state_key"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_remove_some",
+  "description": "Test that removing state keys work when only some of the state keys have\n                changed",
+  "prev": {
+   "type1": [
+    "state_key1",
+    "state_key2",
+    "state_key3"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key1"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "state_key3"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key1",
+     "state_key2"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_me_add",
+  "description": "Test adding state keys work when using \"$ME\"",
+  "prev": {},
+  "request": {
+   "type1": [
+    "$ME"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "@user:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "$ME"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": "@user:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "$ME"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": "@user:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_me_remove",
+  "description": "Test removing state keys work when using \"$ME\"",
+  "prev": {
+   "type1": [
+    "$ME"
+   ]
+  },
+  "request": {},
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "@user:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {},
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_user_id_add",
+  "description": "Test adding state keys work when using your own user ID",
+  "prev": {},
+  "request": {
+   "type1": [
+    "@user:test"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "@user:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "@user:test"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": "@user:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "@user:test"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": "@user:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_me_remove",
+  "description": "Test removing state keys work when using your own user ID",
+  "prev": {
+   "type1": [
+    "@user:test"
+   ]
+  },
+  "request": {},
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "@user:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {},
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_lazy_add",
+  "description": "Test adding state keys work when using \"$LAZY\"",
+  "prev": {},
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_lazy_remove",
+  "description": "Test removing state keys work when using \"$LAZY\"",
+  "prev": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "request": {},
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {},
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_lazy_keep_previous_memberships_and_no_new_memberships",
+  "description": "This test mimics a request with lazy-loading room members enabled where\n                we have previously sent down user2 and user3's membership events and now\n                we're sending down another response without any timeline events.",
+  "prev": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [
+   "@user2:test",
+   "@user3:test"
+  ],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": [
+    "@user2:test"
+   ]
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_lazy_keep_previous_memberships_with_new_memberships",
+  "description": "This test mimics a request with lazy-loading room members enabled where\n                we have previously sent down user2 and user3's membership events and now\n                we're sending down another response with a new event from user4.",
+  "prev": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [
+   "@user2:test",
+   "@user3:test"
+  ],
+  "request_lazy": [
+   "@user4:test"
+  ],
+  "with_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "m.room.member",
+      "state_key": "@user4:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": [
+    "@user2:test"
+   ]
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "m.room.member",
+      "state_key": "@user4:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_expand_lazy_keep_previous_memberships",
+  "description": "Test expanding the `required_state` to lazy-loading room members.",
+  "prev": {
+   "m.room.member": [
+    "@user2:test",
+    "@user3:test"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [
+    "@user3:test"
+   ],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [
+    "@user2:test",
+    "@user3:test"
+   ],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_expand_lazy_keep_previous_memberships_need_previous_sent",
+  "description": "Test expanding the `required_state` to lazy-loading room\n                members. If a previously explicit membership is requested then\n                we should not send it again (as it was already sent before).",
+  "prev": {
+   "m.room.member": [
+    "@user2:test",
+    "@user3:test"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [
+   "@user3:test"
+  ],
+  "with_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [
+    "@user3:test"
+   ],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [
+    "@user2:test",
+    "@user3:test"
+   ],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_retract_lazy_keep_previous_memberships_no_new_memberships",
+  "description": "Test retracting the `required_state` to no longer lazy-loading room members.",
+  "prev": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "request": {},
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [
+   "@user2:test",
+   "@user3:test"
+  ],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {},
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": [
+    "@user2:test"
+   ]
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_retract_lazy_keep_previous_explicit_memberships",
+  "description": "Test removing explicit memberships from the `required_state`\n                when lazy-loading room members tracks previously sent\n                memberships.",
+  "prev": {
+   "m.room.member": [
+    "$LAZY",
+    "@user2:test",
+    "@user3:test"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [
+   "@user3:test"
+  ],
+  "with_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [
+    "@user3:test"
+   ],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_retract_lazy_keep_previous_explicit_me_memberships",
+  "description": "Test removing explicit $ME memberships from the `required_state`\n                when lazy-loading room members tracks previously sent\n                memberships.",
+  "prev": {
+   "m.room.member": [
+    "$LAZY",
+    "$ME",
+    "@user2:test"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [
+   "@user:test"
+  ],
+  "with_deltas": {
+   "changed": {
+    "m.room.member": [
+     "$LAZY"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [
+    "@user:test"
+   ],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": null,
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_retract_lazy_keep_previous_memberships_with_new_memberships",
+  "description": "Test retracting the `required_state` to no longer lazy-loading room members.",
+  "prev": {
+   "m.room.member": [
+    "$LAZY"
+   ]
+  },
+  "request": {
+   "m.room.member": [
+    "@user4:test"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "m.room.member",
+    "state_key": "@user2:test"
+   }
+  ],
+  "previously_returned_lazy": [
+   "@user2:test",
+   "@user3:test"
+  ],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "m.room.member": [
+     "@user4:test"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "m.room.member",
+      "state_key": "@user4:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": [
+    "@user2:test"
+   ]
+  },
+  "without_deltas": {
+   "changed": {
+    "m.room.member": [
+     "@user4:test"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "m.room.member",
+      "state_key": "@user4:test"
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "type_wildcard_with_state_key_wildcard_to_explicit_state_keys",
+  "description": "Test switching from a wildcard (\"*\", \"*\") to explicit state keys",
+  "prev": {
+   "*": [
+    "*"
+   ]
+  },
+  "request": {
+   "*": [
+    "state_key1",
+    "state_key2",
+    "state_key3"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "state_key1"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "*": [
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "*": [
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "type_wildcard_with_explicit_state_keys_to_wildcard_state_key",
+  "description": "Test switching from explicit to wildcard state keys (\"*\", \"*\")",
+  "prev": {
+   "*": [
+    "state_key1",
+    "state_key2",
+    "state_key3"
+   ]
+  },
+  "request": {
+   "*": [
+    "*"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "state_key1"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "*": [
+     "*"
+    ]
+   },
+   "added": {
+    "kind": "all"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "*": [
+     "*"
+    ]
+   },
+   "added": {
+    "kind": "all"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "state_key_wildcard_to_explicit_state_keys",
+  "description": "Test switching from a wildcard to explicit state keys with a concrete type",
+  "prev": {
+   "type1": [
+    "*"
+   ]
+  },
+  "request": {
+   "type1": [
+    "state_key1",
+    "state_key2",
+    "state_key3"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "state_key1"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "none"
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ },
+ {
+  "name": "explicit_state_keys_to_wildcard_state_key",
+  "description": "Test switching from a wildcard to explicit state keys with a concrete type",
+  "prev": {
+   "type1": [
+    "state_key1",
+    "state_key2",
+    "state_key3"
+   ]
+  },
+  "request": {
+   "type1": [
+    "*"
+   ]
+  },
+  "state_deltas": [
+   {
+    "type": "type1",
+    "state_key": "state_key1"
+   }
+  ],
+  "previously_returned_lazy": [],
+  "request_lazy": [],
+  "with_deltas": {
+   "changed": {
+    "type1": [
+     "*",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": null
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  },
+  "without_deltas": {
+   "changed": {
+    "type1": [
+     "*",
+     "state_key1",
+     "state_key2",
+     "state_key3"
+    ]
+   },
+   "added": {
+    "kind": "types",
+    "entries": [
+     {
+      "type": "type1",
+      "state_key": null
+     }
+    ]
+   },
+   "extra_lazy": [],
+   "invalidated_lazy": []
+  }
+ }
+]
