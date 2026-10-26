@@ -1,0 +1,365 @@
+package store
+
+import (
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"sort"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// StateKey identifies a piece of room state.
+type StateKey struct {
+	Type     string
+	StateKey string
+}
+
+// GetStateGroupForEvent returns the state group at an event.
+func (s *Store) GetStateGroupForEvent(ctx context.Context, eventID string) (int64, error) {
+	// An event's state group never changes once assigned.
+	g, ok := s.caches.eventStateGroup.Get(eventID)
+	cache.Record(ctx, "event_state_groups", ok)
+	if ok {
+		return g, nil
+	}
+
+	var group *int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT state_group FROM event_to_state_groups WHERE event_id = $1`, eventID).Scan(&group)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: get state group for event: %w", err)
+	}
+	if group == nil {
+		// An outlier has a row with a NULL state group: we hold the event but
+		// not the state around it.
+		return 0, ErrNotFound
+	}
+	s.caches.eventStateGroup.Add(eventID, *group)
+	return *group, nil
+}
+
+// stateGroupQuery walks the state group delta chain and takes the newest row
+// per (type, state_key).
+//
+// State groups form a chain of deltas: a group either holds full state or a
+// delta against a previous group, linked by state_group_edges. Resolving state
+// means collecting the whole chain and letting the highest-numbered group win
+// for each key, which DISTINCT ON with a descending sort does in one pass.
+//
+// Ported from Synapse's _get_state_groups_from_groups_txn.
+const stateGroupQuery = `
+	WITH RECURSIVE sgs(state_group) AS (
+		VALUES($1::bigint)
+	  UNION ALL
+		SELECT prev_state_group FROM state_group_edges e, sgs s
+		WHERE s.state_group = e.state_group
+	)
+	SELECT DISTINCT ON (type, state_key) type, state_key, event_id
+	FROM state_groups_state
+	INNER JOIN sgs USING (state_group)
+	ORDER BY type, state_key, state_group DESC`
+
+// GetStateForGroup resolves the full state map at a state group.
+//
+// The returned map is shared and cached: callers MUST NOT modify it. Mutating
+// it corrupts the cache for every later request and races with concurrent
+// readers. Apply any per-request adjustment while reading, or copy first.
+//
+// state_groups_state is the largest table in a Synapse database by a wide
+// margin, and the planner will choose a sequential scan over it without help.
+// Synapse disables seqscan for this transaction and so must we: the query is
+// otherwise pathological on a large room. SET LOCAL scopes the change to the
+// transaction, which also makes it safe behind a transaction-mode pooler.
+func (s *Store) GetStateForGroup(ctx context.Context, group int64) (map[StateKey]string, error) {
+	// A state group's contents are fixed once written, so this needs no
+	// invalidation and is the single most valuable thing to cache: resolving
+	// state is by far the most expensive read we perform.
+	cached, ok := s.caches.stateGroups.Get(group)
+	cache.Record(ctx, "state_groups", ok)
+	if ok {
+		return cached, nil
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("store: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		return nil, fmt.Errorf("store: disable seqscan: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, stateGroupQuery, group)
+	if err != nil {
+		return nil, fmt.Errorf("store: state for group: %w", err)
+	}
+	defer rows.Close()
+
+	state := make(map[StateKey]string)
+	for rows.Next() {
+		var k StateKey
+		var eventID string
+		if err := rows.Scan(&k.Type, &k.StateKey, &eventID); err != nil {
+			return nil, fmt.Errorf("store: scan state row: %w", err)
+		}
+		state[k] = eventID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: state rows: %w", err)
+	}
+	s.caches.stateGroups.Add(group, state)
+	return state, nil
+}
+
+// stateGroupFilteredQuery resolves state at a group, restricted to given event
+// types.
+//
+// /event needs only the history visibility setting and, sometimes, the
+// membership of one server. Resolving the full state map would mean reading
+// every state event in the room — over a hundred thousand in the largest room
+// here — for a single event lookup.
+const stateGroupFilteredQuery = `
+	WITH RECURSIVE sgs(state_group) AS (
+		VALUES($1::bigint)
+	  UNION ALL
+		SELECT prev_state_group FROM state_group_edges e, sgs s
+		WHERE s.state_group = e.state_group
+	)
+	SELECT DISTINCT ON (type, state_key) type, state_key, event_id
+	FROM state_groups_state
+	INNER JOIN sgs USING (state_group)
+	WHERE type = ANY($2)
+	ORDER BY type, state_key, state_group DESC`
+
+// GetFilteredStateForGroup resolves the state at a group for the given event
+// types only.
+//
+// When the whole map for the group is already cached the filter is applied in
+// memory, which is what Synapse does: its stateGroupCache is a dictionary cache
+// and can answer a filtered lookup from a cached group. Ours held whole maps
+// only, so /event's two filtered walks went to the database on every request
+// even when the map was sitting in memory a few bytes away.
+//
+// The cache is deliberately only *read* here, never populated: resolving a
+// whole state map to answer "what is the history visibility" would mean reading
+// every state event in the room, which is 145k events in the largest room here.
+// A miss must stay cheap.
+func (s *Store) GetFilteredStateForGroup(ctx context.Context, group int64, types []string) (map[StateKey]string, error) {
+	sorted := append([]string(nil), types...)
+	sort.Strings(sorted)
+	key := FilteredStateKey{Group: group, Filter: "types:" + strings.Join(sorted, ",")}
+
+	return s.cachedFilteredState(ctx, key, "types",
+		func(state map[StateKey]string) map[StateKey]string { return filterByTypes(state, types) },
+		func() (map[StateKey]string, error) {
+			return s.filteredState(ctx, stateGroupFilteredQuery, group, types, nil)
+		})
+}
+
+// cachedFilteredState resolves a filtered view of a state group, cheapest
+// source first.
+//
+// The filtered answer is cached in its own right, which is the point. Relying
+// on the whole map being present did almost nothing in practice — measured at
+// 0.8% — because whole maps are enormous and few (24 of them fill 32MB here),
+// so /event almost never wants a group that /state_ids happened to resolve.
+// A filtered answer is usually a single entry, so the same memory holds orders
+// of magnitude more of them, and /event asking about the same room twice hits.
+//
+// Everything here is derived from immutable data: state at a given group is
+// fixed once written, so a filtered view of it is fixed too. This adds no
+// invalidation requirement beyond what the whole-map cache already has, and it
+// is armed and emptied alongside every other cache.
+func (s *Store) cachedFilteredState(
+	ctx context.Context,
+	key FilteredStateKey,
+	kind string,
+	fromWholeMap func(map[StateKey]string) map[StateKey]string,
+	fromDB func() (map[StateKey]string, error),
+) (map[StateKey]string, error) {
+	if state, ok := s.caches.filteredState.Get(key); ok {
+		storeMetrics().filteredState.WithLabelValues(kind, "filtered_cache").Inc()
+		cache.Record(ctx, "filtered_state", true)
+		return copyState(state), nil
+	}
+	if whole, ok := s.caches.stateGroups.Get(key.Group); ok {
+		filtered := fromWholeMap(whole)
+		s.caches.filteredState.Add(key, filtered)
+		storeMetrics().filteredState.WithLabelValues(kind, "state_cache").Inc()
+		// Answered from memory, by the whole map rather than the filtered
+		// entry -- a hit as far as the request is concerned.
+		cache.Record(ctx, "filtered_state", true)
+		return copyState(filtered), nil
+	}
+
+	filtered, err := fromDB()
+	if err != nil {
+		return nil, err
+	}
+	s.caches.filteredState.Add(key, filtered)
+	storeMetrics().filteredState.WithLabelValues(kind, "database").Inc()
+	cache.Record(ctx, "filtered_state", false)
+	return copyState(filtered), nil
+}
+
+// copyState returns an independent copy.
+//
+// Cached maps are shared between concurrent requests, and callers do adjust
+// what they are handed. Two correctness bugs in this project were exactly that
+// (§6.1, §6.3), and these maps are small enough that copying is not worth
+// arguing about.
+func copyState(state map[StateKey]string) map[StateKey]string {
+	out := make(map[StateKey]string, len(state))
+	maps.Copy(out, state)
+	return out
+}
+
+// filterByTypes selects the entries whose type is one of types.
+//
+// It always builds a new map. Returning the cached one — or any view onto it —
+// would hand a caller something it may adjust in place, which has already been
+// a correctness bug here twice.
+func filterByTypes(state map[StateKey]string, types []string) map[StateKey]string {
+	want := make(map[string]struct{}, len(types))
+	for _, t := range types {
+		want[t] = struct{}{}
+	}
+	out := make(map[StateKey]string)
+	for k, v := range state {
+		if _, ok := want[k.Type]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// filterMembersForServer selects membership entries for one server.
+//
+// It reproduces the SQL prefilter (LIKE '%:server') rather than checking the
+// domain exactly, so both paths return the same set and the caller's exact
+// domain check stays the single place that decides.
+func filterMembersForServer(state map[StateKey]string, serverName string) map[StateKey]string {
+	suffix := ":" + serverName
+	out := make(map[StateKey]string)
+	for k, v := range state {
+		if k.Type == "m.room.member" && strings.HasSuffix(k.StateKey, suffix) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// stateGroupMemberQuery is the same walk restricted to one server's membership
+// events.
+//
+// Synapse pulls the entire membership list and filters it in Python, and notes
+// in a comment that this is wasteful. Filtering by the user ID suffix in SQL
+// produces the same set for far less work. The suffix match is only a
+// prefilter; the exact domain is checked by the caller, since LIKE would also
+// match a malformed ID such as "@a:b:server".
+const stateGroupMemberQuery = `
+	WITH RECURSIVE sgs(state_group) AS (
+		VALUES($1::bigint)
+	  UNION ALL
+		SELECT prev_state_group FROM state_group_edges e, sgs s
+		WHERE s.state_group = e.state_group
+	)
+	SELECT DISTINCT ON (type, state_key) type, state_key, event_id
+	FROM state_groups_state
+	INNER JOIN sgs USING (state_group)
+	WHERE type = 'm.room.member' AND state_key LIKE $2
+	ORDER BY type, state_key, state_group DESC`
+
+// GetServerMembershipStateForGroup resolves membership state at a group for
+// users on one server.
+func (s *Store) GetServerMembershipStateForGroup(ctx context.Context, group int64, serverName string) (map[StateKey]string, error) {
+	if strings.ContainsAny(serverName, "%_") {
+		return nil, fmt.Errorf("store: invalid server name %q", serverName)
+	}
+	key := FilteredStateKey{Group: group, Filter: "members:" + serverName}
+	return s.cachedFilteredState(ctx, key, "members",
+		func(state map[StateKey]string) map[StateKey]string {
+			return filterMembersForServer(state, serverName)
+		},
+		func() (map[StateKey]string, error) {
+			return s.filteredState(ctx, stateGroupMemberQuery, group, nil, ptr("%:"+serverName))
+		})
+}
+
+// filteredState runs one of the filtered state walks.
+func (s *Store) filteredState(ctx context.Context, query string, group int64, types []string, like *string) (map[StateKey]string, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("store: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Same planner hint as the unfiltered walk; without it state_groups_state
+	// is scanned sequentially.
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		return nil, fmt.Errorf("store: disable seqscan: %w", err)
+	}
+
+	var rows pgx.Rows
+	if like != nil {
+		rows, err = tx.Query(ctx, query, group, *like)
+	} else {
+		rows, err = tx.Query(ctx, query, group, types)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: filtered state: %w", err)
+	}
+	defer rows.Close()
+
+	state := make(map[StateKey]string)
+	for rows.Next() {
+		var k StateKey
+		var eventID string
+		if err := rows.Scan(&k.Type, &k.StateKey, &eventID); err != nil {
+			return nil, fmt.Errorf("store: scan state row: %w", err)
+		}
+		state[k] = eventID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: filtered state rows: %w", err)
+	}
+	return state, nil
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// AreUsersErased reports which of the given users have requested erasure.
+//
+// An erased user's events must not be served to other servers, redacted or
+// otherwise.
+func (s *Store) AreUsersErased(ctx context.Context, userIDs []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT user_id FROM erased_users WHERE user_id = ANY($1)`, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("store: are users erased: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: scan erased user: %w", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: erased user rows: %w", err)
+	}
+	return out, nil
+}
