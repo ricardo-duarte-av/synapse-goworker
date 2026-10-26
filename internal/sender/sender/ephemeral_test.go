@@ -1,0 +1,278 @@
+package sender
+
+import (
+	"context"
+	"testing"
+
+	"github.com/rs/zerolog"
+	"github.com/tidwall/gjson"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/queue"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/txn"
+)
+
+// ephemeralQueues builds a manager whose sends hang, so what was queued stays
+// queued and can be asserted on. Wake starts a transmission loop whether or not
+// the manager has been started, so there is no such thing as an idle one.
+func ephemeralQueues(t *testing.T) *queue.Manager {
+	t.Helper()
+	signer, err := txn.NewSigner("example.com",
+		"ed25519 a_Yofy AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return queue.NewManager(queue.ManagerConfig{
+		Signer: signer,
+		IDs:    txn.NewIDGenerator(txn.DefaultIDPrefix),
+		Sink:   &typingSink{edus: map[string][]gjson.Result{}, block: make(chan struct{})},
+		Log:    zerolog.Nop(), MaxConcurrent: 4,
+	})
+}
+
+// fakeEphemeralStore records what the ephemeral paths ask the database for, so
+// a test can assert that work was skipped rather than merely discarded.
+type fakeEphemeralStore struct {
+	hosts         []string
+	partialAtJoin []string
+	presence      map[string]store.PresenceState
+	presenceReads int
+}
+
+// partialAtJoin, when set, makes this a room still being joined.
+func (f *fakeEphemeralStore) PartialStateServersAtJoin(
+	context.Context, string,
+) ([]string, bool, error) {
+	return f.partialAtJoin, len(f.partialAtJoin) > 0, nil
+}
+
+func (f *fakeEphemeralStore) CurrentJoinedHosts(context.Context, string) ([]string, error) {
+	return f.hosts, nil
+}
+
+func (f *fakeEphemeralStore) GetPresenceStates(
+	_ context.Context, userIDs []string,
+) (map[string]store.PresenceState, error) {
+	f.presenceReads++
+	out := map[string]store.PresenceState{}
+	for _, u := range userIDs {
+		if s, ok := f.presence[u]; ok {
+			out[u] = s
+		}
+	}
+	return out, nil
+}
+
+// A destination that is down must be filtered BEFORE the presence state is read
+// and the EDU built, not after it is queued.
+//
+// Measured on the main deployment before this: 8.98 presence EDUs per second
+// dropped against 8.67 sent -- about half of all presence was read from the
+// database, encoded, queued and woken, purely to be thrown away by the
+// long-outage rule. Synapse filters at the same point and for the same reason
+// (federation/sender/__init__.py:986).
+func TestPresenceSkipsBackingOffDestinationsBeforeAnyWork(t *testing.T) {
+	st := &fakeEphemeralStore{
+		hosts: []string{"up.example", "down.example"},
+		presence: map[string]store.PresenceState{
+			"@alice:example.com": {UserID: "@alice:example.com", State: "online"},
+		},
+	}
+	m := ephemeralQueues(t)
+	e := NewEphemeral(EphemeralConfig{
+		Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+		ShouldHandle:  func(string) bool { return true },
+		TrackPresence: true,
+		DueWithin:     func(d string) bool { return d == "up.example" },
+	})
+
+	ctx := context.Background()
+	if err := e.HandlePresence(ctx, "down.example", []string{"@alice:example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.presenceReads != 0 {
+		t.Errorf("read presence from the database %d times for a destination that is down",
+			st.presenceReads)
+	}
+	if _, edus := m.Get("down.example").Pending(); edus != 0 {
+		t.Errorf("queued %d EDUs for a destination that is down", edus)
+	}
+
+	// The reachable one is unaffected.
+	if err := e.HandlePresence(ctx, "up.example", []string{"@alice:example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, edus := m.Get("up.example").Pending(); edus != 1 {
+		t.Errorf("queued %d EDUs for a reachable destination, want 1", edus)
+	}
+}
+
+// Same rule for receipts (federation/sender/__init__.py:915): a read receipt
+// for a server that has been down for a week is worth nothing when it returns.
+func TestReceiptSkipsBackingOffDestinations(t *testing.T) {
+	st := &fakeEphemeralStore{hosts: []string{"up.example", "down.example", "example.com"}}
+	m := ephemeralQueues(t)
+	e := NewEphemeral(EphemeralConfig{
+		Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+		ShouldHandle:  func(string) bool { return true },
+		TrackPresence: true,
+		DueWithin:     func(d string) bool { return d == "up.example" },
+	})
+
+	err := e.HandleReceipt(context.Background(), ReceiptUpdate{
+		RoomID: "!r:example.com", ReceiptType: "m.read", UserID: "@alice:example.com",
+		EventID: "$e", Data: []byte(`{"ts":1}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, edus := m.Get("down.example").Pending(); edus != 0 {
+		t.Errorf("queued %d receipt EDUs for a destination that is down", edus)
+	}
+	if _, edus := m.Get("up.example").Pending(); edus != 1 {
+		t.Errorf("queued %d receipt EDUs for a reachable destination, want 1", edus)
+	}
+}
+
+// With no backoff configured every destination is due, which is what a shadow
+// and every test wants: a nil hook must not silently filter everything out.
+func TestEphemeralWithNoBackoffSendsToEveryone(t *testing.T) {
+	st := &fakeEphemeralStore{
+		hosts: []string{"a.example"},
+		presence: map[string]store.PresenceState{
+			"@alice:example.com": {UserID: "@alice:example.com", State: "online"},
+		},
+	}
+	m := ephemeralQueues(t)
+	e := NewEphemeral(EphemeralConfig{
+		Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+		ShouldHandle:  func(string) bool { return true },
+		TrackPresence: true,
+	})
+	if err := e.HandlePresence(context.Background(), "a.example",
+		[]string{"@alice:example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, edus := m.Get("a.example").Pending(); edus != 1 {
+		t.Errorf("queued %d EDUs with no backoff hook, want 1", edus)
+	}
+}
+
+// End to end: several presence rows for one destination must become ONE EDU
+// carrying every user, not one EDU each.
+func TestPresenceForOneDestinationMergesAcrossCalls(t *testing.T) {
+	st := &fakeEphemeralStore{
+		presence: map[string]store.PresenceState{
+			"@alice:example.com": {UserID: "@alice:example.com", State: "online"},
+			"@bob:example.com":   {UserID: "@bob:example.com", State: "unavailable"},
+			"@carol:example.com": {UserID: "@carol:example.com", State: "offline"},
+		},
+	}
+	m := ephemeralQueues(t)
+	e := NewEphemeral(EphemeralConfig{
+		Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+		ShouldHandle:  func(string) bool { return true },
+		TrackPresence: true,
+	})
+
+	ctx := context.Background()
+	// Arriving as three separate replication batches, which is the normal case:
+	// rows for one destination rarely land in the same batch.
+	for _, u := range []string{"@alice:example.com", "@bob:example.com", "@carol:example.com"} {
+		if err := e.HandlePresence(ctx, "remote.example", []string{u}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, edus := m.Get("remote.example").Pending(); edus != 1 {
+		t.Fatalf("%d EDUs queued for three users, want them merged into one", edus)
+	}
+}
+
+// last_active_ago must be measured from when the transaction is built. A state
+// read a minute ago and sent now should say a minute, not zero.
+func TestPresenceLastActiveAgoUsesSendTime(t *testing.T) {
+	now := nowMS()
+	s := store.PresenceState{
+		UserID: "@alice:example.com", State: "online", LastActiveTS: now - 60_000,
+	}
+
+	atRead := formatPresenceAt(s, now)
+	atSend := formatPresenceAt(s, now+30_000)
+
+	if atRead["last_active_ago"].(int64) != 60_000 {
+		t.Errorf("last_active_ago at read = %v, want 60000", atRead["last_active_ago"])
+	}
+	if atSend["last_active_ago"].(int64) != 90_000 {
+		t.Errorf("last_active_ago 30s later = %v, want 90000 -- it must grow with the wait",
+			atSend["last_active_ago"])
+	}
+}
+
+// The homeserver's own switch. Synapse's sender refuses to send presence when
+// track_presence is off whatever reaches it
+// (federation/sender/__init__.py:978), and this is the second line of that:
+// with presence disabled no rows are produced either.
+//
+// The case it actually covers is presence_enabled "untracked", which leaves
+// presence working for CLIENTS while forbidding it over federation -- so rows
+// can still exist while sending them is wrong.
+func TestPresenceNotSentWhenTheHomeserverDisablesIt(t *testing.T) {
+	st := &fakeEphemeralStore{
+		hosts: []string{"remote.example"},
+		presence: map[string]store.PresenceState{
+			"@alice:example.com": {UserID: "@alice:example.com", State: "online"},
+		},
+	}
+	m := ephemeralQueues(t)
+	e := NewEphemeral(EphemeralConfig{
+		Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+		ShouldHandle:  func(string) bool { return true },
+		TrackPresence: false,
+	})
+
+	if err := e.HandlePresence(context.Background(), "remote.example",
+		[]string{"@alice:example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.presenceReads != 0 {
+		t.Error("read presence from the database although the homeserver has it disabled")
+	}
+	if _, edus := m.Get("remote.example").Pending(); edus != 0 {
+		t.Errorf("queued %d presence EDUs although the homeserver has it disabled", edus)
+	}
+}
+
+// A room still being joined has no state to compute hosts from, so a receipt
+// must go to the union of what we can see and what the join told us. Under-
+// counting means a read marker silently never arrives; over-counting costs a
+// receipt to a server that has left, which Synapse accepts explicitly
+// (storage/controllers/state.py:765).
+func TestReceiptsUsePartialStateApproximation(t *testing.T) {
+	st := &fakeEphemeralStore{
+		hosts:         []string{"seen.example", "example.com"},
+		partialAtJoin: []string{"atjoin.example", "seen.example"},
+	}
+	m := ephemeralQueues(t)
+	e := NewEphemeral(EphemeralConfig{
+		Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+		ShouldHandle: func(string) bool { return true }, TrackPresence: true,
+	})
+
+	err := e.HandleReceipt(context.Background(), ReceiptUpdate{
+		RoomID: "!r:example.com", ReceiptType: "m.read", UserID: "@alice:example.com",
+		EventID: "$e", Data: []byte(`{"ts":1}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both the join-time server and the one we can see, and never ourselves.
+	for _, want := range []string{"atjoin.example", "seen.example"} {
+		if _, edus := m.Get(want).Pending(); edus != 1 {
+			t.Errorf("%s got %d receipt EDUs, want 1", want, edus)
+		}
+	}
+	if _, edus := m.Get("example.com").Pending(); edus != 0 {
+		t.Error("queued a receipt for our own server")
+	}
+}
