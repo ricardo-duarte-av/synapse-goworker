@@ -31,3 +31,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Never commit secrets or live captures (the old repos had all of these at the root).
+*.signing.key
+*.key
+.token
+secrets/
+*.jsonl
+*.log
+logs.txt
+/goworker
