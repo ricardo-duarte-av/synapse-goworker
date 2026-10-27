@@ -17,8 +17,8 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // openOriginUp builds the resetter for origins in backoff, on the write

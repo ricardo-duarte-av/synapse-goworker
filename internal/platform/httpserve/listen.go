@@ -1,6 +1,6 @@
-// Package server holds the HTTP plumbing: the listener, request logging, and
-// the router that ties handlers together.
-package server
+// Package httpserve holds the listener the worker serves on: a unix socket
+// (stale ones removed, permissions applied) or a TCP port.
+package httpserve
 
 import (
 	"errors"

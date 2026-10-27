@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // Reader reads a destination's retry timings, all zero when it has none

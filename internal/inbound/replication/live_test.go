@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // TestLivePresenceProbe forwards one presence EDU to the real presence writer,

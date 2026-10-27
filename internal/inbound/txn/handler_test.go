@@ -23,8 +23,8 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // fakeVerifier accepts a request whose X-Matrix origin is not "forged.example",

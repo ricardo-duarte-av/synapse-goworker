@@ -36,9 +36,9 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/stateres"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // Settings is everything the inbound path runs on.

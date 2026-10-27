@@ -1,13 +1,6 @@
 package server
 
-import (
-	"encoding/json"
-	"net/http"
-
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
-)
+import "net/http"
 
 // clientAPIVersions are the path segments Synapse accepts for the client API.
 //
@@ -57,62 +50,51 @@ var slidingSyncPaths = []string{
 	"/_matrix/client/v4/sync",
 }
 
-// NewMux assembles the router.
+// Register adds the sync routes to mux, each wrapped by wrap (the request
+// log and CORS).
 //
-// Every unmatched path under /_matrix returns M_UNRECOGNIZED rather than a bare
-// 404, matching Synapse: a client probing for an endpoint needs to tell "this
-// server does not implement it" from "this resource does not exist".
-func NewMux(routes Routes) *http.ServeMux {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
-	mux.Handle("GET /metrics", promhttp.Handler())
+// Unmatched paths are not answered here: the worker's own catch-all sends
+// them to Synapse. A preflight is registered alongside every route, so a
+// browser's OPTIONS before /sync is answered by the CORS wrapper rather than
+// travelling to main.
+func Register(mux *http.ServeMux, routes Routes, wrap func(http.Handler) http.Handler) {
+	handle := func(method, path string, h http.Handler) {
+		w := wrap(h)
+		mux.Handle(method+" "+path, w)
+		mux.Handle("OPTIONS "+path, w)
+	}
 
 	if routes.RoomInitialSync != nil {
 		for _, v := range legacyVersions {
-			mux.Handle("GET /_matrix/client/"+v+"/rooms/{roomId}/initialSync",
-				routes.RoomInitialSync)
+			handle("GET", "/_matrix/client/"+v+"/rooms/{roomId}/initialSync", routes.RoomInitialSync)
 		}
 	}
-
 	if routes.InitialSync != nil {
 		for _, v := range legacyVersions {
-			mux.Handle("GET /_matrix/client/"+v+"/initialSync", routes.InitialSync)
+			handle("GET", "/_matrix/client/"+v+"/initialSync", routes.InitialSync)
 		}
 	}
-
 	if routes.Events != nil {
 		for _, v := range legacyVersions {
-			mux.Handle("GET /_matrix/client/"+v+"/events", routes.Events)
+			handle("GET", "/_matrix/client/"+v+"/events", routes.Events)
 		}
 	}
-
 	if routes.Sync != nil {
 		for _, v := range modernVersions {
-			mux.Handle("GET /_matrix/client/"+v+"/sync", routes.Sync)
+			handle("GET", "/_matrix/client/"+v+"/sync", routes.Sync)
 		}
 	}
-
 	if routes.SlidingSync != nil {
 		for _, path := range slidingSyncPaths {
 			// POST, not GET: the request carries a body describing which rooms
 			// and which state the client wants.
-			mux.Handle("POST "+path, routes.SlidingSync)
+			handle("POST", path, routes.SlidingSync)
 		}
 	}
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		matrixerr.WriteCode(w, http.StatusNotFound, matrixerr.CodeUnrecognized,
-			"Unrecognized request")
-	})
-	return mux
 }
 
 // ModernVersions exposes the non-legacy client API version segments, for
-// handlers registered outside NewMux.
+// handlers registered outside Register.
 func ModernVersions() []string { return append([]string(nil), modernVersions...) }
 
 // SlidingSyncPaths exposes the sliding sync paths, for deployment

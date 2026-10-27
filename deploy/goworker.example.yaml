@@ -1,0 +1,79 @@
+# goworker.yaml -- the one config file.
+#
+# Nothing here says WHAT the worker does. nginx decides which requests reach
+# it (see nginx.conf.example), and homeserver.yaml decides whether it sends
+# federation: it does while federation_sender_instances lists instance_name.
+# Everything Synapse also needs to agree on (server_name, redis, stream
+# writers, the signing key, experimental_features, retry timings) is read
+# from homeserver.yaml.
+
+homeserver_yaml: /etc/synapse/homeserver.yaml
+instance_name: av-goworker-1
+
+listen:
+  # Client and federation paths share one socket; they never overlap.
+  socket: /var/sockets/nginx/goworker.sock
+  socket_mode: "0666"          # nginx runs as another uid
+  metrics:
+    addr: ":9200"              # /metrics, /health, /debug/pprof -- internal only
+    pprof: true
+
+upstream:
+  # Synapse's main process: the fallback for everything not answered here.
+  sockets: [/var/sockets/nginx/av-synapse-main.sock]
+  timeout_seconds: 180         # /state on the largest room takes ~82s on main
+
+database:
+  # Direct to PostgreSQL, no user: pgcat only knows the users in its config.
+  dsn: "host=/var/sockets dbname=synapse-db"
+  connect_timeout_seconds: 10
+  manage_roles: true           # create/repair the inbound roles at start
+  read:         { user: gopro_ro, max_conns: 16 }     # per component: sync, reads, sender
+  to_device:    { user: gosync_inbox, max_conns: 4 }
+  sliding_sync: { user: gosync_ss, max_conns: 8 }
+  # Empty: homeserver.yaml's own credentials (through pgcat), as today.
+  sender_write: { max_conns: 8 }
+  sender_state: { user: synapse, max_conns: 4 }
+  inbound:
+    read_role: goinbound_ro
+    write_role: goinbound_rw
+    read_max_conns: 4
+    pdu_max_conns: 4
+
+memory:
+  limit_mb: 3072               # GOMEMLIMIT; caches below must fit well inside it
+
+log:
+  level: info
+  pretty: false
+
+sync:
+  filter_timeline_limit: 1000
+  to_device: true
+  sliding_sync:
+    enabled: true
+    reap_interval_minutes: 60
+  auth:
+    positive_ttl: 5m
+    negative_ttl: 30s
+    max_entries: 20000
+
+federation_reads:
+  native_timeout_seconds: 5
+  stream_timeout_seconds: 900
+  stream_idle_timeout_seconds: 60
+  caches:                      # MB
+    state_groups_mb: 768
+    events_mb: 128
+    event_state_groups_mb: 32
+    auth_chains_mb: 256
+    filtered_state_mb: 64
+
+inbound:
+  missing_events: fetch
+  mark_origins_up: true
+  fallback: synapse
+  state_cache_entries: 400000  # entries, never groups: one room is 150k
+
+sender:
+  presence_batch_max_wait_seconds: 0

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 func TestExclusiveUsers(t *testing.T) {

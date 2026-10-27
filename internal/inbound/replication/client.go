@@ -31,7 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/edutype"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // Client sends replication requests to named Synapse instances.

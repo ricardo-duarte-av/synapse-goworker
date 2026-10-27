@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // writer is a fake stream writer listening on a unix socket, as the Synapse

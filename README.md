@@ -25,7 +25,27 @@ There is no setting that turns parts of the worker on or off.
 
 ## Status
 
-Phase 0 of the merge: the skeleton builds; nothing is ported yet.
+All four are ported and served by one process from one config file
+(`deploy/goworker.example.yaml`). Each component still has its own Redis
+subscriber, caches and homeserver.yaml reader; sharing those is the next
+step.
+
+## Running
+
+```sh
+goworker -config /data/goworker.yaml -check   # connect everything, say whether it would send, exit
+goworker -config /data/goworker.yaml
+```
+
+One socket serves both client and federation paths; point nginx's
+`location` blocks for the endpoints above at it. Anything else that reaches
+it is proxied to `upstream` (Synapse's main process). The metrics listener
+serves `/metrics`, `/health` and `/debug/pprof`.
+
+`homeserver.yaml` is polled for changes: add `instance_name` to
+`federation_sender_instances` (and restart main, so Synapse's own senders
+stop) to make this process the federation sender; remove it to stop.
+`goworker_sender_active` says which it is.
 
 ## Building
 

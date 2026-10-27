@@ -15,7 +15,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 type rewriteTo struct{ to *url.URL }

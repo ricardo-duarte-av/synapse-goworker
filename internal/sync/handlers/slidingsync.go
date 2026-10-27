@@ -19,7 +19,7 @@ import (
 // SlidingSync serves MSC4186, Simplified Sliding Sync.
 //
 // Registered on two paths: the unstable one every client uses today, and the
-// stable `/_matrix/client/v4/sync` the MSC defines. See NewMux.
+// stable `/_matrix/client/v4/sync` the MSC defines. See server.Register.
 //
 // Mirrors SlidingSyncRestServlet.on_POST and
 // SlidingSyncHandler.wait_for_sync_for_user.

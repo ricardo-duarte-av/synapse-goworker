@@ -13,7 +13,7 @@ import (
 	"math/rand/v2"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/edutype"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // Router maps an EDU type to the instances that handle it.

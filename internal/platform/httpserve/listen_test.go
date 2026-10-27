@@ -1,4 +1,4 @@
-package server
+package httpserve
 
 import (
 	"context"
@@ -43,7 +43,9 @@ func TestServeOverUnixSocket(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 
-	srv := &http.Server{Handler: NewMux(Routes{})}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})}
 	go func() { _ = srv.Serve(l) }()
 	defer func() { _ = srv.Close() }()
 

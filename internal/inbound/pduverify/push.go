@@ -16,7 +16,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/push"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // PushConfig is what push evaluation takes from homeserver.yaml.

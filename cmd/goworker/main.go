@@ -4,15 +4,37 @@
 // endpoints, and the outbound federation sender.
 //
 // It has no switches for which of those it does. It serves whatever nginx
-// routes to it, and it sends federation only while homeserver.yaml names it in
+// routes to it, proxying anything else to Synapse's main process, and it
+// sends federation only while homeserver.yaml names it in
 // federation_sender_instances.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
+	"runtime"
+	"runtime/debug"
+	"syscall"
+	"time"
+
+	"github.com/rs/zerolog"
+	"golang.org/x/sync/errgroup"
+
+	fedreadapp "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
+	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
+	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
+	sendercfg "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/synapsecfg"
+	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
 )
 
 // Stamped by the build. The same three names as the workers this replaces.
@@ -25,26 +47,257 @@ var (
 func main() {
 	var (
 		configPath  = flag.String("config", "goworker.yaml", "path to the configuration file")
-		check       = flag.Bool("check", false, "validate the configuration and connections, then exit")
+		check       = flag.Bool("check", false, "connect everything, report what this process would do, then exit")
+		healthcheck = flag.Bool("healthcheck", false, "probe a running worker's /health and exit")
 		showVersion = flag.Bool("version", false, "print build information and exit")
 	)
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("goworker %s (%s, built %s)\n", tag, commit, buildTime)
+		fmt.Printf("goworker %s (%s, built %s, %s)\n", tag, commit, buildTime, runtime.Version())
 		return
 	}
 
-	if err := run(*configPath, *check); err != nil {
+	cfg, err := config.Load(*configPath)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "goworker: %v\n", err)
+		os.Exit(1)
+	}
+	if *healthcheck {
+		if err := probe(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "goworker: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	log := newLogger(cfg.Log)
+	if err := run(cfg, log, *check); err != nil {
+		log.Error().Err(err).Msg("stopped")
 		os.Exit(1)
 	}
 }
 
-func run(configPath string, check bool) error {
-	if _, err := os.Stat(configPath); err != nil {
-		return fmt.Errorf("config: %w", err)
+func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.Memory.LimitMB > 0 {
+		debug.SetMemoryLimit(int64(cfg.Memory.LimitMB) << 20)
 	}
-	// The platform (phase 1) and the components (phase 2) are not ported yet.
-	return errors.New("not implemented yet: nothing is ported")
+	setRuntimeMetrics(tag, commit, buildTime, cfg.Memory.LimitMB)
+
+	hs, err := synapsecfg.Load(cfg.HomeserverYAML)
+	if err != nil {
+		return err
+	}
+	shs, err := sendercfg.Load(cfg.HomeserverYAML)
+	if err != nil {
+		return err
+	}
+	log.Info().Str("version", tag).Str("commit", commit).
+		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
+		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
+
+	upstream, err := proxy.New(cfg.Upstream, log.With().Str("component", "proxy").Logger())
+	if err != nil {
+		return err
+	}
+
+	db := cfg.Database
+	base := db.DSN
+	synapseDSN := hs.Database.DSN()
+	if base == "" {
+		base = synapseDSN
+	}
+	dsn := func(p config.Pool) string { return config.DSNFor(p, base, synapseDSN) }
+	redis := redisAddress(hs.Redis)
+
+	whoamiSocket, whoamiURL := "", ""
+	if len(cfg.Upstream.Sockets) > 0 {
+		whoamiSocket = cfg.Upstream.Sockets[0]
+	} else {
+		whoamiURL = "http://" + cfg.Upstream.Addrs[0]
+	}
+
+	var closers []func()
+	defer func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+	}()
+
+	clientSync, err := syncapp.New(ctx, syncapp.Settings{
+		ServerName:     hs.ServerName,
+		HomeserverYAML: cfg.HomeserverYAML,
+		Flag:           hs.Flag,
+		Sync:           cfg.Sync,
+		Read:           syncapp.Pool{DSN: dsn(db.Read), MaxConns: db.Read.MaxConns},
+		Inbox:          syncapp.Pool{DSN: dsn(db.ToDevice), MaxConns: db.ToDevice.MaxConns},
+		Sliding:        syncapp.Pool{DSN: dsn(db.SlidingSync), MaxConns: db.SlidingSync.MaxConns},
+		ConnectTimeout: db.ConnectTimeout(),
+		WhoamiSocket:   whoamiSocket,
+		WhoamiURL:      whoamiURL,
+		Redis:          syncapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
+		Tag:            tag,
+		Log:            log.With().Str("component", "sync").Logger(),
+	})
+	if err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	closers = append(closers, clientSync.Close)
+
+	reads, err := fedreadapp.New(ctx, fedreadapp.Settings{
+		ServerName:        hs.ServerName,
+		TrustedKeyServers: hs.TrustedKeyServers,
+		FederationReads:   cfg.FederationReads,
+		DSN:               dsn(db.Read),
+		MaxConns:          db.Read.MaxConns,
+		ConnectTimeout:    db.ConnectTimeout(),
+		Redis:             fedreadapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
+		Upstream:          upstream,
+		Log:               log.With().Str("component", "federation_reads").Logger(),
+	})
+	if err != nil {
+		return fmt.Errorf("federation reads: %w", err)
+	}
+	closers = append(closers, reads.Close)
+
+	inbound, err := inboundapp.New(ctx, inboundapp.Settings{
+		InstanceName:   cfg.InstanceName,
+		Synapse:        hs,
+		Inbound:        cfg.Inbound,
+		Upstream:       upstream,
+		DSN:            db.DSN,
+		ManageRoles:    db.ManagesRoles(),
+		ReadRole:       db.Inbound.ReadRole,
+		WriteRole:      db.Inbound.WriteRole,
+		ReadMaxConns:   db.Inbound.ReadMaxConns,
+		PDUMaxConns:    db.Inbound.PDUMaxConns,
+		ConnectTimeout: db.ConnectTimeout(),
+		Log:            log.With().Str("component", "inbound").Logger(),
+	})
+	if err != nil {
+		return fmt.Errorf("inbound: %w", err)
+	}
+	closers = append(closers, inbound.Close)
+
+	sender, err := senderapp.New(ctx, senderapp.Settings{
+		InstanceName:              cfg.InstanceName,
+		Synapse:                   shs,
+		Sender:                    cfg.Sender,
+		Read:                      senderapp.Pool{DSN: dsn(db.Read), MaxConns: db.Read.MaxConns},
+		Write:                     senderapp.Pool{DSN: dsn(db.SenderWrite), MaxConns: db.SenderWrite.MaxConns},
+		State:                     senderapp.Pool{DSN: dsn(db.SenderState), MaxConns: db.SenderState.MaxConns},
+		ConnectTimeout:            db.ConnectTimeout(),
+		MaxConcurrentDestinations: 2000,
+		UserAgent:                 "synapse-goworker/" + tag,
+		Tag:                       tag, Commit: commit, BuildTime: buildTime,
+		Log: log.With().Str("component", "sender").Logger(),
+	})
+	if err != nil {
+		return fmt.Errorf("sender: %w", err)
+	}
+	closers = append(closers, sender.Close)
+
+	if checkOnly {
+		log.Info().Bool("sending_federation", sender.Active()).
+			Msg("configuration, homeserver.yaml and database access are usable")
+		return nil
+	}
+
+	client := http.NewServeMux()
+	clientSync.Register(client)
+	router := &httpserve.Router{
+		Send:       inbound.Handler(),
+		Reads:      reads.Handler(),
+		ReadsMatch: func(p string) bool { _, ok := fedapi.Match(p); return ok },
+		Client:     client,
+		Fallback:   fallback(upstream),
+	}
+
+	mode, _ := cfg.Listen.ParsedSocketMode() // validated at load
+	spec := httpserve.ListenSpec{Socket: cfg.Listen.Socket, Addr: cfg.Listen.Addr, SocketMode: mode}
+	listener, err := httpserve.Listen(spec)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Handler: router,
+		// Remote servers and clients over the open internet: bound the
+		// headers, but no write timeout -- a /sync long-poll and a streamed
+		// /state both hold a connection open legitimately.
+		ReadHeaderTimeout: 20 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	metricsSrv := metricsServer(cfg.Listen.Metrics)
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return clientSync.Run(gctx) })
+	g.Go(func() error { return reads.Run(gctx) })
+	g.Go(func() error { return sender.Run(gctx) })
+	g.Go(func() error {
+		watchHomeserver(gctx, cfg.HomeserverYAML, sender, log)
+		return gctx.Err()
+	})
+	g.Go(func() error {
+		log.Info().Str("listen", httpserve.Describe(spec)).Msg("serving")
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("listener: %w", err)
+		}
+		return nil
+	})
+	if metricsSrv != nil {
+		g.Go(func() error {
+			log.Info().Str("addr", metricsSrv.Addr).Msg("serving metrics")
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("metrics listener: %w", err)
+			}
+			return nil
+		})
+	}
+	g.Go(func() error {
+		<-gctx.Done()
+		log.Info().Msg("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(shutdownCtx)
+		}
+		return srv.Shutdown(shutdownCtx)
+	})
+
+	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+// fallback forwards to Synapse's main process whatever the worker does not
+// serve.
+func fallback(p *proxy.Proxy) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.Forward(w, r, 0)
+	})
+}
+
+// redisAddress is homeserver.yaml's redis as a dial address: a unix socket
+// path, or host:port.
+func redisAddress(r synapsecfg.Redis) string {
+	if r.Socket != "" {
+		return r.Socket
+	}
+	return r.Addr
+}
+
+func newLogger(cfg config.Log) zerolog.Logger {
+	level, err := zerolog.ParseLevel(cfg.Level)
+	if err != nil || cfg.Level == "" {
+		level = zerolog.InfoLevel
+	}
+	l := zerolog.New(os.Stdout)
+	if cfg.Pretty {
+		l = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "15:04:05"})
+	}
+	return l.Level(level).With().Timestamp().Logger()
 }
