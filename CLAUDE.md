@@ -20,6 +20,43 @@ The approved plan is in
   - `/home/daedric/synapse-gopro-worker` (CLAUDE.md, 2,000 lines; §4–§9)
 - Later: `/home/daedric/synapse-goevent-creator`.
 
+## Layout
+
+| Path | What |
+|---|---|
+| `cmd/goworker` | main: one config, four components, one socket, the metrics listener, the homeserver.yaml poll |
+| `internal/platform` | shared: `config` (goworker.yaml), `synapsecfg` (homeserver.yaml), `proxy` (to main), `httpserve` (listener, router), `limits` |
+| `internal/sync` | gosync, as `app.New` + `Register` |
+| `internal/fedread` | gopro, as `app.New` + `Handler` |
+| `internal/inbound` | goinbound, as `app.New` + `Handler` |
+| `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |
+| `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
+| `grafana/gen_dashboard.py` | the dashboard; never edit the JSON |
+| `docs/cutover.md` | moving a homeserver over |
+
+## Not shared yet
+
+Each component still has its own copy of these, which work but duplicate:
+
+- **The Redis subscriber.** sync, fedread and the sender each subscribe;
+  inbound's originup has its own client for publishing. All four read one
+  channel. (sync and the sender now resync on a silent reconnect, as
+  fedread did.)
+- **homeserver.yaml readers.** `platform/synapsecfg` (from goinbound) is the
+  main one; `sender/synapsecfg` (signing key, retry, sender instances) and
+  `sync/synapsecfg` (presence writer) still parse the file themselves. Their
+  edge cases differ (nil vs empty whitelist), so merge with their tests.
+- **Caches of the same immutable data**: event -> state group (sync,
+  fedread), state group -> state (fedread bytes-bounded, inbound
+  entries-bounded), filtered state, room versions, server keys (fedauth in
+  inbound and fedread, inbound's keyring).
+- **Destination backoff**: inbound's `backoff` (write mode's outbound
+  requests) and the sender's `retry`. They agree through Synapse's
+  `destinations` table and REMOTE_SERVER_UP, as separate workers did.
+- **Read pools**: sync, fedread and the sender each open `database.read`.
+- **pgx exec mode**: sync and fedread use DescribeExec on direct sockets;
+  the sender and inbound use Exec. Only Exec is safe behind pgcat.
+
 ## Decisions that are easy to undo by accident
 
 - **No component switches** (operator, 2026-10-26). The worker serves whatever
@@ -40,6 +77,14 @@ The approved plan is in
   (2026-10-26).
 - **Main is the last resort.** It is single-threaded and busy; the fallback
   share should shrink, never grow.
+- **Metric names keep their component prefixes** (gosync_, goinbound_,
+  gofed_, gopro_), so Prometheus history and alerts continue across the
+  cutover; only whole-process metrics are goworker_. grafana/README.md has
+  what changed.
+- **instance_name is new, not an old worker's.** Two processes publishing
+  caches rows under one name interleave stream IDs; see docs/cutover.md.
+- **A sender without a cursor starts at MIN(federation_stream_position)**,
+  as Synapse does, not at the tip. The tip would drop events at a rename.
 
 ## Ground rules carried over from all four
 
