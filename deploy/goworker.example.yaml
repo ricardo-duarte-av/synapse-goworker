@@ -48,7 +48,12 @@ memory:
   event_group_cache_mb: 32
 
 log:
-  level: info
+  level: info                  # trace, debug, info, warn, error, disabled
+  # Per part, overriding level; the name is the "component" its lines carry.
+  # Parts: sync, federation_reads, inbound, sender, bus, proxy.
+  #components:
+  #  sender: error              # its warnings are mostly remote servers failing
+  #  sync: info
   pretty: false
 
 sync:

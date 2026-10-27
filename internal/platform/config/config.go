@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 
 	fedread "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
@@ -115,8 +116,50 @@ type Memory struct {
 
 // Log is the log output.
 type Log struct {
-	Level  string `yaml:"level"`
-	Pretty bool   `yaml:"pretty"`
+	// Level is the default: trace, debug, info, warn, error or disabled.
+	Level string `yaml:"level"`
+	// Components overrides Level for one part, by the name its lines carry
+	// in "component": sync, federation_reads, inbound, sender, bus, proxy.
+	// Lines of the process itself (startup, homeserver.yaml reloads) take
+	// Level.
+	Components map[string]string `yaml:"components"`
+	Pretty     bool              `yaml:"pretty"`
+}
+
+// LogComponents are the parts whose level log.components can set.
+var LogComponents = []string{"sync", "federation_reads", "inbound", "sender", "bus", "proxy"}
+
+// LevelFor is the level for component, or the default for "".
+func (l Log) LevelFor(component string) zerolog.Level {
+	name := l.Level
+	if v, ok := l.Components[component]; ok && component != "" {
+		name = v
+	}
+	level, err := zerolog.ParseLevel(name)
+	if err != nil || name == "" {
+		return zerolog.InfoLevel
+	}
+	return level
+}
+
+func (l Log) validate() error {
+	if _, err := zerolog.ParseLevel(l.Level); err != nil {
+		return fmt.Errorf("config: log.level %q: %w", l.Level, err)
+	}
+	for name, v := range l.Components {
+		known := false
+		for _, c := range LogComponents {
+			known = known || c == name
+		}
+		if !known {
+			return fmt.Errorf("config: log.components: unknown part %q; the parts are %s",
+				name, strings.Join(LogComponents, ", "))
+		}
+		if _, err := zerolog.ParseLevel(v); err != nil || v == "" {
+			return fmt.Errorf("config: log.components.%s %q is not a level (trace, debug, info, warn, error, disabled)", name, v)
+		}
+	}
+	return nil
 }
 
 // Load reads and validates goworker.yaml. Unknown keys are an error, so a
@@ -181,6 +224,9 @@ func (c *Config) validate() error {
 	}
 	if c.Memory.LimitMB < 0 || c.Memory.StateCacheMB < 0 || c.Memory.EventGroupCacheMB < 0 || c.Database.ConnectTimeoutSeconds < 0 {
 		return fmt.Errorf("config: memory.limit_mb, memory.state_cache_mb and database.connect_timeout_seconds must not be negative")
+	}
+	if err := c.Log.validate(); err != nil {
+		return err
 	}
 	if err := c.Limits.Validate(); err != nil {
 		return err

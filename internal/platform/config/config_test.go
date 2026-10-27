@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/rs/zerolog"
 )
 
 const minimal = `
@@ -86,5 +88,31 @@ func TestCachesMustFitTheMemoryLimit(t *testing.T) {
 	}
 	if _, err := Parse([]byte(minimal)); err != nil {
 		t.Errorf("no limit: %v", err)
+	}
+}
+
+// A part's level overrides log.level for that part only; a part not named,
+// and the process's own lines, keep the default.
+func TestLogLevelPerComponent(t *testing.T) {
+	c, err := Parse([]byte(minimal + "log: { level: warn, components: { sender: error, sync: info } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for comp, want := range map[string]zerolog.Level{
+		"sender": zerolog.ErrorLevel, "sync": zerolog.InfoLevel,
+		"inbound": zerolog.WarnLevel, "": zerolog.WarnLevel,
+	} {
+		if got := c.Log.LevelFor(comp); got != want {
+			t.Errorf("LevelFor(%q) = %v, want %v", comp, got, want)
+		}
+	}
+	for _, bad := range []string{
+		"log: { components: { federation: info } }", // not a part's name
+		"log: { components: { sender: loud } }",
+		"log: { level: loud }",
+	} {
+		if _, err := Parse([]byte(minimal + bad + "\n")); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }

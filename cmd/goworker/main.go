@@ -100,7 +100,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
 
-	upstream, err := proxy.New(cfg.Upstream, log.With().Str("component", "proxy").Logger())
+	upstream, err := proxy.New(cfg.Upstream, componentLogger(log, cfg.Log, "proxy"))
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Password: hs.Redis.Password,
 			DB:       hs.Redis.DBID,
 			Channel:  hs.ServerName,
-		}, log.With().Str("component", "bus").Logger())
+		}, componentLogger(log, cfg.Log, "bus"))
 		consumer = func(name string) *bus.Consumer { return stream.Consumer(name, 0) }
 	} else {
 		log.Warn().Msg("homeserver.yaml has no redis: nothing wakes long-polls, invalidates caches or shows the sender new events")
@@ -162,7 +162,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),
 		InitialSyncs:   limits.NewGate("initial_syncs", lim.InitialSyncs),
 		Tag:            tag,
-		Log:            log.With().Str("component", "sync").Logger(),
+		Log:            componentLogger(log, cfg.Log, "sync"),
 	})
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
@@ -181,7 +181,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		States:            states,
 		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
 		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
-		Log:               log.With().Str("component", "federation_reads").Logger(),
+		Log:               componentLogger(log, cfg.Log, "federation_reads"),
 	})
 	if err != nil {
 		return fmt.Errorf("federation reads: %w", err)
@@ -201,7 +201,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Replication:    consumer("inbound"),
 		States:         states,
-		Log:            log.With().Str("component", "inbound").Logger(),
+		Log:            componentLogger(log, cfg.Log, "inbound"),
 	})
 	var send http.Handler
 	if err != nil {
@@ -227,7 +227,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Replication:               consumer("sender"),
 		UserAgent:                 "synapse-goworker/" + tag,
 		Tag:                       tag, Commit: commit, BuildTime: buildTime,
-		Log: log.With().Str("component", "sender").Logger(),
+		Log: componentLogger(log, cfg.Log, "sender"),
 	})
 	if err != nil {
 		return fmt.Errorf("sender: %w", err)
@@ -335,13 +335,16 @@ func redisAddress(r synapsecfg.Redis) string {
 }
 
 func newLogger(cfg config.Log) zerolog.Logger {
-	level, err := zerolog.ParseLevel(cfg.Level)
-	if err != nil || cfg.Level == "" {
-		level = zerolog.InfoLevel
-	}
 	l := zerolog.New(os.Stdout)
 	if cfg.Pretty {
 		l = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "15:04:05"})
 	}
-	return l.Level(level).With().Timestamp().Logger()
+	return l.Level(cfg.LevelFor("")).With().Timestamp().Logger()
+}
+
+// componentLogger is one part's logger: its lines carry "component", and its
+// level is log.components' for that part, or log.level. A logger's level is
+// its own, so a part may be noisier or quieter than the process.
+func componentLogger(log zerolog.Logger, cfg config.Log, component string) zerolog.Logger {
+	return log.With().Str("component", component).Logger().Level(cfg.LevelFor(component))
 }
