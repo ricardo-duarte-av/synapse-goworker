@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/txn"
 )
 
@@ -43,8 +43,7 @@ func TestLiveSendEmptyTransaction(t *testing.T) {
 		t.Skip("set FEDERATION_TEST_DESTINATION and HOMESERVER_YAML to send a real transaction")
 	}
 
-	scfg, err := synapsecfg.LoadWithOptions(configPath,
-		synapsecfg.Options{SigningKeyPath: os.Getenv("SIGNING_KEY")})
+	scfg, err := synapsecfg.Load(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}

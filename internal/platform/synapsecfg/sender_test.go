@@ -12,7 +12,7 @@ import (
 const twoKeyFile = "ed25519 a_Yofy AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n" +
 	"ed25519 rAzySt ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\n"
 
-func writeConfig(t *testing.T, body string) string {
+func writeSenderConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "signing.key"), []byte(twoKeyFile), 0o600); err != nil {
@@ -25,13 +25,13 @@ func writeConfig(t *testing.T, body string) string {
 	return p
 }
 
-const minimal = `
+const senderMinimal = `
 server_name: "example.com"
 signing_key_path: signing.key
 `
 
 func TestLoadMinimal(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,8 +43,8 @@ func TestLoadMinimal(t *testing.T) {
 	if len(cfg.SenderInstances) != 1 || cfg.SenderInstances[0] != MainProcessInstanceName {
 		t.Errorf("SenderInstances = %v, want [%s]", cfg.SenderInstances, MainProcessInstanceName)
 	}
-	if cfg.Retry.MinInterval != DefaultDestinationMinRetryInterval {
-		t.Errorf("Retry.MinInterval = %v, want the Synapse default", cfg.Retry.MinInterval)
+	if cfg.Backoff.MinMS != 10*60*1000 {
+		t.Errorf("Retry.MinInterval = %v, want the Synapse default", cfg.Backoff.MinMS)
 	}
 	// Nil, not empty: no whitelist means send to everyone.
 	if cfg.DomainWhitelist != nil {
@@ -53,7 +53,7 @@ func TestLoadMinimal(t *testing.T) {
 }
 
 func TestSendFederationFalseMeansNoSenders(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+"send_federation: false\n"))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+"send_federation: false\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestSendFederationFalseMeansNoSenders(t *testing.T) {
 
 // Order is the whole point: it is indexed by the shard hash.
 func TestSenderInstancesKeepFileOrder(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 federation_sender_instances:
   - zzz-worker
   - aaa-worker
@@ -79,7 +79,7 @@ federation_sender_instances:
 }
 
 func TestSenderInstancesAcceptsAString(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+"federation_sender_instances: solo-worker\n"))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+"federation_sender_instances: solo-worker\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSenderInstancesAcceptsAString(t *testing.T) {
 // An explicitly empty list is a real configuration -- federation sending off --
 // and must not fall back to the main process.
 func TestEmptySenderListIsNotTheDefault(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+"federation_sender_instances: []\n"))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+"federation_sender_instances: []\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestEmptySenderListIsNotTheDefault(t *testing.T) {
 }
 
 func TestInstanceMapMainIsRewrittenToMaster(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 instance_map:
   main:
     path: /var/sockets/main.sock
@@ -130,7 +130,7 @@ instance_map:
 // A bare number is milliseconds to Synapse. Reading it as seconds would make
 // the backoff a thousand times too long.
 func TestRetryDurationsFollowSynapseUnits(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 federation:
   destination_min_retry_interval: 1m
   destination_retry_multiplier: 5
@@ -139,28 +139,28 @@ federation:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Retry.MinInterval != time.Minute {
-		t.Errorf("MinInterval = %v, want 1m", cfg.Retry.MinInterval)
+	if cfg.Backoff.MinMS != time.Minute.Milliseconds() {
+		t.Errorf("MinInterval = %v, want 1m", cfg.Backoff.MinMS)
 	}
-	if cfg.Retry.Multiplier != 5 {
-		t.Errorf("Multiplier = %v, want 5", cfg.Retry.Multiplier)
+	if cfg.Backoff.Multiplier != 5 {
+		t.Errorf("Multiplier = %v, want 5", cfg.Backoff.Multiplier)
 	}
-	if cfg.Retry.MaxInterval != 365*24*time.Hour {
-		t.Errorf("MaxInterval = %v, want 365d", cfg.Retry.MaxInterval)
+	if cfg.Backoff.MaxMS != (365 * 24 * time.Hour).Milliseconds() {
+		t.Errorf("MaxInterval = %v, want 365d", cfg.Backoff.MaxMS)
 	}
 
-	cfg, err = Load(writeConfig(t, minimal+"federation:\n  destination_min_retry_interval: 60\n"))
+	cfg, err = Load(writeSenderConfig(t, senderMinimal+"federation:\n  destination_min_retry_interval: 60\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Retry.MinInterval != 60*time.Millisecond {
-		t.Errorf("MinInterval = %v, want 60ms (a bare number is milliseconds)", cfg.Retry.MinInterval)
+	if cfg.Backoff.MinMS != 60 {
+		t.Errorf("MinInterval = %v, want 60ms (a bare number is milliseconds)", cfg.Backoff.MinMS)
 	}
 }
 
 // Empty and absent mean opposite things: nobody versus everybody.
 func TestEmptyDomainWhitelistIsNotNil(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+"federation_domain_whitelist: []\n"))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+"federation_domain_whitelist: []\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestEmptyDomainWhitelistIsNotNil(t *testing.T) {
 }
 
 func TestRedisUnixSocketAndTCP(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 redis:
   enabled: true
   path: /var/sockets/keydb
@@ -185,7 +185,7 @@ redis:
 		t.Errorf("Redis = %+v", cfg.Redis)
 	}
 
-	cfg, err = Load(writeConfig(t, minimal+"redis:\n  enabled: true\n  host: keydb\n"))
+	cfg, err = Load(writeSenderConfig(t, senderMinimal+"redis:\n  enabled: true\n  host: keydb\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,12 +195,9 @@ redis:
 }
 
 func TestSigningKeyFirstIsTheSigningOne(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(cfg.SigningKeys) != 2 {
-		t.Fatalf("loaded %d keys, want 2", len(cfg.SigningKeys))
 	}
 	k, err := cfg.SigningKey()
 	if err != nil {
@@ -215,7 +212,7 @@ func TestSigningKeyFirstIsTheSigningOne(t *testing.T) {
 }
 
 func TestMissingServerNameIsAnError(t *testing.T) {
-	if _, err := Load(writeConfig(t, "signing_key_path: signing.key\n")); err == nil {
+	if _, err := Load(writeSenderConfig(t, "signing_key_path: signing.key\n")); err == nil {
 		t.Fatal("expected an error for a config with no server_name")
 	}
 }
@@ -245,7 +242,7 @@ func TestParseSigningKeysSkipsBlanksAndComments(t *testing.T) {
 }
 
 func TestDatabaseArgsBecomeALibpqDSN(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 database:
   name: psycopg2
   args:
@@ -274,7 +271,7 @@ database:
 
 // psycopg2 takes either spelling, and a TCP host needs the port carried over.
 func TestDatabaseAcceptsDBNameAndPort(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 database:
   name: psycopg2
   args:
@@ -305,14 +302,14 @@ func TestDatabasePasswordIsQuoted(t *testing.T) {
 }
 
 func TestSqliteIsRefused(t *testing.T) {
-	_, err := Load(writeConfig(t, minimal+"database:\n  name: sqlite3\n  args:\n    database: /data/homeserver.db\n"))
+	_, err := Load(writeSenderConfig(t, senderMinimal+"database:\n  name: sqlite3\n  args:\n    database: /data/homeserver.db\n"))
 	if err == nil {
 		t.Error("a sqlite3 database was accepted")
 	}
 }
 
 func TestNoDatabaseBlockIsNotAnError(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal))
+	cfg, err := Load(writeSenderConfig(t, senderMinimal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,16 +322,17 @@ func TestNoDatabaseBlockIsNotAnError(t *testing.T) {
 // the whole config directory is mounted elsewhere read-only, the key is beside
 // the homeserver.yaml we just read, and that is where the fallback looks.
 func TestAbsoluteSigningKeyPathFallsBackBesideTheConfig(t *testing.T) {
-	p := writeConfig(t, "server_name: \"example.com\"\nsigning_key_path: /data/signing.key\n")
+	p := writeSenderConfig(t, "server_name: \"example.com\"\nsigning_key_path: /data/signing.key\n")
 	cfg, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.SigningKeys) != 2 {
-		t.Fatalf("SigningKeys = %v", cfg.SigningKeys)
+	k, err := cfg.SigningKey()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cfg.SigningKeys[0].Version != "a_Yofy" {
-		t.Errorf("first key = %q, want the one Synapse signs with", cfg.SigningKeys[0].Version)
+	if k.Version != "a_Yofy" {
+		t.Errorf("first key = %q, want the one Synapse signs with", k.Version)
 	}
 }
 
@@ -342,8 +340,13 @@ func TestAbsoluteSigningKeyPathFallsBackBesideTheConfig(t *testing.T) {
 // homeserver.yaml came from. A key that is in neither place is an error naming
 // both, not a silently different key.
 func TestSigningKeyMissingInBothPlacesNamesBoth(t *testing.T) {
-	p := writeConfig(t, "server_name: \"example.com\"\nsigning_key_path: /data/other.signing.key\n")
-	_, err := Load(p)
+	p := writeSenderConfig(t, "server_name: \"example.com\"\nsigning_key_path: /data/other.signing.key\n")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Read only when asked for, so the error comes from asking.
+	_, err = cfg.SigningKey()
 	if err == nil {
 		t.Fatal("a missing signing key was accepted")
 	}
@@ -358,7 +361,7 @@ func TestSigningKeyMissingInBothPlacesNamesBoth(t *testing.T) {
 // turned a working Synapse config into a startup failure whose message was
 // about YAML types and said nothing about what to do.
 func TestQuotedPortsAreAccepted(t *testing.T) {
-	cfg, err := Load(writeConfig(t, minimal+`
+	cfg, err := Load(writeSenderConfig(t, senderMinimal+`
 database:
   name: psycopg2
   allow_unsafe_locale: true
@@ -401,33 +404,13 @@ instance_map:
 
 // A port that is not a number at all is still an error, and it says which key.
 func TestANonNumericPortIsAnError(t *testing.T) {
-	_, err := Load(writeConfig(t, minimal+
+	_, err := Load(writeSenderConfig(t, senderMinimal+
 		"database:\n  name: psycopg2\n  args:\n    database: d\n    port: \"not-a-port\"\n"))
 	if err == nil {
 		t.Fatal("a non-numeric port was accepted")
 	}
 	if !strings.Contains(err.Error(), "database.args.port") {
 		t.Errorf("error does not name the key: %v", err)
-	}
-}
-
-// The override is read literally: it exists to say where the file really is,
-// so a fallback beside homeserver.yaml would defeat it. The error names the
-// override as the thing to remove, because a path that came from the worker's
-// own config looks identical in a log to one that came from Synapse's.
-func TestAMissingOverrideNamesItself(t *testing.T) {
-	p := writeConfig(t, minimal)
-	_, err := LoadWithOptions(p, Options{SigningKeyPath: "/data/signing.key"})
-	if err == nil {
-		t.Fatal("a missing override was accepted")
-	}
-	if !strings.Contains(err.Error(), "OVERRIDE") {
-		t.Errorf("error does not say the path was an override: %v", err)
-	}
-	// It must not have quietly found signing.key beside homeserver.yaml, which
-	// is exactly what writeConfig puts there.
-	if !strings.Contains(err.Error(), "/data/signing.key") {
-		t.Errorf("error does not name the path that failed: %v", err)
 	}
 }
 
@@ -453,7 +436,7 @@ func TestTrackPresence(t *testing.T) {
 		{"empty presence block falls back", "presence:\n  include_offline_users_on_sync: true\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := Load(writeConfig(t, minimal+tc.yaml))
+			cfg, err := Load(writeSenderConfig(t, senderMinimal+tc.yaml))
 			if err != nil {
 				t.Fatal(err)
 			}

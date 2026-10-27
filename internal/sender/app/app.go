@@ -19,6 +19,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/destinations"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/metrics"
@@ -30,7 +31,6 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/sink"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/state"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/store"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/txn"
 )
 
@@ -198,9 +198,9 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 	// destination list has been dead for years.
 	w.limiter = retry.New(
 		retry.Config{
-			MinInterval: scfg.Retry.MinInterval,
-			Multiplier:  scfg.Retry.Multiplier,
-			MaxInterval: scfg.Retry.MaxInterval,
+			MinInterval: time.Duration(scfg.Backoff.MinMS) * time.Millisecond,
+			Multiplier:  scfg.Backoff.Multiplier,
+			MaxInterval: time.Duration(scfg.Backoff.MaxMS) * time.Millisecond,
 		},
 		w.loadTimings,
 		w.persistTimings,

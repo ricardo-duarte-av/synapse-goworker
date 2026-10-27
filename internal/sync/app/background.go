@@ -7,9 +7,9 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/presence"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/slidingstore"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/synapsecfg"
 )
 
 // reapSlidingConnections collects connections nobody has used for a week.
@@ -58,22 +58,19 @@ func reapSlidingConnections(ctx context.Context, sliding *slidingstore.Store,
 // relaying to a writer that now ignores it -- which is harmless, and strictly
 // better than this function's alternative of tearing down a working relay on
 // the strength of one unreadable read.
-func resolvePresence(path string) func() (presence.Config, error) {
-	if path == "" {
-		return nil
-	}
+func resolvePresence(src *synapsecfg.Source) func() (presence.Config, error) {
 	return func() (presence.Config, error) {
-		sc, err := synapsecfg.Load(path)
+		sc, err := src.Reload()
 		if err != nil {
 			return presence.Config{}, err
 		}
 		if !sc.PresenceEnabled {
 			return presence.Config{}, fmt.Errorf("presence is now disabled on this homeserver")
 		}
-		return presence.Config{
-			Socket: sc.PresenceWriter.Socket,
-			URL:    sc.PresenceWriter.URL,
-			Secret: sc.ReplicationSecret,
-		}, nil
+		w, err := sc.PresenceWriter()
+		if err != nil {
+			return presence.Config{}, err
+		}
+		return presence.Config{Socket: w.Socket, URL: w.URL, Secret: sc.ReplicationSecret}, nil
 	}
 }

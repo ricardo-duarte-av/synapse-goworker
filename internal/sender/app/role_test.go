@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 func workerNamed(name string, senders ...string) *Worker {

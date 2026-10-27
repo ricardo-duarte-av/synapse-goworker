@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -108,6 +109,29 @@ type Config struct {
 	// paths (beside homeserver.yaml when Synapse's own path is absent).
 	AppServiceFiles []string
 
+	// SenderInstances are the processes that send federation, in file order:
+	// federation_sender_instances, or the main process alone when it is
+	// absent and send_federation is on (the default), or none when
+	// send_federation is off. Order matters: Synapse shards on the index.
+	SenderInstances []string
+
+	// ClientTimeout, MaxLongRetries and MaxLongRetryDelay are the federation
+	// client's settings for a transaction (config/federation.py).
+	ClientTimeout     time.Duration
+	MaxLongRetries    int
+	MaxLongRetryDelay time.Duration
+
+	// AllowDeviceNameLookup is allow_device_name_lookup_over_federation.
+	AllowDeviceNameLookup bool
+
+	// PresenceEnabled is presence.enabled (or use_presence): true unless it
+	// is false. "untracked" is enabled, but not tracked (TrackPresence).
+	PresenceEnabled bool
+	// SyncOnlineTimeout and LastActiveGranularity are presence's timers,
+	// which decide how often a syncing user is re-announced.
+	SyncOnlineTimeout     time.Duration
+	LastActiveGranularity time.Duration
+
 	signingKey, signingKeyPath string
 }
 
@@ -150,17 +174,26 @@ type raw struct {
 	// Presence.Enabled is a bool OR the string "untracked", and falls back to
 	// the legacy use_presence key (config/server.py:507).
 	Presence struct {
-		Enabled any `yaml:"enabled"`
+		Enabled               any `yaml:"enabled"`
+		SyncOnlineTimeout     any `yaml:"sync_online_timeout"`
+		LastActiveGranularity any `yaml:"last_active_granularity"`
 	} `yaml:"presence"`
 	UsePresence any `yaml:"use_presence"`
 
 	FederationDomainWhitelist []string `yaml:"federation_domain_whitelist"`
 
 	Federation struct {
-		MinRetryInterval any `yaml:"destination_min_retry_interval"`
-		RetryMultiplier  any `yaml:"destination_retry_multiplier"`
-		MaxRetryInterval any `yaml:"destination_max_retry_interval"`
+		MinRetryInterval  any  `yaml:"destination_min_retry_interval"`
+		RetryMultiplier   any  `yaml:"destination_retry_multiplier"`
+		MaxRetryInterval  any  `yaml:"destination_max_retry_interval"`
+		ClientTimeout     any  `yaml:"client_timeout"`
+		MaxLongRetries    *int `yaml:"max_long_retries"`
+		MaxLongRetryDelay any  `yaml:"max_long_retry_delay"`
 	} `yaml:"federation"`
+
+	FederationSenderInstances any   `yaml:"federation_sender_instances"`
+	SendFederation            *bool `yaml:"send_federation"`
+	AllowDeviceNameLookup     *bool `yaml:"allow_device_name_lookup_over_federation"`
 
 	ExperimentalFeatures  yaml.Node `yaml:"experimental_features"`
 	AppServiceConfigFiles []string  `yaml:"app_service_config_files"`
@@ -257,6 +290,37 @@ func parse(b []byte, path string) (*Config, error) {
 
 	if cfg.Backoff, err = backoffConfig(r); err != nil {
 		return nil, err
+	}
+
+	if cfg.SenderInstances, err = senderInstances(r); err != nil {
+		return nil, err
+	}
+	cfg.AllowDeviceNameLookup = r.AllowDeviceNameLookup != nil && *r.AllowDeviceNameLookup
+	cfg.PresenceEnabled = presenceEnabled(r)
+
+	for _, d := range []struct {
+		v    any
+		name string
+		dst  *time.Duration
+		def  time.Duration
+	}{
+		{r.Federation.ClientTimeout, "federation.client_timeout", &cfg.ClientTimeout, DefaultClientTimeout},
+		{r.Federation.MaxLongRetryDelay, "federation.max_long_retry_delay", &cfg.MaxLongRetryDelay, DefaultMaxLongRetryDelay},
+		{r.Presence.SyncOnlineTimeout, "presence.sync_online_timeout", &cfg.SyncOnlineTimeout, DefaultSyncOnlineTimeout},
+		{r.Presence.LastActiveGranularity, "presence.last_active_granularity", &cfg.LastActiveGranularity, DefaultLastActiveGranularity},
+	} {
+		*d.dst = d.def
+		if d.v != nil {
+			ms, err := ParseDuration(d.v)
+			if err != nil {
+				return nil, fmt.Errorf("synapsecfg: %s: %w", d.name, err)
+			}
+			*d.dst = time.Duration(ms) * time.Millisecond
+		}
+	}
+	cfg.MaxLongRetries = DefaultMaxLongRetries
+	if r.Federation.MaxLongRetries != nil {
+		cfg.MaxLongRetries = *r.Federation.MaxLongRetries
 	}
 
 	if r.TrustedKeyServers == nil {
@@ -517,6 +581,67 @@ func parseInt(v any, what string) (int, error) {
 //
 // Python's bool("untracked") is TRUE, so reading the key as a plain bool would
 // get that case exactly backwards.
+// Synapse's defaults for what the file may leave out.
+const (
+	DefaultClientTimeout         = 60 * time.Second
+	DefaultMaxLongRetries        = 10
+	DefaultMaxLongRetryDelay     = 60 * time.Second
+	DefaultSyncOnlineTimeout     = 30 * time.Second
+	DefaultLastActiveGranularity = 60 * time.Second
+)
+
+// senderInstances is federation_sender_instances with Synapse's defaults.
+func senderInstances(r raw) ([]string, error) {
+	names, err := instanceList(r.FederationSenderInstances)
+	if err != nil {
+		return nil, fmt.Errorf("synapsecfg: federation_sender_instances: %w", err)
+	}
+	if r.FederationSenderInstances != nil {
+		// Present, even empty: what the operator listed.
+		return names, nil
+	}
+	if r.SendFederation == nil || *r.SendFederation {
+		return []string{MainProcessInstanceName}, nil
+	}
+	return nil, nil
+}
+
+// PresenceWriter is the presence stream writer and its replication
+// address, where "this user is syncing" is relayed.
+func (c *Config) PresenceWriter() (Instance, error) {
+	if len(c.Writers.Presence) != 1 {
+		return Instance{}, fmt.Errorf("synapsecfg: stream_writers.presence names %d instances, Synapse allows exactly one",
+			len(c.Writers.Presence))
+	}
+	name := c.Writers.Presence[0]
+	inst, ok := c.Instance(name)
+	if !ok {
+		return Instance{}, fmt.Errorf("synapsecfg: the presence writer %q is not in instance_map, so it has no address", name)
+	}
+	return inst, nil
+}
+
+// presenceEnabled is presence.enabled as Synapse reads it: anything but
+// false enables it ("untracked" included).
+func presenceEnabled(r raw) bool {
+	v := r.Presence.Enabled
+	if v == nil {
+		v = r.UsePresence
+	}
+	switch t := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return t
+	case string:
+		return t != "" && !strings.EqualFold(t, "false")
+	case int:
+		return t != 0
+	default:
+		return true
+	}
+}
+
 func trackPresence(r raw) bool {
 	v := r.Presence.Enabled
 	if v == nil {

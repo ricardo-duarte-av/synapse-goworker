@@ -35,7 +35,6 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
-	sendercfg "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/synapsecfg"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
 )
 
@@ -89,14 +88,12 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	setRuntimeMetrics(tag, commit, buildTime, cfg.Memory.LimitMB)
 
-	hs, err := synapsecfg.Load(cfg.HomeserverYAML)
+	// The one copy of homeserver.yaml every part reads.
+	src, err := synapsecfg.Open(cfg.HomeserverYAML)
 	if err != nil {
 		return err
 	}
-	shs, err := sendercfg.Load(cfg.HomeserverYAML)
-	if err != nil {
-		return err
-	}
+	hs := src.Current()
 	log.Info().Str("version", tag).Str("commit", commit).
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
@@ -131,9 +128,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}()
 
 	clientSync, err := syncapp.New(ctx, syncapp.Settings{
-		ServerName:     hs.ServerName,
-		HomeserverYAML: cfg.HomeserverYAML,
-		Flag:           hs.Flag,
+		Synapse:        src,
 		Sync:           cfg.Sync,
 		Read:           syncapp.Pool{DSN: dsn, MaxConns: pools.Read},
 		Inbox:          syncapp.Pool{DSN: dsn, MaxConns: pools.ToDevice},
@@ -196,7 +191,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 
 	sender, err := senderapp.New(ctx, senderapp.Settings{
 		InstanceName:              cfg.InstanceName,
-		Synapse:                   shs,
+		Synapse:                   hs,
 		Sender:                    cfg.Sender,
 		Read:                      senderapp.Pool{DSN: dsn, MaxConns: pools.Read},
 		Write:                     senderapp.Pool{DSN: dsn, MaxConns: pools.SenderWrite},
@@ -250,7 +245,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	g.Go(func() error { return reads.Run(gctx) })
 	g.Go(func() error { return sender.Run(gctx) })
 	g.Go(func() error {
-		watchHomeserver(gctx, cfg.HomeserverYAML, sender, log)
+		watchHomeserver(gctx, src, sender, log)
 		return gctx.Err()
 	})
 	g.Go(func() error {

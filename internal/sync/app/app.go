@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/deviceinbox"
@@ -24,7 +25,6 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/slidingstore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/store"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/synapsecfg"
 )
 
 // Pool sizes one database connection pool.
@@ -43,14 +43,11 @@ type Redis struct {
 
 // Settings is everything the sync path runs on.
 type Settings struct {
-	ServerName string
-	// HomeserverYAML is re-read for the presence writer's address and the
-	// replication secret whenever a relay fails in a way it could explain.
-	HomeserverYAML string
-	// Flag reads one of homeserver.yaml's experimental_features, with
-	// Synapse's default.
-	Flag func(name string, def bool) bool
-	Sync config.Config
+	// Synapse is homeserver.yaml. It is reloaded for the presence writer's
+	// address and the replication secret whenever a relay fails in a way it
+	// could explain.
+	Synapse *synapsecfg.Source
+	Sync    config.Config
 
 	// Read is the SELECT-only pool; Inbox the one that deletes from
 	// device_inbox; Sliding the one that owns the gosync schema.
@@ -187,17 +184,14 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		}
 	}
 
-	flag := cfg.Flag
-	if flag == nil {
-		flag = func(_ string, def bool) bool { return def }
-	}
+	flag := cfg.Synapse.Current().Flag
 	deps := handlers.Deps{
 		Store:   s.db,
 		Sliding: s.sliding,
 		// Synapse's msc3575_enabled defaults to TRUE, unlike its neighbours.
 		MSC3575Enabled:      flag("msc3575_enabled", true),
 		MSC4308Enabled:      flag("msc4308_enabled", false),
-		ServerName:          cfg.ServerName,
+		ServerName:          cfg.Synapse.Current().ServerName,
 		Auth:                authenticator,
 		Log:                 log,
 		MSC4354Enabled:      flag("msc4354_enabled", false),
@@ -305,34 +299,31 @@ func (s *Sync) Close() {
 // account it serves appears permanently offline, because Synapse's /sync
 // calls user_syncing() and ours would say nothing.
 func (s *Sync) openPresence(log zerolog.Logger) (*presence.Client, error) {
-	path := s.cfg.HomeserverYAML
-	if path == "" {
-		return nil, nil
-	}
-	sc, err := synapsecfg.Load(path)
-	if err != nil {
-		return nil, err
-	}
+	sc := s.cfg.Synapse.Current()
 	if !sc.PresenceEnabled {
 		log.Info().Msg("sync: presence is disabled on this homeserver; not relaying")
 		return nil, nil
 	}
+	writer, err := sc.PresenceWriter()
+	if err != nil {
+		return nil, err
+	}
 	interval := presence.DeriveRelayInterval(sc.SyncOnlineTimeout, sc.LastActiveGranularity)
 	pc, err := presence.New(presence.Config{
-		Socket:        sc.PresenceWriter.Socket,
-		URL:           sc.PresenceWriter.URL,
+		Socket:        writer.Socket,
+		URL:           writer.URL,
 		Secret:        sc.ReplicationSecret,
 		RelayInterval: interval,
-		// Read again whenever a relay fails in a way this file could
+		// Read again whenever a relay fails in a way the file could
 		// explain: the writer moves and the secret rotates, silently.
-		Resolve: resolvePresence(path),
+		Resolve: resolvePresence(s.cfg.Synapse),
 	}, log)
 	if err != nil {
 		return nil, err
 	}
 	metrics.RegisterPresence(pc.Tracked)
-	log.Info().Str("writer", sc.PresenceWriter.Name).
-		Str("address", sc.PresenceWriter.Socket+sc.PresenceWriter.URL).
+	log.Info().Str("writer", writer.Name).
+		Str("address", writer.Socket+writer.URL).
 		Dur("relay_interval", interval).Msg("sync: presence relaying enabled")
 	return pc, nil
 }
@@ -344,7 +335,7 @@ func (s *Sync) subscribe(ctx context.Context, notif *notifier.Notifier) *replica
 	sub := replication.New(replication.Config{
 		Enabled:  s.cfg.Redis.Enabled,
 		Address:  s.cfg.Redis.Address,
-		Channel:  s.cfg.ServerName,
+		Channel:  s.cfg.Synapse.Current().ServerName,
 		Password: s.cfg.Redis.Password,
 		DB:       s.cfg.Redis.DB,
 	}, log, notif)

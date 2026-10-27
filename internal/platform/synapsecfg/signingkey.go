@@ -7,6 +7,33 @@ import (
 	"strings"
 )
 
+// SigningKey is one entry from the signing key file.
+type SigningKey struct {
+	// Algorithm is always "ed25519" in practice.
+	Algorithm string
+	// Version is the key's short name; the key id is Algorithm + ":" + Version.
+	Version string
+	// Seed is the 32-byte ed25519 seed, already base64-decoded.
+	Seed []byte
+}
+
+// ID is the key id as it appears in a signature block, e.g. "ed25519:a_Yofy".
+func (k SigningKey) ID() string { return k.Algorithm + ":" + k.Version }
+
+// SigningKey is the key Synapse signs with: the first one, parsed. Read only
+// when asked for, like SigningKeyLine.
+func (c *Config) SigningKey() (SigningKey, error) {
+	line, err := c.SigningKeyLine()
+	if err != nil {
+		return SigningKey{}, err
+	}
+	keys, err := ParseSigningKeys(line)
+	if err != nil {
+		return SigningKey{}, fmt.Errorf("synapsecfg: %w", err)
+	}
+	return keys[0], nil
+}
+
 // ParseSigningKeys reads signedjson's signing key file format:
 //
 //	<algorithm> <version> <unpadded-base64 32-byte seed>

@@ -8,8 +8,20 @@ import (
 	"time"
 )
 
+func mustWriter(t *testing.T, cfg *Config) Instance {
+	t.Helper()
+	w, err := cfg.PresenceWriter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
 func write(t *testing.T, body string) string {
 	t.Helper()
+	if !strings.Contains(body, "server_name:") {
+		body = "server_name: e.com\n" + body
+	}
 	p := filepath.Join(t.TempDir(), "homeserver.yaml")
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -48,14 +60,14 @@ stream_writers:
 	if !cfg.PresenceEnabled {
 		t.Error("presence should be enabled")
 	}
-	if cfg.PresenceWriter.Name != "av-edu-worker" {
-		t.Errorf("writer = %q", cfg.PresenceWriter.Name)
+	if mustWriter(t, cfg).Name != "av-edu-worker" {
+		t.Errorf("writer = %q", mustWriter(t, cfg).Name)
 	}
-	if cfg.PresenceWriter.Socket != "/var/sockets/av-edu-worker.sock" {
-		t.Errorf("socket = %q", cfg.PresenceWriter.Socket)
+	if mustWriter(t, cfg).Socket != "/var/sockets/av-edu-worker.sock" {
+		t.Errorf("socket = %q", mustWriter(t, cfg).Socket)
 	}
-	if cfg.PresenceWriter.URL != "" {
-		t.Errorf("url = %q, want empty for a socket instance", cfg.PresenceWriter.URL)
+	if mustWriter(t, cfg).URL != "" {
+		t.Errorf("url = %q, want empty for a socket instance", mustWriter(t, cfg).URL)
 	}
 }
 
@@ -72,11 +84,11 @@ instance_map:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PresenceWriter.Name != MainProcessInstanceName {
-		t.Errorf("writer = %q, want the main process", cfg.PresenceWriter.Name)
+	if mustWriter(t, cfg).Name != MainProcessInstanceName {
+		t.Errorf("writer = %q, want the main process", mustWriter(t, cfg).Name)
 	}
-	if cfg.PresenceWriter.Socket != "/var/sockets/main.sock" {
-		t.Errorf("socket = %q", cfg.PresenceWriter.Socket)
+	if mustWriter(t, cfg).Socket != "/var/sockets/main.sock" {
+		t.Errorf("socket = %q", mustWriter(t, cfg).Socket)
 	}
 }
 
@@ -92,8 +104,8 @@ stream_writers:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PresenceWriter.Name != "edu" {
-		t.Errorf("writer = %q", cfg.PresenceWriter.Name)
+	if mustWriter(t, cfg).Name != "edu" {
+		t.Errorf("writer = %q", mustWriter(t, cfg).Name)
 	}
 }
 
@@ -114,11 +126,11 @@ stream_writers:
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.PresenceWriter.URL != tc.want {
-			t.Errorf("tls=%s url = %q, want %q", tc.tls, cfg.PresenceWriter.URL, tc.want)
+		if mustWriter(t, cfg).URL != tc.want {
+			t.Errorf("tls=%s url = %q, want %q", tc.tls, mustWriter(t, cfg).URL, tc.want)
 		}
-		if cfg.PresenceWriter.Socket != "" {
-			t.Errorf("socket = %q, want empty for a TCP instance", cfg.PresenceWriter.Socket)
+		if mustWriter(t, cfg).Socket != "" {
+			t.Errorf("socket = %q, want empty for a TCP instance", mustWriter(t, cfg).Socket)
 		}
 	}
 }
@@ -210,12 +222,16 @@ func TestRefusesConfigsItCannotActdOn(t *testing.T) {
 		{
 			name: "unparseable duration",
 			body: "instance_map:\n    main:\n        path: /s\npresence:\n  sync_online_timeout: \"soon\"\n",
-			want: "not a duration",
+			want: "sync_online_timeout",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Load(write(t, tc.body))
+			cfg, err := Load(write(t, tc.body))
+			if err == nil {
+				// The presence writer is resolved when sync asks for it.
+				_, err = cfg.PresenceWriter()
+			}
 			if err == nil {
 				t.Fatal("accepted a config it cannot act on")
 			}

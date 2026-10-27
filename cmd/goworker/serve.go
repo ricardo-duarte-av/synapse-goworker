@@ -16,8 +16,8 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
-	sendercfg "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/synapsecfg"
 )
 
 var (
@@ -104,7 +104,8 @@ const homeserverSettle = 2 * time.Second
 // edited: Synapse's own senders read the file only at start, so taking over
 // the moment it changed would send alongside a sender that has not yet been
 // told to stop. SIGHUP applies it at once, for when no restart is coming.
-func watchHomeserver(ctx context.Context, path string, sender *senderapp.Worker, log zerolog.Logger) {
+func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *senderapp.Worker, log zerolog.Logger) {
+	path := src.Path()
 	trigger := make(chan string, 1)
 	fire := func(why string) {
 		select {
@@ -146,7 +147,7 @@ func watchHomeserver(ctx context.Context, path string, sender *senderapp.Worker,
 		if mt.Equal(applied) {
 			continue
 		}
-		scfg, err := sendercfg.Load(path)
+		scfg, err := src.Reload()
 		if err != nil {
 			// Keep the last good copy: a half-written file must not stop a
 			// working sender.

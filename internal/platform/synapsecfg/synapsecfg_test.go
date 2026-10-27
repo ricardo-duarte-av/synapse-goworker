@@ -247,6 +247,24 @@ func TestLiveHomeserverYAML(t *testing.T) {
 	if !cfg.Redis.Enabled || cfg.Redis.Socket == "" {
 		t.Errorf("redis = enabled %v socket %q; REMOTE_SERVER_UP needs the bus", cfg.Redis.Enabled, cfg.Redis.Socket)
 	}
+	// What the sender and sync read from the same file.
+	t.Logf("senders=%v client_timeout=%s presence_enabled=%v backoff=%+v database=%s",
+		cfg.SenderInstances, cfg.ClientTimeout, cfg.PresenceEnabled, cfg.Backoff, cfg.Database.Redacted())
+	if len(cfg.SenderInstances) == 0 {
+		t.Error("no federation senders: the homeserver would federate with nobody")
+	}
+	if k, err := cfg.SigningKey(); err != nil {
+		t.Errorf("signing key: %v", err)
+	} else {
+		t.Logf("signing key %s", k.ID())
+	}
+	if cfg.PresenceEnabled {
+		if w, err := cfg.PresenceWriter(); err != nil {
+			t.Errorf("presence writer: %v", err)
+		} else {
+			t.Logf("presence writer %s at %s%s", w.Name, w.Socket, w.URL)
+		}
+	}
 }
 
 // Synapse's path is inside its own container; the key is found beside
