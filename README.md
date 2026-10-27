@@ -32,6 +32,8 @@ step.
 
 ## Running
 
+Moving a homeserver over, one piece at a time: [docs/cutover.md](docs/cutover.md).
+
 ```sh
 goworker -config /data/goworker.yaml -check   # connect everything, say whether it would send, exit
 goworker -config /data/goworker.yaml
