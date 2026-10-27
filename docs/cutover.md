@@ -52,8 +52,10 @@ Each step is independent and reversible by undoing it.
      keep sending alongside goworker;
    - restart main, so Synapse's processes move `federation_stream_position`
      to the new name (at the minimum position, so nothing is skipped);
-   - within a minute goworker sees the change, logs `federation sender role
-     changed by homeserver.yaml`, and `gofed_sender_active` turns 1.
+   - main's REPLICATE as it reconnects makes goworker re-read the file; it
+     logs `federation sender role changed by homeserver.yaml`, and
+     `gofed_sender_active` turns 1. (SIGHUP does the same without a
+     restart.)
 
    Its first pickup starts where gofederation had got to (the lowest
    `federation_stream_position`), and its backoffs are seeded from

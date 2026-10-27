@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -81,39 +83,76 @@ func probe(cfg *config.Config) error {
 	return nil
 }
 
-// homeserverPoll is how often homeserver.yaml is checked for a change. An
-// edit only takes effect in Synapse when main restarts, so a minute's delay
-// here is well inside that.
+// homeserverPoll is how often homeserver.yaml is checked for an edit. An
+// edit is only reported: it is applied when Synapse applies it.
 const homeserverPoll = time.Minute
 
-// watchHomeserver re-reads homeserver.yaml when it changes and hands it to
-// the sender, so that listing this instance in federation_sender_instances
-// (or removing it) gives it the job or takes it away without a restart.
+// homeserverSettle is how long after a trigger the file is read: Synapse's
+// processes restart in a burst, each sending REPLICATE.
+const homeserverSettle = 2 * time.Second
+
+// watchHomeserver re-reads homeserver.yaml and hands it to the sender, so
+// that federation_sender_instances alone gives this process the job of
+// sending, or takes it away.
+//
+// It is applied when Synapse applies it -- when a Synapse process restarts,
+// which it announces with REPLICATE on the bus -- and not when the file is
+// edited: Synapse's own senders read the file only at start, so taking over
+// the moment it changed would send alongside a sender that has not yet been
+// told to stop. SIGHUP applies it at once, for when no restart is coming.
 func watchHomeserver(ctx context.Context, path string, sender *senderapp.Worker, log zerolog.Logger) {
-	last := modTime(path)
+	trigger := make(chan string, 1)
+	fire := func(why string) {
+		select {
+		case trigger <- why:
+		default:
+		}
+	}
+	sender.SetOnReplicate(func() { fire("a Synapse process restarted") })
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+
+	applied := modTime(path)
+	reported := applied
 	ticker := time.NewTicker(homeserverPoll)
 	defer ticker.Stop()
 	for {
+		var why string
 		select {
 		case <-ctx.Done():
 			return
+		case <-hup:
+			why = "SIGHUP"
+		case why = <-trigger:
 		case <-ticker.C:
+			if mt := modTime(path); !mt.Equal(applied) && !mt.Equal(reported) {
+				reported = mt
+				log.Info().Msg("homeserver.yaml changed; it is applied when a Synapse process " +
+					"restarts (REPLICATE), or now on SIGHUP")
+			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(homeserverSettle):
 		}
 		mt := modTime(path)
-		if mt.Equal(last) {
+		if mt.Equal(applied) {
 			continue
 		}
 		scfg, err := sendercfg.Load(path)
 		if err != nil {
-			// Keep the last good copy: a half-written file must not stop
-			// a working sender.
+			// Keep the last good copy: a half-written file must not stop a
+			// working sender.
 			homeserverReloads.WithLabelValues("error").Inc()
-			log.Warn().Err(err).Msg("homeserver.yaml changed but could not be read; keeping the last copy")
+			log.Warn().Err(err).Str("trigger", why).Msg("could not re-read homeserver.yaml; keeping the last copy")
 			continue
 		}
-		last = mt
+		applied, reported = mt, mt
 		homeserverReloads.WithLabelValues("ok").Inc()
-		log.Info().Msg("homeserver.yaml changed; re-read")
+		log.Info().Str("trigger", why).Msg("applied the changed homeserver.yaml")
 		sender.SetSynapse(scfg)
 	}
 }

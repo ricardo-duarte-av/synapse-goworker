@@ -14,9 +14,10 @@ import (
 )
 
 type recorder struct {
-	batches   []batch
-	positions []position
-	serversUp []string
+	batches    []batch
+	positions  []position
+	serversUp  []string
+	replicates int
 }
 
 type batch struct {
@@ -37,6 +38,7 @@ func (r *recorder) OnPosition(stream, instance string, pos int64) {
 	r.positions = append(r.positions, position{stream, instance, pos})
 }
 func (r *recorder) OnRemoteServerUp(server string) { r.serversUp = append(r.serversUp, server) }
+func (r *recorder) OnReplicate()                   { r.replicates++ }
 
 func newTestSubscriber(t *testing.T) (*Subscriber, *recorder) {
 	t.Helper()
@@ -159,6 +161,17 @@ func TestOurOwnInstanceNameIsIgnored(t *testing.T) {
 	}
 }
 
+// REPLICATE is how a Synapse process announces it has (re)started, and so
+// when a changed homeserver.yaml has taken effect in Synapse.
+func TestReplicateIsReported(t *testing.T) {
+	s, rec := newTestSubscriber(t)
+	s.handleLine(`REPLICATE`)
+	s.handleLine(`REPLICATE `)
+	if rec.replicates != 2 {
+		t.Errorf("replicates = %d, want 2", rec.replicates)
+	}
+}
+
 // REMOTE_SERVER_UP names no instance, so one published by this process's
 // inbound path reaches the sender like anyone else's.
 func TestRemoteServerUp(t *testing.T) {
@@ -240,8 +253,27 @@ func TestPackageNeverPublishes(t *testing.T) {
 				}
 				if forbidden[sel.Sel.Name] {
 					t.Errorf("%s calls %s(); this package must never write to the "+
-						"replication bus (docs/shadow-safety.md)",
+						"replication bus",
 						filepath.Base(name), sel.Sel.Name)
+				}
+				return true
+			})
+
+			// REPLICATE is READ, to learn that a Synapse process restarted:
+			// the one constant naming it is allowed. Sending it would still
+			// need a forbidden call, which the check above catches.
+			allowed := map[*ast.BasicLit]bool{}
+			ast.Inspect(file, func(n ast.Node) bool {
+				vs, ok := n.(*ast.ValueSpec)
+				if !ok {
+					return true
+				}
+				for i, id := range vs.Names {
+					if id.Name == "cmdReplicate" && i < len(vs.Values) {
+						if lit, ok := vs.Values[i].(*ast.BasicLit); ok {
+							allowed[lit] = true
+						}
+					}
 				}
 				return true
 			})
@@ -250,7 +282,7 @@ func TestPackageNeverPublishes(t *testing.T) {
 			// publish, wherever the call itself lived.
 			ast.Inspect(file, func(n ast.Node) bool {
 				lit, ok := n.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
+				if !ok || lit.Kind != token.STRING || allowed[lit] {
 					return true
 				}
 				for _, bad := range []string{"REPLICATE", "FEDERATION_ACK"} {

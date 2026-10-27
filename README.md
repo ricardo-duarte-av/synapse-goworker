@@ -44,9 +44,11 @@ One socket serves both client and federation paths; point nginx's
 it is proxied to `upstream` (Synapse's main process). The metrics listener
 serves `/metrics`, `/health` and `/debug/pprof`.
 
-`homeserver.yaml` is polled for changes: add `instance_name` to
-`federation_sender_instances` (and restart main, so Synapse's own senders
-stop) to make this process the federation sender; remove it to stop.
+`homeserver.yaml` is re-read when a Synapse process restarts (it announces
+that with REPLICATE on the bus), or on SIGHUP. Add `instance_name` to
+`federation_sender_instances` and restart main to make this process the
+federation sender; remove it and restart main to stop. An edit alone does
+nothing, because Synapse's own senders only read the file at start.
 `goworker_sender_active` says which it is.
 
 ## Building

@@ -24,7 +24,7 @@ The approved plan is in
 
 | Path | What |
 |---|---|
-| `cmd/goworker` | main: one config, four components, one socket, the metrics listener, the homeserver.yaml poll |
+| `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
 | `internal/platform` | shared: `config` (goworker.yaml), `synapsecfg` (homeserver.yaml), `proxy` (to main), `httpserve` (listener, router), `limits` |
 | `internal/sync` | gosync, as `app.New` + `Register` |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |

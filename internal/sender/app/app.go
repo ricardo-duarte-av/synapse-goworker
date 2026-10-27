@@ -83,6 +83,8 @@ type Worker struct {
 	// syn is the current homeserver.yaml; role is what it says about us.
 	syn  atomic.Pointer[synapsecfg.Config]
 	role atomic.Pointer[role]
+	// onReplicate is told when a Synapse process connects to the bus.
+	onReplicate atomic.Pointer[func()]
 
 	db      *store.Store
 	writer  *store.Writer
@@ -369,6 +371,11 @@ func (w *Worker) roleFor(scfg *synapsecfg.Config) *role {
 		shard:  sharding.New(scfg.SenderInstances),
 	}
 }
+
+// SetOnReplicate registers what to do when a Synapse process (re)connects
+// to the replication bus, which is when Synapse itself picks up a changed
+// homeserver.yaml. It must not block.
+func (w *Worker) SetOnReplicate(f func()) { w.onReplicate.Store(&f) }
 
 // Active reports whether this process is currently a federation sender.
 func (w *Worker) Active() bool { return w.role.Load().active }

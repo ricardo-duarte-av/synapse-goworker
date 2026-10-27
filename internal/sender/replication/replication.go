@@ -73,6 +73,7 @@ const (
 	cmdRDATA          = "RDATA"
 	cmdPOSITION       = "POSITION"
 	cmdRemoteServerUp = "REMOTE_SERVER_UP"
+	cmdReplicate      = "REPLICATE"
 )
 
 // batchToken is the literal token Synapse sends for a row that is part of a
@@ -107,6 +108,9 @@ type Handler interface {
 	// to work by somebody else. A real sender wakes that destination
 	// immediately; a shadow records the same intent.
 	OnRemoteServerUp(server string)
+	// OnReplicate says a Synapse process has (re)connected to the bus. It is
+	// called on the subscriber's goroutine and must not block.
+	OnReplicate()
 }
 
 // Config describes how to reach Redis.
@@ -323,9 +327,17 @@ func (s *Subscriber) setLive(live bool) {
 // The format is "NAME rest-of-line", one line, no newlines
 // (replication/tcp/redis.py:263).
 func (s *Subscriber) handleLine(line string) {
+	// REPLICATE is the one argument-less command that matters: every Synapse
+	// process sends it as it connects, so it marks a restart -- the moment a
+	// changed homeserver.yaml takes effect in Synapse.
+	if strings.TrimSpace(line) == cmdReplicate {
+		if s.handler != nil {
+			s.handler.OnReplicate()
+		}
+		return
+	}
 	name, rest, ok := strings.Cut(line, " ")
 	if !ok {
-		// Commands with no arguments exist (REPLICATE); none of them concern us.
 		return
 	}
 	switch name {
