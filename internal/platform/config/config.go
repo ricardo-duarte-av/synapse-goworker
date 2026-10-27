@@ -203,7 +203,33 @@ func (c *Config) validate() error {
 			return err
 		}
 	}
+	if fixed, limit := c.FixedCacheMB(), c.Memory.LimitMB; limit > 0 && fixed > limit*cacheShare/100 {
+		return fmt.Errorf("config: the bounded caches take about %dMB, more than %d%% of memory.limit_mb (%dMB); "+
+			"shrink federation_reads.caches or inbound.state_cache_entries, or raise the limit. The rest is "+
+			"for requests in flight: one initial sync of a large account is 1.5GB", fixed, cacheShare, limit)
+	}
 	return nil
+}
+
+// cacheShare is the most of memory.limit_mb the bounded caches may take.
+const cacheShare = 70
+
+// inboundEntryBytes is what one state-resolution cache entry costs: 400k
+// entries were measured at about 85MB.
+const inboundEntryBytes = 220
+
+// FixedCacheMB estimates what the size-bounded caches hold when full: the
+// federation reads' byte budgets and the inbound state cache. The sync
+// caches are bounded by entry count and are small beside these.
+func (c *Config) FixedCacheMB() int {
+	mb := 0
+	s := c.FederationReads.Caches.WithDefaults()
+	for _, v := range []int{s.StateGroupsMB, s.EventsMB, s.EventStateGroupsMB, s.AuthChainsMB, s.FilteredStateMB} {
+		if v > 0 {
+			mb += v
+		}
+	}
+	return mb + c.Inbound.StateCacheEntries*inboundEntryBytes>>20
 }
 
 // ParsedSocketMode returns the listen socket's permission bits.
