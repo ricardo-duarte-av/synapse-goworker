@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/deviceinbox"
@@ -61,8 +62,11 @@ type Settings struct {
 	WhoamiSocket, WhoamiURL string
 
 	Redis Redis
-	Tag   string
-	Log   zerolog.Logger
+	// Requests bounds concurrent requests, refused past it; InitialSyncs
+	// bounds syncs without a since token, which wait for a slot.
+	Requests, InitialSyncs *limits.Gate
+	Tag                    string
+	Log                    zerolog.Logger
 }
 
 // Sync is the assembled client sync path.
@@ -224,7 +228,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		RoomInitialSync: handlers.RoomInitialSync(deps),
 		InitialSync:     handlers.InitialSync(deps),
 		Events:          handlers.Events(deps),
-		Sync:            handlers.Sync(deps),
+		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
 	}
 	if s.sliding != nil {
 		s.routes.SlidingSync = handlers.SlidingSync(deps)
@@ -236,7 +240,43 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 // a preflight is still logged.
 func (s *Sync) Register(mux *http.ServeMux) {
 	server.Register(mux, s.routes, func(h http.Handler) http.Handler {
-		return server.WithRequestLog(s.log, server.WithCORS(h))
+		return server.WithRequestLog(s.log, server.WithCORS(requestGate(s.cfg.Requests, h)))
+	})
+}
+
+// requestGate refuses a request past the bound, with 503 and Retry-After: a
+// client backs off and retries, which beats holding one more long-poll.
+func requestGate(g *limits.Gate, next http.Handler) http.Handler {
+	if g == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !g.TryAcquire() {
+			limits.Busy(w, http.StatusServiceUnavailable, 5*time.Second)
+			return
+		}
+		defer g.Release()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// initialSyncGate makes a sync without a since token wait for a slot. It is
+// the one request whose memory scales with the whole account, so a burst of
+// them (clients after a restart) must be taken a few at a time.
+func initialSyncGate(g *limits.Gate, next http.Handler) http.Handler {
+	if g == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("since") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !g.Acquire(r.Context()) {
+			return // the client went away while waiting
+		}
+		defer g.Release()
+		next.ServeHTTP(w, r)
 	})
 }
 

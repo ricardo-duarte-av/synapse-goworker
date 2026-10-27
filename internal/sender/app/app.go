@@ -56,8 +56,10 @@ type Settings struct {
 	Read, Write, State Pool
 	ConnectTimeout     time.Duration
 
-	// MaxConcurrentDestinations bounds the per-destination transmission loops.
+	// MaxConcurrentDestinations bounds the per-destination transmission
+	// loops, and CatchUpConcurrency the destinations caught up at once.
 	MaxConcurrentDestinations int
+	CatchUpConcurrency        int
 
 	// UserAgent is sent on every federation request.
 	UserAgent string
@@ -331,6 +333,7 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 		Log:          log,
 		ShouldHandle: w.shouldHandle,
 		Active:       w.Active,
+		Concurrency:  cfg.CatchUpConcurrency,
 		Due: func(destination string) bool {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

@@ -30,6 +30,7 @@ import (
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
@@ -104,7 +105,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		return err
 	}
 
-	db := cfg.Database
+	db, lim := cfg.Database, cfg.Limits
 	base := db.DSN
 	synapseDSN := hs.Database.DSN()
 	if base == "" {
@@ -139,6 +140,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		WhoamiSocket:   whoamiSocket,
 		WhoamiURL:      whoamiURL,
 		Redis:          syncapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
+		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),
+		InitialSyncs:   limits.NewGate("initial_syncs", lim.InitialSyncs),
 		Tag:            tag,
 		Log:            log.With().Str("component", "sync").Logger(),
 	})
@@ -156,6 +159,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ConnectTimeout:    db.ConnectTimeout(),
 		Redis:             fedreadapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
 		Upstream:          upstream,
+		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
+		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
 		Log:               log.With().Str("component", "federation_reads").Logger(),
 	})
 	if err != nil {
@@ -175,6 +180,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ReadMaxConns:   db.Inbound.ReadMaxConns,
 		PDUMaxConns:    db.Inbound.PDUMaxConns,
 		ConnectTimeout: db.ConnectTimeout(),
+		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Log:            log.With().Str("component", "inbound").Logger(),
 	})
 	if err != nil {
@@ -190,7 +196,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Write:                     senderapp.Pool{DSN: dsn(db.SenderWrite), MaxConns: db.SenderWrite.MaxConns},
 		State:                     senderapp.Pool{DSN: dsn(db.SenderState), MaxConns: db.SenderState.MaxConns},
 		ConnectTimeout:            db.ConnectTimeout(),
-		MaxConcurrentDestinations: 2000,
+		MaxConcurrentDestinations: lim.SenderDestinations,
+		CatchUpConcurrency:        lim.SenderCatchUp,
 		UserAgent:                 "synapse-goworker/" + tag,
 		Tag:                       tag, Commit: commit, BuildTime: buildTime,
 		Log: log.With().Str("component", "sender").Logger(),

@@ -19,6 +19,7 @@ import (
 
 	fedread "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
 	inbound "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	sender "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/config"
 	syncc "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/config"
@@ -33,11 +34,12 @@ type Config struct {
 	// caches stream, and what its sender cursors are keyed by.
 	InstanceName string `yaml:"instance_name"`
 
-	Listen   Listen       `yaml:"listen"`
-	Upstream proxy.Config `yaml:"upstream"`
-	Database Database     `yaml:"database"`
-	Memory   Memory       `yaml:"memory"`
-	Log      Log          `yaml:"log"`
+	Listen   Listen        `yaml:"listen"`
+	Upstream proxy.Config  `yaml:"upstream"`
+	Database Database      `yaml:"database"`
+	Memory   Memory        `yaml:"memory"`
+	Limits   limits.Config `yaml:"limits"`
+	Log      Log           `yaml:"log"`
 
 	Sync            syncc.Config   `yaml:"sync"`
 	FederationReads fedread.Config `yaml:"federation_reads"`
@@ -190,6 +192,10 @@ func (c *Config) validate() error {
 	if c.Memory.LimitMB < 0 || c.Database.ConnectTimeoutSeconds < 0 {
 		return fmt.Errorf("config: memory.limit_mb and database.connect_timeout_seconds must not be negative")
 	}
+	if err := c.Limits.Validate(); err != nil {
+		return err
+	}
+	c.Limits = c.Limits.WithDefaults()
 	for _, check := range []func() error{
 		c.Sync.Validate, c.FederationReads.Validate, c.Inbound.Validate, c.Sender.Validate,
 	} {

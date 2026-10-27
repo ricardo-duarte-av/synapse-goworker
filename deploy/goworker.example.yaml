@@ -77,3 +77,14 @@ inbound:
 
 sender:
   presence_batch_max_wait_seconds: 0
+
+limits:
+  # Concurrent work, sized by what one unit holds. Defaults shown; they bind
+  # only in an overload. See internal/platform/limits.
+  sync_requests: 20000         # past it: 503 + Retry-After
+  initial_syncs: 4             # wait: one is 1.5GB for a 654-room account
+  federation_reads: 256        # wait 5s, then 429
+  state_streams: 4             # wait: a /state answer is up to 97MB
+  inbound_transactions: 64     # wait
+  sender_destinations: 2000
+  sender_catchup: 32

@@ -17,6 +17,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 )
 
@@ -64,12 +65,17 @@ type Settings struct {
 	// Upstream is Synapse's main process, the fallback for anything not
 	// answered natively.
 	Upstream *proxy.Proxy
-	Log      zerolog.Logger
+	// Reads bounds concurrent non-streamed answers; StateStreams the
+	// streamed /state ones.
+	Reads, StateStreams *limits.Gate
+	Log                 zerolog.Logger
 }
 
 // FedRead is the assembled read endpoints.
 type FedRead struct {
 	handler *fedapi.Handler
+	reads   *limits.Gate
+	streams *limits.Gate
 	db      *store.Store
 	sub     *replication.Subscriber
 	log     zerolog.Logger
@@ -93,7 +99,7 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FedRead{db: db, log: log}
+	f := &FedRead{db: db, log: log, reads: cfg.Reads, streams: cfg.StateStreams}
 	metrics.RegisterCaches(db.CacheStats)
 
 	readOnly, err := db.IsReadOnly(connectCtx)
@@ -150,7 +156,38 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 
 // Handler serves the read endpoints. Paths it does not route are answered
 // 404; the worker's router only hands it the four it serves (fedapi.Match).
-func (f *FedRead) Handler() http.Handler { return f.handler }
+//
+// A streamed /state waits for a slot: it is rare, large, and a remote server
+// asking for one will wait. Everything else waits briefly, then gets
+// Synapse's 429, which federation backs off on.
+func (f *FedRead) Handler() http.Handler {
+	if f.reads == nil || f.streams == nil {
+		return f.handler
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		route, _ := fedapi.Match(r.URL.EscapedPath())
+		if route.Endpoint.Streams() {
+			if !f.streams.Acquire(r.Context()) {
+				return // the remote server went away while waiting
+			}
+			defer f.streams.Release()
+			f.handler.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), readWait)
+		ok := f.reads.Acquire(ctx)
+		cancel()
+		if !ok {
+			limits.Busy(w, http.StatusTooManyRequests, time.Second)
+			return
+		}
+		defer f.reads.Release()
+		f.handler.ServeHTTP(w, r)
+	})
+}
+
+// readWait is how long a federation read waits for a slot before 429.
+const readWait = 5 * time.Second
 
 // Run follows the invalidation stream and expires idle rate-limit state,
 // until ctx ends.

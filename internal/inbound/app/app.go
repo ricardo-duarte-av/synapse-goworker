@@ -37,6 +37,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
@@ -62,6 +63,9 @@ type Settings struct {
 	ReadMaxConns   int32
 	PDUMaxConns    int32
 	ConnectTimeout time.Duration
+	// Transactions bounds /send transactions handled at once; past it they
+	// wait for a slot.
+	Transactions *limits.Gate
 
 	Log zerolog.Logger
 }
@@ -69,11 +73,23 @@ type Settings struct {
 // Inbound is the assembled /send path.
 type Inbound struct {
 	handler *txn.Handler
+	gate    *limits.Gate
 	closers []func()
 }
 
 // Handler serves /send. Anything else it is given is proxied.
-func (i *Inbound) Handler() http.Handler { return i.handler }
+func (i *Inbound) Handler() http.Handler {
+	if i.gate == nil {
+		return i.handler
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !i.gate.Acquire(r.Context()) {
+			return // the remote server went away while waiting
+		}
+		defer i.gate.Release()
+		i.handler.ServeHTTP(w, r)
+	})
+}
 
 // Close stops background work and releases the pools, newest first.
 func (i *Inbound) Close() {
@@ -88,7 +104,7 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		return nil, err
 	}
 	hs, log, ic := cfg.Synapse, cfg.Log, cfg.Inbound
-	out := &Inbound{}
+	out := &Inbound{gate: cfg.Transactions}
 	fail := func(err error) (*Inbound, error) {
 		out.Close()
 		return nil, err

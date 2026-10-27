@@ -66,6 +66,7 @@ type CatchUp struct {
 	due          func(destination string) bool
 	active       func() bool
 	kick         chan struct{}
+	concurrency  int
 }
 
 // CatchUpConfig builds a CatchUp.
@@ -75,6 +76,9 @@ type CatchUpConfig struct {
 	Log          zerolog.Logger
 	ShouldHandle func(destination string) bool
 	Due          func(destination string) bool
+	// Concurrency bounds destinations being caught up at once. Zero means
+	// catchUpConcurrency.
+	Concurrency int
 	// Active reports whether this process is a federation sender. While it
 	// is not, a sweep would page through every destination only to skip all
 	// of them, so it is not run. Nil means always active.
@@ -86,7 +90,8 @@ func NewCatchUp(cfg CatchUpConfig) *CatchUp {
 	return &CatchUp{
 		store: cfg.Store, queues: cfg.Queues, log: cfg.Log,
 		shouldHandle: cfg.ShouldHandle, due: cfg.Due, active: cfg.Active,
-		kick: make(chan struct{}, 1),
+		concurrency: cfg.Concurrency,
+		kick:        make(chan struct{}, 1),
 	}
 }
 
@@ -131,7 +136,11 @@ func (c *CatchUp) sweep(ctx context.Context) {
 		return
 	}
 	var wg sync.WaitGroup
-	slots := make(chan struct{}, catchUpConcurrency)
+	n := c.concurrency
+	if n <= 0 {
+		n = catchUpConcurrency
+	}
+	slots := make(chan struct{}, n)
 	defer wg.Wait()
 
 	after := ""
