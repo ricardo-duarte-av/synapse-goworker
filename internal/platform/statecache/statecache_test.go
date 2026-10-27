@@ -31,7 +31,7 @@ var (
 
 func TestLoadIsOnceThenFromMemory(t *testing.T) {
 	db := &fakeDB{full: map[int64]Map{1: {create: "$c"}}}
-	c := New(1 << 20)
+	c := New(1<<20, 1<<20)
 	c.SetArmed(true)
 	for i, want := range []string{Full, Hit, Hit} {
 		m, how, err := c.Load(context.Background(), 1, db)
@@ -52,7 +52,7 @@ func TestLoadRebuildsFromACachedPrev(t *testing.T) {
 		prev:  map[int64]int64{2: 1},
 		delta: map[int64]Map{2: {alice: "$join"}},
 	}
-	c := New(1 << 20)
+	c := New(1<<20, 1<<20)
 	c.SetArmed(true)
 	base, _, _ := c.Load(context.Background(), 1, db)
 	m, how, err := c.Load(context.Background(), 2, db)
@@ -71,7 +71,7 @@ func TestLoadRebuildsFromACachedPrev(t *testing.T) {
 // cached: a group purged meanwhile must not be served from memory.
 func TestDisarmedCachesNothing(t *testing.T) {
 	db := &fakeDB{full: map[int64]Map{1: {create: "$c"}}}
-	c := New(1 << 20)
+	c := New(1<<20, 1<<20)
 	c.SetArmed(false)
 	for range 2 {
 		if _, how, _ := c.Load(context.Background(), 1, db); how != Full {
@@ -91,7 +91,7 @@ func TestDisarmedCachesNothing(t *testing.T) {
 
 func TestBoundedByBytes(t *testing.T) {
 	m := Map{create: "$c"}
-	c := New(SizeOf(m) * 2)
+	c := New(SizeOf(m)*2, 1<<20)
 	c.SetArmed(true)
 	for g := int64(1); g <= 3; g++ {
 		c.Add(g, Map{create: "$c"})
@@ -101,5 +101,22 @@ func TestBoundedByBytes(t *testing.T) {
 	}
 	if _, ok := c.Get(3); !ok {
 		t.Error("the newest group was not kept")
+	}
+}
+
+func TestEventGroups(t *testing.T) {
+	c := New(1<<20, 1<<20)
+	c.SetGroupOf("$e", 7)
+	if g, ok := c.GroupOf("$e"); !ok || g != 7 {
+		t.Fatalf("GroupOf = %d %v", g, ok)
+	}
+	c.DropEvent("$e")
+	if _, ok := c.GroupOf("$e"); ok {
+		t.Error("a dropped event kept its group")
+	}
+	c.SetGroupOf("$e", 7)
+	c.SetArmed(false)
+	if _, ok := c.GroupOf("$e"); ok {
+		t.Error("disarming kept an event's group")
 	}
 }

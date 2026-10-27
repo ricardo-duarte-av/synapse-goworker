@@ -1,5 +1,6 @@
 // Package statecache is the worker's one cache of room state: a state group's
-// full state, (type, state_key) -> event ID.
+// full state, (type, state_key) -> event ID, and which state group each event
+// is at.
 //
 // A state group is immutable once written, so its state can be cached for as
 // long as it exists. The federation reads (/state, /state_ids) and inbound
@@ -32,16 +33,50 @@ type Key struct {
 // Map is a state group's full state. Never modify one taken from the cache.
 type Map = map[Key]string
 
-// Cache holds state groups' full state, bounded by bytes.
+// Cache holds state groups' full state and events' state groups, each
+// bounded by bytes.
 type Cache struct {
-	lru *cache.LRU[int64, Map]
+	lru    *cache.LRU[int64, Map]
+	events *cache.LRU[string, int64]
 }
 
-// New builds a cache of at most maxBytes. Whoever follows the replication
-// stream disarms it until the stream is confirmed (the federation reads'
-// subscriber does so at start).
-func New(maxBytes int64) *Cache {
-	return &Cache{lru: cache.NewLRU[int64, Map]("state_groups", maxBytes, SizeOf)}
+// eventEntryBytes is what one event -> state group entry costs, an event ID
+// plus map and list overhead.
+const eventEntryBytes = 64
+
+// New builds a cache of at most stateBytes of state maps and eventBytes of
+// event -> state group entries. Whoever follows the replication stream
+// disarms it until the stream is confirmed (the federation reads' subscriber
+// does so at start).
+func New(stateBytes, eventBytes int64) *Cache {
+	return &Cache{
+		lru:    cache.NewLRU[int64, Map]("state_groups", stateBytes, SizeOf),
+		events: cache.NewLRU[string, int64]("event_state_groups", eventBytes, func(int64) int64 { return eventEntryBytes }),
+	}
+}
+
+// GroupOf is the state group at an event, if cached. An event's state group
+// never changes once assigned.
+func (c *Cache) GroupOf(eventID string) (int64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	return c.events.Get(eventID)
+}
+
+// SetGroupOf caches the state group at an event.
+func (c *Cache) SetGroupOf(eventID string, group int64) {
+	if c != nil {
+		c.events.Add(eventID, group)
+	}
+}
+
+// DropEvent forgets one event's state group, as Synapse's per-event
+// invalidations ask.
+func (c *Cache) DropEvent(eventID string) {
+	if c != nil {
+		c.events.Remove(eventID)
+	}
 }
 
 // SizeOf approximates a state map's footprint: the strings, plus a per-entry
@@ -124,6 +159,7 @@ func (c *Cache) Load(ctx context.Context, group int64, db Loader) (Map, string, 
 func (c *Cache) SetArmed(armed bool) {
 	if c != nil {
 		c.lru.SetArmed(armed)
+		c.events.SetArmed(armed)
 	}
 }
 
@@ -131,8 +167,11 @@ func (c *Cache) SetArmed(armed bool) {
 func (c *Cache) Purge() {
 	if c != nil {
 		c.lru.Purge()
+		c.events.Purge()
 	}
 }
 
-// Stats is a snapshot for metrics.
-func (c *Cache) Stats() cache.Stats { return c.lru.Stats() }
+// Stats is a snapshot of both halves, for metrics.
+func (c *Cache) Stats() []cache.Stats {
+	return []cache.Stats{c.lru.Stats(), c.events.Stats()}
+}

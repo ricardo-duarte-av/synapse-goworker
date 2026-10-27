@@ -54,11 +54,11 @@ type Caches struct {
 	// from creation rather than last use, as Synapse's ExpiringCache does.
 	LazyLoadMembersCacheTTL time.Duration `yaml:"lazy_load_members_cache_ttl"`
 
-	// StateGroupCacheSize and FilteredStateCacheSize bound the two state
-	// caches, in entries. Zero takes the store's default; negative disables
-	// the cache, which is what makes "is the cache hiding this bug?" a
-	// question that can be answered rather than argued about.
-	StateGroupCacheSize    int `yaml:"state_group_cache_size"`
+	// FilteredStateCacheSize bounds the filtered state cache, in entries.
+	// Zero takes the store's default; negative disables it, which is what
+	// makes "is the cache hiding this bug?" a question that can be answered
+	// rather than argued about. Events' state groups are in the shared state
+	// cache (memory.event_group_cache_mb).
 	FilteredStateCacheSize int `yaml:"filtered_state_cache_size"`
 
 	// Per-cache sizes in entries. Zero takes a default; negative disables one

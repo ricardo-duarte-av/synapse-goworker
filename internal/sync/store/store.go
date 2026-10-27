@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/lru"
 )
 
@@ -38,8 +39,10 @@ type Store struct {
 // written, so none of this needs invalidating on the write path; see
 // Store.PurgeCaches for the one case that does.
 type caches struct {
-	eventStateGroup *lru.Cache[string, int64]
-	filteredState   *lru.Cache[string, map[StateKey]StateEntry]
+	// states is the worker's one state cache; sync uses its event -> state
+	// group half.
+	states        *statecache.Cache
+	filteredState *lru.Cache[string, map[StateKey]StateEntry]
 }
 
 // Config describes how to reach the database.
@@ -52,11 +55,14 @@ type Config struct {
 	MaxConns int32
 	// ConnectTimeout bounds the initial connection.
 	ConnectTimeout time.Duration
-	// EventStateGroupCacheEntries and FilteredStateCacheEntries bound the state
-	// caches. Zero takes a default; negative disables the cache, which makes
-	// "is the cache hiding a bug?" an answerable question.
-	EventStateGroupCacheEntries int
-	FilteredStateCacheEntries   int
+	// States is the worker's shared state cache, whose event -> state group
+	// entries sync reads and fills. Nil builds one for this store alone, as
+	// in tests.
+	States *statecache.Cache
+	// FilteredStateCacheEntries bounds the filtered state cache. Zero takes a
+	// default; negative disables it, which makes "is the cache hiding a
+	// bug?" an answerable question.
+	FilteredStateCacheEntries int
 
 	// Derived cache sizes, in entries. Zero takes a default; negative
 	// disables that cache. See internal/store/derived.go for why these are
@@ -111,9 +117,10 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 }
 
 func newCaches(cfg Config) *caches {
-	groups, filtered := cfg.EventStateGroupCacheEntries, cfg.FilteredStateCacheEntries
-	if groups == 0 {
-		groups = 50000
+	filtered := cfg.FilteredStateCacheEntries
+	states := cfg.States
+	if states == nil {
+		states = statecache.New(0, 50000*64)
 	}
 	if filtered == 0 {
 		// Filtered views are a handful of entries each, so many more fit than
@@ -121,8 +128,8 @@ func newCaches(cfg Config) *caches {
 		filtered = 20000
 	}
 	return &caches{
-		eventStateGroup: lru.New[string, int64](groups),
-		filteredState:   lru.New[string, map[StateKey]StateEntry](filtered),
+		states:        states,
+		filteredState: lru.New[string, map[StateKey]StateEntry](filtered),
 	}
 }
 

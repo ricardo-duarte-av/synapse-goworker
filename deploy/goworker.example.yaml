@@ -44,6 +44,8 @@ memory:
   # The one cache of state groups' full state, shared by the federation
   # reads (/state, /state_ids) and inbound write mode (auth, state res, push).
   state_cache_mb: 768
+  # Which state group each event is at, shared by sync and the federation reads.
+  event_group_cache_mb: 32
 
 log:
   level: info
@@ -66,7 +68,6 @@ federation_reads:
   stream_idle_timeout_seconds: 60
   caches:                      # MB; state groups are memory.state_cache_mb
     events_mb: 128
-    event_state_groups_mb: 32
     auth_chains_mb: 256
     filtered_state_mb: 64
 

@@ -21,7 +21,7 @@ type StateKey = statecache.Key
 // GetStateGroupForEvent returns the state group at an event.
 func (s *Store) GetStateGroupForEvent(ctx context.Context, eventID string) (int64, error) {
 	// An event's state group never changes once assigned.
-	g, ok := s.caches.eventStateGroup.Get(eventID)
+	g, ok := s.caches.stateGroups.GroupOf(eventID)
 	cache.Record(ctx, "event_state_groups", ok)
 	if ok {
 		return g, nil
@@ -41,7 +41,7 @@ func (s *Store) GetStateGroupForEvent(ctx context.Context, eventID string) (int6
 		// not the state around it.
 		return 0, ErrNotFound
 	}
-	s.caches.eventStateGroup.Add(eventID, *group)
+	s.caches.stateGroups.SetGroupOf(eventID, *group)
 	return *group, nil
 }
 

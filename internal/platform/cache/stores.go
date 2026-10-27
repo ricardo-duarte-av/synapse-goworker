@@ -17,7 +17,7 @@ type Settings struct {
 	EventsMB int `yaml:"events_mb"`
 	// EventStateGroupsMB bounds the event-to-state-group mapping, which is tiny
 	// per entry but saves a round trip on every request.
-	EventStateGroupsMB int `yaml:"event_state_groups_mb"`
+	EventStateGroupsMB int `yaml:"-"`
 	// AuthChainsMB bounds computed auth chains.
 	AuthChainsMB int `yaml:"auth_chains_mb"`
 	// FilteredStateMB bounds resolved state restricted to a filter, keyed by

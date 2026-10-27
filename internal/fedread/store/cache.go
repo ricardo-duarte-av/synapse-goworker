@@ -16,10 +16,9 @@ type caches struct {
 	// stateGroups is the worker's one state cache, shared with inbound.
 	// This store arms and purges it, since its replication consumer is the
 	// one that hears about purges.
-	stateGroups     *statecache.Cache
-	events          *cache.LRU[string, *Event]
-	eventStateGroup *cache.LRU[string, int64]
-	authChains      *cache.LRU[[32]byte, []string]
+	stateGroups *statecache.Cache
+	events      *cache.LRU[string, *Event]
+	authChains  *cache.LRU[[32]byte, []string]
 	// filteredState holds state resolved at a group and restricted to a
 	// filter. Derived entirely from immutable data, so it needs no
 	// invalidation the whole-map cache does not already need.
@@ -40,14 +39,12 @@ type FilteredStateKey struct {
 func newCaches(s cache.Settings, states *statecache.Cache) *caches {
 	s = s.WithDefaults()
 	if states == nil {
-		states = statecache.New(cache.MB(s.StateGroupsMB))
+		states = statecache.New(cache.MB(s.StateGroupsMB), cache.MB(s.EventStateGroupsMB))
 	}
 	return &caches{
 		stateGroups: states,
 		events: cache.NewLRU[string, *Event](
 			"events", cache.MB(s.EventsMB), sizeOfEvent),
-		eventStateGroup: cache.NewLRU[string, int64](
-			"event_state_groups", cache.MB(s.EventStateGroupsMB), func(int64) int64 { return 64 }),
 		authChains: cache.NewLRU[[32]byte, []string](
 			"auth_chains", cache.MB(s.AuthChainsMB), sizeOfIDs),
 		filteredState: cache.NewLRU[FilteredStateKey, map[StateKey]string](
@@ -86,13 +83,11 @@ func (s *Store) CacheStats() []cache.Stats {
 	if s == nil || s.caches == nil {
 		return nil
 	}
-	return []cache.Stats{
-		s.caches.stateGroups.Stats(),
+	return append(s.caches.stateGroups.Stats(),
 		s.caches.events.Stats(),
-		s.caches.eventStateGroup.Stats(),
 		s.caches.authChains.Stats(),
 		s.caches.filteredState.Stats(),
-	}
+	)
 }
 
 // SetCachesArmed turns every cache on or off together.
@@ -109,7 +104,6 @@ func (s *Store) SetCachesArmed(armed bool) {
 	}
 	s.caches.stateGroups.SetArmed(armed)
 	s.caches.events.SetArmed(armed)
-	s.caches.eventStateGroup.SetArmed(armed)
 	s.caches.authChains.SetArmed(armed)
 	s.caches.filteredState.SetArmed(armed)
 }
@@ -124,7 +118,6 @@ func (s *Store) PurgeCaches() {
 	}
 	s.caches.stateGroups.Purge()
 	s.caches.events.Purge()
-	s.caches.eventStateGroup.Purge()
 	s.caches.authChains.Purge()
 	s.caches.filteredState.Purge()
 }
@@ -137,7 +130,7 @@ func (s *Store) DropEvent(eventID string) {
 		return
 	}
 	s.caches.events.Remove(eventID)
-	s.caches.eventStateGroup.Remove(eventID)
+	s.caches.stateGroups.DropEvent(eventID)
 }
 
 // CachesArmed reports whether the caches are currently permitted to serve.

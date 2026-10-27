@@ -139,7 +139,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 
 	// The one cache of state groups' full state, read by the federation
 	// reads and inbound write mode alike.
-	states := statecache.New(int64(cfg.Memory.StateCacheMB) << 20)
+	states := statecache.New(int64(cfg.Memory.StateCacheMB)<<20, int64(cfg.Memory.EventGroupCacheMB)<<20)
 
 	var closers []func()
 	defer func() {
@@ -158,6 +158,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		WhoamiSocket:   whoamiSocket,
 		WhoamiURL:      whoamiURL,
 		Replication:    consumer("sync"),
+		States:         states,
 		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),
 		InitialSyncs:   limits.NewGate("initial_syncs", lim.InitialSyncs),
 		Tag:            tag,

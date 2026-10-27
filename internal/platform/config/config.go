@@ -108,6 +108,9 @@ type Memory struct {
 	// StateCacheMB bounds the one cache of state groups' full state, shared
 	// by the federation reads and inbound write mode.
 	StateCacheMB int `yaml:"state_cache_mb"`
+	// EventGroupCacheMB bounds the shared cache of which state group each
+	// event is at, read by sync and the federation reads.
+	EventGroupCacheMB int `yaml:"event_group_cache_mb"`
 }
 
 // Log is the log output.
@@ -142,7 +145,7 @@ func Parse(data []byte) (*Config, error) {
 				InboundRead: 4, InboundPDU: 4, InboundWrite: 4,
 			},
 		},
-		Memory:  Memory{StateCacheMB: 768},
+		Memory:  Memory{StateCacheMB: 768, EventGroupCacheMB: 32},
 		Log:     Log{Level: "info"},
 		Inbound: inbound.Defaults(),
 		Sender:  sender.Defaults(),
@@ -176,7 +179,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: upstream: at least one of sockets or addrs must be set; " +
 			"it is Synapse's main process, the fallback for everything not answered here")
 	}
-	if c.Memory.LimitMB < 0 || c.Memory.StateCacheMB < 0 || c.Database.ConnectTimeoutSeconds < 0 {
+	if c.Memory.LimitMB < 0 || c.Memory.StateCacheMB < 0 || c.Memory.EventGroupCacheMB < 0 || c.Database.ConnectTimeoutSeconds < 0 {
 		return fmt.Errorf("config: memory.limit_mb, memory.state_cache_mb and database.connect_timeout_seconds must not be negative")
 	}
 	if err := c.Limits.Validate(); err != nil {
@@ -205,9 +208,9 @@ const cacheShare = 70
 // state cache and the federation reads' others. The sync caches are bounded
 // by entry count and are small beside these.
 func (c *Config) FixedCacheMB() int {
-	mb := c.Memory.StateCacheMB
+	mb := c.Memory.StateCacheMB + c.Memory.EventGroupCacheMB
 	s := c.FederationReads.Caches.WithDefaults()
-	for _, v := range []int{s.EventsMB, s.EventStateGroupsMB, s.AuthChainsMB, s.FilteredStateMB} {
+	for _, v := range []int{s.EventsMB, s.AuthChainsMB, s.FilteredStateMB} {
 		if v > 0 {
 			mb += v
 		}

@@ -38,12 +38,13 @@ The approved plan is in
 
 Each component still has its own copy of these, which work but duplicate:
 
-- **Smaller caches of immutable data.** State groups' full state is one
-  cache now (`platform/statecache`, shared by fedread and inbound, armed and
-  purged by fedread's replication consumer). Still per component: event ->
-  state group (sync, fedread), filtered state (sync's carries membership and
-  visibility, fedread's only event IDs), room versions, server keys (fedauth
-  in inbound and fedread, inbound's keyring).
+- **Smaller caches of immutable data.** State groups' full state and
+  events' state groups are one cache now (`platform/statecache`: the first
+  shared by fedread and inbound, the second by fedread and sync; armed and
+  purged by fedread's replication consumer). Still per component: filtered
+  state (sync's carries membership and visibility, fedread's only event
+  IDs), room versions, server keys (fedauth in inbound and fedread,
+  inbound's keyring).
 - **Destination backoff**: inbound's `backoff` (write mode's outbound
   requests) and the sender's `retry`. They agree through Synapse's
   `destinations` table and REMOTE_SERVER_UP, as separate workers did.

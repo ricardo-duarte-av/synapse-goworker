@@ -41,7 +41,7 @@ func (s *Store) StateGroupsForEvents(ctx context.Context, eventIDs []string) (ma
 	out := make(map[string]int64, len(eventIDs))
 	missing := make([]string, 0, len(eventIDs))
 	for _, id := range eventIDs {
-		if g, ok := s.caches.eventStateGroup.Get(id); ok {
+		if g, ok := s.caches.states.GroupOf(id); ok {
 			out[id] = g
 			continue
 		}
@@ -66,7 +66,7 @@ func (s *Store) StateGroupsForEvents(ctx context.Context, eventIDs []string) (ma
 			return nil, fmt.Errorf("store: state groups for events: %w", err)
 		}
 		// An event's state group never changes once assigned.
-		s.caches.eventStateGroup.Add(id, group)
+		s.caches.states.SetGroupOf(id, group)
 		out[id] = group
 	}
 	if err := rows.Err(); err != nil {
@@ -177,13 +177,15 @@ func filteredStateKey(group int64, keys []StateKey) string {
 // is here for the replication subscriber to call when it loses its connection
 // and can no longer see rooms being purged underneath us.
 func (s *Store) PurgeCaches() {
-	s.caches.eventStateGroup.Purge()
+	// The shared state cache's own owner (the federation reads) disarms and
+	// purges it on the same drop; doing it here too is harmless.
+	s.caches.states.Purge()
 	s.caches.filteredState.Purge()
 }
 
 // CacheLen reports the cached entry counts, for metrics.
 func (s *Store) CacheLen() (eventGroups, filteredState int) {
-	return s.caches.eventStateGroup.Len(), s.caches.filteredState.Len()
+	return s.caches.states.Stats()[1].Entries, s.caches.filteredState.Len()
 }
 
 // stateGroupTypeFilteredQuery is stateGroupFilteredQuery with an additional

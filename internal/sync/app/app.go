@@ -12,6 +12,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/config"
@@ -51,6 +52,9 @@ type Settings struct {
 	// Synapse's main process.
 	WhoamiSocket, WhoamiURL string
 
+	// States is the worker's one state cache; sync uses its event -> state
+	// group entries.
+	States *statecache.Cache
 	// Replication is sync's view of the worker's one subscription. Nil
 	// without redis: positions are then approximated from the database.
 	Replication *bus.Consumer
@@ -86,11 +90,11 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 
 	var err error
 	s.db, err = store.Open(openCtx, store.Config{
-		DSN:                         cfg.Read.DSN,
-		MaxConns:                    cfg.Read.MaxConns,
-		ConnectTimeout:              cfg.ConnectTimeout,
-		EventStateGroupCacheEntries: c.StateGroupCacheSize,
-		FilteredStateCacheEntries:   c.FilteredStateCacheSize,
+		DSN:                       cfg.Read.DSN,
+		MaxConns:                  cfg.Read.MaxConns,
+		ConnectTimeout:            cfg.ConnectTimeout,
+		States:                    cfg.States,
+		FilteredStateCacheEntries: c.FilteredStateCacheSize,
 
 		UserFilterCacheEntries:        c.UserFilterCacheSize,
 		RoomInfoCacheEntries:          c.RoomInfoCacheSize,

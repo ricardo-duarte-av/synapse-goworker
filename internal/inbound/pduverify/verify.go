@@ -82,7 +82,7 @@ type Verifier struct {
 
 // New builds a Verifier over st.
 func New(st *pdustore.Store, opts stateres.Options) *Verifier {
-	return &Verifier{st: st, groups: &groupCache{states: statecache.New(DefaultStateCacheMB << 20)}, opts: opts}
+	return &Verifier{st: st, groups: &groupCache{states: statecache.New(DefaultStateCacheMB<<20, 0)}, opts: opts}
 }
 
 // Replay recomputes an event's state before, auth verdict and state after,
