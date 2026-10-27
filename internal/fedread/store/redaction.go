@@ -213,7 +213,7 @@ type banRedaction struct {
 // at all, its stored JSON still holding the original content.
 //
 // Missing this served the full content of banned users' events to remote
-// servers. It was found in shadow mode against a real spam wave, and it is not
+// servers. It was found comparing with Synapse during a real spam wave, and it is not
 // a corner case: 9,106 rows across 122 rooms on this deployment.
 func (s *Store) getBanRedactions(ctx context.Context, rooms, users []string) (map[string]banRedaction, error) {
 	out := make(map[string]banRedaction)

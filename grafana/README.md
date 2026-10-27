@@ -58,6 +58,8 @@ Changed in the merge:
 | `gopro_shadow_*`, `gopro_canary_*`, `gopro_difflog_*`, `gopro_auth_verdicts_total`, `gopro_state_diagnoses_total` | gone with shadow and canary |
 | `goinbound_shadow_*`, `goinbound_pdu_shadow_*`, `goinbound_pdu_plan_shadow_total`, `goinbound_write_verify_total`, `goinbound_write_test_dropped_total` | gone |
 | `gofed_shadow_*` | gone |
+| `goinbound_edus_total{path,...}`, `goinbound_receipt_rooms_removed_by_acl_total{path}` | the same without `path`, which was always `native` once shadow went |
+| `gopro_state_prev_content_emitted_total` | gone: it measured a blind spot of the shadow's /state digest, which is no longer computed |
 
 The process collectors (`go_*`, `process_*`) carry no label of ours, so every
 panel using them joins on `goworker_build_info`; a host runs many exporters

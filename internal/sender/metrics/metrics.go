@@ -96,8 +96,7 @@ var (
 		Help: "Replication rows received, by stream.",
 	}, []string{"stream"})
 
-	// StreamPosition mirrors Synapse's event_processing_positions. Compared
-	// against the shadowed sender's, the gap between them is the lag.
+	// StreamPosition mirrors Synapse's event_processing_positions.
 	StreamPosition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gofed_stream_position",
 		Help: "The worker's position in each stream.",
@@ -136,9 +135,8 @@ var (
 	// ApproximateRoutes counts events routed from CURRENT room state rather
 	// than the state before the event, by why.
 	//
-	// The most important number in the shadow, because it is the one known
-	// difference from Synapse's algorithm rather than a bug we are hoping is
-	// not there. Labelled by cause: a forked DAG is work we have not done, an
+	// The one known difference from Synapse's algorithm, rather than a bug we
+	// are hoping is not there. Labelled by cause: a forked DAG is work we have not done, an
 	// outlier prev event is one we could not have resolved anyway. See
 	// internal/destinations.
 	ApproximateRoutes = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -232,7 +230,7 @@ var (
 	// federation transaction metrics.
 	Transactions = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "gofed_transactions_total",
-		Help: "Transactions assembled (and, outside shadow mode, sent).",
+		Help: "Transactions assembled and sent.",
 	})
 
 	// TransactionPDUs counts PDUs placed in transactions.
@@ -414,10 +412,10 @@ var (
 		Help: "Destinations currently in a retry backoff.",
 	})
 
-	// WriteOps counts the bookkeeping a primary sender performs, by operation.
-	// Zero in shadow mode, and that is worth being able to see.
+	// WriteOps counts the bookkeeping the sender performs, by operation. Zero
+	// while it is not the sender, and that is worth being able to see.
 	WriteOps = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "gofed_write_operations_total",
-		Help: "Writes to Synapse's tables, by operation. Always zero in shadow mode.",
+		Help: "Writes to Synapse's tables, by operation. Zero while not the federation sender.",
 	}, []string{"operation", "outcome"})
 )

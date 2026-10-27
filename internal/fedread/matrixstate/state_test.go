@@ -129,33 +129,7 @@ func TestAgeConversionOnlyWithAClock(t *testing.T) {
 	}
 }
 
-// The counter must not fire on an ordinary event, and must not be fooled by a
-// message that merely mentions the field names.
-func TestEmitsCachePollution(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"ordinary event", `{"unsigned":{"age_ts":5}}`, false},
-		{"empty unsigned", `{"unsigned":{}}`, false},
-		{"no unsigned at all", `{"type":"m.room.member"}`, false},
-		{"prev_content present", `{"unsigned":{"prev_content":{"membership":"join"}}}`, true},
-		{"prev_sender present", `{"unsigned":{"prev_sender":"@a:b"}}`, true},
-		// A body scan would count this; a parse does not.
-		{"message text mentioning the field", `{"content":{"body":"what is prev_content for?"},"unsigned":{}}`, false},
-		// Nor should a field of that name anywhere but unsigned.
-		{"prev_content in content", `{"content":{"prev_content":1},"unsigned":{}}`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := emitsCachePollution([]byte(tc.body)); got != tc.want {
-				t.Errorf("emitsCachePollution(%s) = %v, want %v", tc.body, got, tc.want)
-			}
-		})
-	}
-}
-
-func digestOf(t *testing.T, body string) StateResult {
+func digestOf(t *testing.T, body string) StateDigest {
 	t.Helper()
 	res, err := DigestStateResponse(strings.NewReader(body))
 	if err != nil {

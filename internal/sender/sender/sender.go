@@ -45,8 +45,8 @@ type Cursors interface {
 	Set(ctx context.Context, name string, pos int64) error
 }
 
-// Observer is told what the pipeline decided, so the shadow comparison and the
-// metrics can be built on it without the pipeline knowing about either.
+// Observer is told what the pipeline decided, so the metrics can be built on
+// it without the pipeline knowing about them.
 type Observer interface {
 	// OnEventSkipped reports an event that will not be federated.
 	OnEventSkipped(eventID string, reason destinations.SkipReason)

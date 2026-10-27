@@ -1,14 +1,10 @@
 // Writer is the other half of this package, and the dangerous half.
 //
-// Everything in store.go is a SELECT under a role that cannot write. This file
-// is what a worker uses when it is a homeserver's REAL federation sender rather
-// than a shadow of one, and at that point the read-only guarantee no longer
-// applies -- it cannot, because a sender's bookkeeping is a set of deletions.
+// Everything in store.go is a SELECT. This file is the sender's bookkeeping,
+// which cannot be read-only: a sender's cursor is a set of deletions.
 //
-// It lives on its own pool under its own role and is constructed only in
-// primary mode, so a shadow deployment has no writable handle to Synapse's
-// tables anywhere in the process. See docs/shadow-safety.md for why that
-// separation is worth the duplication.
+// It lives on its own pool, so the reads above never hold a handle that
+// writes; keeping the two apart is what the no-write tests on store.go check.
 package store
 
 import (

@@ -6,11 +6,8 @@
 // happens to verify over the wrong bytes -- and they are exactly the kind of
 // thing a shared, tested implementation should own.
 //
-// Transactions are built and signed even in shadow mode, deliberately. Signing
-// is cheap, it is a step that can be wrong, and a signature computed over the
-// wrong bytes is the class of bug that stays invisible until the day we go
-// live. The signature covers a uri/origin/destination/content object that never
-// leaves the process, so producing one has no external effect.
+// The signature covers a uri/origin/destination/content object that never
+// leaves the process; only the Authorization header carries it.
 package txn
 
 import (

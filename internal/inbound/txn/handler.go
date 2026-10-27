@@ -265,7 +265,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, body []byte, txn
 		return
 	}
 
-	edu.Record("native", d.steps)
+	edu.Record(d.steps)
 	rec.steps = d.steps
 
 	// Detached from the sender's connection: Synapse finishes a transaction

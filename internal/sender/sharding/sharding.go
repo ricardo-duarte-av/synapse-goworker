@@ -1,10 +1,10 @@
 // Package sharding decides which federation sender instance owns a destination.
 //
 // This reproduces Synapse's ShardedWorkerHandlingConfig
-// (synapse/config/_base.py:1054) exactly, because it has to: the whole point of
-// running this worker in shadow mode is to compare its decisions against a real
-// sender's, and a sharding function that is merely close would put every
-// destination on the wrong shard while still looking like plausible output.
+// (synapse/config/_base.py:1054) exactly, because it has to: beside Python
+// senders, a sharding function that is merely close would send some
+// destinations twice and others never, while still looking like plausible
+// output.
 package sharding
 
 import (

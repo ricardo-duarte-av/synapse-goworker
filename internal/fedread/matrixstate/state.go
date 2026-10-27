@@ -25,14 +25,22 @@ const (
 // There is deliberately no body here. The largest room on this deployment
 // resolves to about 97MB of event JSON, and holding that per request is the
 // thing that makes Synapse's /state cost ~53 seconds and drives its worker
-// past half a gigabyte. Callers get a digest instead, which is enough to
-// compare two responses without either side ever being resident.
+// past half a gigabyte.
 type StateResult struct {
 	// PDUs and AuthChain count what was actually written, after the depth
 	// filter dropped anything Synapse would drop.
 	PDUs      int
 	AuthChain int
 	Bytes     int64
+}
+
+// StateDigest identifies a /state response's contents in 32 bytes per array,
+// so two responses can be compared without either being resident. The tests
+// compare ours with Synapse's this way; nothing on the request path computes
+// one.
+type StateDigest struct {
+	PDUs      int
+	AuthChain int
 	// PDUDigest and AuthChainDigest identify each array's contents
 	// independently of ordering. See digestAccumulator.
 	//
@@ -138,9 +146,7 @@ func depthInCanonicalRange(body []byte) bool {
 // State answers /state for a remote server, streaming the response to w.
 //
 // The response is written as it is built, so peak memory is one batch of
-// events rather than the whole room. w may be io.Discard when only the digest
-// is wanted, which is how shadow comparison comes to be possible for an
-// endpoint whose responses cannot be captured.
+// events rather than the whole room.
 //
 // Mirrors Synapse's _on_context_state_request_compute_with_events:
 //
@@ -168,7 +174,6 @@ func (r *Resolver) State(ctx context.Context, w io.Writer, origin, roomID, event
 	}
 
 	cw := &countingWriter{w: w}
-	var pduDigest, authDigest digestAccumulator
 
 	if _, err := io.WriteString(cw, `{"pdus":[`); err != nil {
 		return res, err
@@ -178,7 +183,7 @@ func (r *Resolver) State(ctx context.Context, w io.Writer, origin, roomID, event
 	// from what was found rather than from what is served.
 	found := make([]string, 0, len(stateIDs))
 
-	n, err := r.streamEvents(ctx, cw, &pduDigest, stateIDs, &found)
+	n, err := r.streamEvents(ctx, cw, stateIDs, &found)
 	if err != nil {
 		return res, err
 	}
@@ -196,7 +201,7 @@ func (r *Resolver) State(ctx context.Context, w io.Writer, origin, roomID, event
 		authChainFallbacks.Inc()
 	}
 
-	n, err = r.streamEvents(ctx, cw, &authDigest, authIDs, nil)
+	n, err = r.streamEvents(ctx, cw, authIDs, nil)
 	if err != nil {
 		return res, err
 	}
@@ -207,8 +212,6 @@ func (r *Resolver) State(ctx context.Context, w io.Writer, origin, roomID, event
 	}
 
 	res.Bytes = cw.n
-	res.PDUDigest = pduDigest.digest()
-	res.AuthChainDigest = authDigest.digest()
 	return res, nil
 }
 
@@ -217,13 +220,12 @@ func (r *Resolver) State(ctx context.Context, w io.Writer, origin, roomID, event
 //
 // When found is non-nil, every event we hold is appended to it before the
 // depth filter is applied.
-func (r *Resolver) streamEvents(ctx context.Context, w io.Writer, digest *digestAccumulator, ids []string, found *[]string) (int, error) {
+func (r *Resolver) streamEvents(ctx context.Context, w io.Writer, ids []string, found *[]string) (int, error) {
 	written := 0
 	err := r.db.GetEventsBatched(ctx, ids, store.DefaultEventBatch, func(events map[string]*store.Event) error {
 		// Iterate the requested IDs rather than the map, so output order
-		// follows the input and does not vary with Go's map iteration. The
-		// comparator treats these as sets, but a stable order makes a captured
-		// response reproducible.
+		// follows the input and does not vary with Go's map iteration: a
+		// stable order makes a captured response reproducible.
 		for _, id := range ids {
 			ev, ok := events[id]
 			if !ok {
@@ -262,18 +264,10 @@ func (r *Resolver) streamEvents(ctx context.Context, w io.Writer, digest *digest
 				continue
 			}
 
-			// Digested in canonical form, but written to the client verbatim.
-			// The stored JSON is spliced rather than re-encoded on purpose:
-			// 14,654 events here carry an escaped NUL, and a response is not
-			// the place to discover that a round trip altered one.
-			canonical, ok := pducmp.Canonical(body)
-			if !ok {
-				return fmt.Errorf("canonicalise %s: unparseable event JSON", id)
-			}
-			if emitsCachePollution(body) {
-				statePrevContentEmitted.Inc()
-			}
-
+			// Written verbatim. The stored JSON is spliced rather than
+			// re-encoded on purpose: 14,654 events here carry an escaped NUL,
+			// and a response is not the place to discover that a round trip
+			// altered one.
 			if written > 0 {
 				if _, err := io.WriteString(w, ","); err != nil {
 					return err
@@ -282,7 +276,6 @@ func (r *Resolver) streamEvents(ctx context.Context, w io.Writer, digest *digest
 			if _, err := w.Write(body); err != nil {
 				return err
 			}
-			digest.add(canonical)
 			written++
 		}
 		return nil
@@ -330,52 +323,17 @@ func (r *Resolver) serialisePDU(ev *store.Event) ([]byte, error) {
 	return out, nil
 }
 
-// emitsCachePollution reports that a PDU we are about to serve carries
-// prev_content or prev_sender.
-//
-// Canonical drops those from both sides, because a digest cannot apply a
-// tolerance asymmetrically the way Equal does. That loses the one direction
-// worth knowing about: Synapse emitting them is its cached EventBase leaking
-// and is not our concern, but us emitting them would be our bug.
-//
-// It is recoverable with no comparison at all -- we can look at what we
-// produced. get_persisted_pdu does not load these fields, so if we emit one it
-// came from stored JSON and wants explaining.
-//
-// Checked on the parsed unsigned object rather than by scanning the body for
-// the field names, which would count any message whose text happens to mention
-// them.
-func emitsCachePollution(body []byte) bool {
-	var ev struct {
-		Unsigned map[string]json.RawMessage `json:"unsigned"`
-	}
-	if err := json.Unmarshal(body, &ev); err != nil {
-		return false
-	}
-	for _, field := range []string{"prev_content", "prev_sender"} {
-		if _, ok := ev.Unsigned[field]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-// DigestStateResponse computes a StateResult from a /state response body.
-//
-// This is the far half of the comparison. Shadow mode cannot capture a /state
-// response -- the largest here is about 97MB, and raising capture_mb to hold
-// one would mean up to a gigabyte across 16 concurrent comparisons, recreating
-// the problem the streaming resolver exists to avoid. So Synapse's answer is
-// streamed and folded into the same digest instead, and the two sides are
-// compared as 32 bytes.
+// DigestStateResponse computes a StateDigest from a /state response body,
+// ours or Synapse's: the largest here is about 97MB, so both sides are
+// streamed and compared as 32 bytes.
 //
 // Memory is bounded by the largest single PDU, not by the response.
 //
-// The depth filter is deliberately not applied here: Synapse has already
-// applied it to what it sent, and applying it again would hide precisely the
-// disagreement this comparison exists to find.
-func DigestStateResponse(r io.Reader) (StateResult, error) {
-	var res StateResult
+// The depth filter is deliberately not applied here: both sides have already
+// applied it to what they sent, and applying it again would hide precisely the
+// disagreement a comparison exists to find.
+func DigestStateResponse(r io.Reader) (StateDigest, error) {
+	var res StateDigest
 	var pduDigest, authDigest digestAccumulator
 
 	pdus, authChain, err := ScanStateResponse(r, func(array string, _ int, canonical []byte, _ json.RawMessage) error {
@@ -412,18 +370,9 @@ type PDUVisitor func(array string, index int, canonical []byte, raw json.RawMess
 
 // ScanStateResponse streams a /state response and hands every PDU to visit.
 //
-// This is the one parser for the far side of a /state comparison; both the
-// digest and the mismatch diagnosis are expressed in terms of it. Keeping two
-// copies of this walk is how the diff-log replay drifted twice, and a
-// comparison whose two readers disagree about what they read is worse than no
-// comparison.
-//
-// Memory is bounded by the largest single PDU, not by the response, provided
-// visit does not retain what it is handed.
-//
-// The depth filter is deliberately not applied here: Synapse has already
-// applied it to what it sent, and applying it again would hide precisely the
-// disagreement this comparison exists to find.
+// The one parser of a /state response, behind DigestStateResponse. Memory is
+// bounded by the largest single PDU, not by the response, provided visit does
+// not retain what it is handed.
 func ScanStateResponse(r io.Reader, visit PDUVisitor) (pdus, authChain int, err error) {
 	dec := json.NewDecoder(r)
 
@@ -473,7 +422,7 @@ func ScanStateResponse(r io.Reader, visit PDUVisitor) (pdus, authChain int, err 
 }
 
 // Agrees reports whether two /state answers are the same, in both arrays.
-func (s StateResult) Agrees(other StateResult) bool {
+func (s StateDigest) Agrees(other StateDigest) bool {
 	return s.PDUDigest == other.PDUDigest &&
 		s.AuthChainDigest == other.AuthChainDigest
 }

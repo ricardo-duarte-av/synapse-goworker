@@ -20,7 +20,7 @@ import (
 
 // Write mode's decisions: on_receive_pdu (handlers/federation_event.py:193)
 // for an event write mode holds the room lock for, computed with the same
-// code the shadow checks against Synapse. Decide writes nothing; the caller
+// code cmd/pdusweep checks against Synapse. Decide writes nothing; the caller
 // (package inbound) stores the state groups, the push rows, and sends the
 // event to the persister.
 
@@ -125,18 +125,6 @@ func (c *StateCache) put(groups []int64, e *StateEntry) {
 	c.m[cacheKey(groups)] = stateCacheItem{e: e, at: now}
 }
 
-// DropUngrouped drops the entry for groups if no group was ever stored for
-// it: the shadow's, when Synapse's group is unknown, so a full state map is
-// not kept for an hour.
-func (c *StateCache) DropUngrouped(groups []int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	k := cacheKey(groups)
-	if it, ok := c.m[k]; ok && it.e.Group() == 0 {
-		delete(c.m, k)
-	}
-}
-
 // Pop drops the entry for groups: resolve_state_groups does when a cached
 // entry points at a deleted group.
 func (c *StateCache) Pop(groups []int64) {
@@ -174,9 +162,6 @@ type DecideInput struct {
 	OurServer string
 	// Cache is write mode's state cache.
 	Cache *StateCache
-	// Snapshot, when set, is the room as found before Synapse handled the
-	// event (the shadow's); otherwise one is taken now.
-	Snapshot *pdustore.Snapshot
 	// StateBefore, when set, is the state before a pulled event whose prev
 	// events are missing, resolved from the remotes' state at them
 	// (_compute_event_context_with_maybe_missing_prevs). It is stored in
@@ -268,25 +253,20 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 
 	// We reprocess an event we hold only as an outlier; that path is
 	// Synapse's for now.
-	if in.Snapshot == nil {
-		got, bad, err := s.st.GetStoredEvents(ctx, []string{in.EventID})
-		if err != nil {
-			return nil, err
-		}
-		if bad[in.EventID] != nil {
-			d.Defer = "already held, unparseable"
-			return d, nil
-		}
-		if se := got[in.EventID]; se != nil && !se.Outlier {
-			d.Ignore = "already seen"
-			return d, nil
-		}
-		// Held only as an outlier: "De-outliering event", handled as new;
-		// the persister turns the outlier into a timeline event.
-	} else if in.Snapshot.EventPresent {
-		d.Defer = "held when the snapshot was taken"
+	got, bad, err := s.st.GetStoredEvents(ctx, []string{in.EventID})
+	if err != nil {
+		return nil, err
+	}
+	if bad[in.EventID] != nil {
+		d.Defer = "already held, unparseable"
 		return d, nil
 	}
+	if se := got[in.EventID]; se != nil && !se.Outlier {
+		d.Ignore = "already seen"
+		return d, nil
+	}
+	// Held only as an outlier: "De-outliering event", handled as new; the
+	// persister turns the outlier into a timeline event.
 
 	// _sanity_check_event.
 	if len(ev.PrevEvents) > 20 {
@@ -317,16 +297,14 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 
 	// Missing prev events are fetched from the origin; that is Synapse's
 	// for now.
-	snap := in.Snapshot
-	if snap == nil {
-		types, err := pdu.AuthTypesForEvent(in.Room, ev)
-		if err != nil {
-			d.Defer = "auth types: " + err.Error()
-			return d, nil
-		}
-		if snap, err = s.st.TakeSnapshot(ctx, ev.RoomID, in.EventID, ev.PrevEvents, types); err != nil {
-			return nil, err
-		}
+	types, err := pdu.AuthTypesForEvent(in.Room, ev)
+	if err != nil {
+		d.Defer = "auth types: " + err.Error()
+		return d, nil
+	}
+	snap, err := s.st.TakeSnapshot(ctx, ev.RoomID, in.EventID, ev.PrevEvents, types)
+	if err != nil {
+		return nil, err
 	}
 	if !snap.PrevsInTimeline && in.StateBefore == nil {
 		d.Defer = "missing prevs"

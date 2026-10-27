@@ -82,12 +82,12 @@ func liveClient() *http.Client {
 	return c
 }
 
-func askSynapseForState(t *testing.T, key *federation.SigningKey, base, roomID, eventID string) (StateResult, int) {
+func askSynapseForState(t *testing.T, key *federation.SigningKey, base, roomID, eventID string) (StateDigest, int) {
 	t.Helper()
 	return askSynapseVia(t, liveClient(), key, base, roomID, eventID)
 }
 
-func askSynapseVia(t *testing.T, client *http.Client, key *federation.SigningKey, base, roomID, eventID string) (StateResult, int) {
+func askSynapseVia(t *testing.T, client *http.Client, key *federation.SigningKey, base, roomID, eventID string) (StateDigest, int) {
 	t.Helper()
 
 	// Built once and used for both the signature and the request: the
@@ -122,7 +122,7 @@ func askSynapseVia(t *testing.T, client *http.Client, key *federation.SigningKey
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		t.Logf("    upstream %d: %s", resp.StatusCode, body)
-		return StateResult{}, resp.StatusCode
+		return StateDigest{}, resp.StatusCode
 	}
 	res, err := DigestStateResponse(resp.Body)
 	if err != nil {
@@ -210,8 +210,22 @@ func TestLiveStateAgainstSynapse(t *testing.T) {
 				t.Skipf("Synapse answered %d; nothing to compare", status)
 			}
 
+			// What we wrote is digested as it streams, the same way Synapse's
+			// answer was, so neither is ever resident.
 			start := time.Now()
-			ours, err := r.State(ctx, io.Discard, ourServer, tg.room, tg.event)
+			pr, pw := io.Pipe()
+			digested := make(chan StateDigest, 1)
+			go func() {
+				d, err := DigestStateResponse(pr)
+				if err != nil {
+					pr.CloseWithError(err)
+				}
+				io.Copy(io.Discard, pr)
+				digested <- d
+			}()
+			res, err := r.State(ctx, pw, ourServer, tg.room, tg.event)
+			pw.CloseWithError(err)
+			ours := <-digested
 			if err != nil {
 				t.Fatalf("native /state: %v", err)
 			}
@@ -219,7 +233,7 @@ func TestLiveStateAgainstSynapse(t *testing.T) {
 
 			t.Logf("    pdus %d/%d  auth_chain %d/%d  bytes %s  ours %s",
 				ours.PDUs, upstream.PDUs, ours.AuthChain, upstream.AuthChain,
-				humanBytes(ours.Bytes), elapsed.Round(time.Millisecond))
+				humanBytes(res.Bytes), elapsed.Round(time.Millisecond))
 
 			if !ours.Agrees(upstream) {
 				disagreed++

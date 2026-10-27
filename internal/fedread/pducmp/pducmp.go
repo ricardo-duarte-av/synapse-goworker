@@ -1,9 +1,8 @@
 // Package pducmp decides whether two serialisations of the same event agree.
 //
-// It exists so the shadow comparator and the diff-log replay test share one
-// definition of "agree". They previously each carried their own copy, which
-// drifted twice: a fix to one left the other reporting differences that the
-// live comparator tolerated, and vice versa.
+// The live parity tests and the sweeps share this one definition of "agree".
+// In gopro two copies of it drifted twice: a fix to one left the other
+// reporting differences the first tolerated, and vice versa.
 package pducmp
 
 import (
@@ -42,7 +41,7 @@ func normalise(raw json.RawMessage) (map[string]any, bool) {
 	// there: it decides whether /state serves an event at all.
 	//
 	// The failure direction is what kept it invisible. It could only ever hide
-	// a mismatch, never invent one, so nothing in the metrics or the diff log
+	// a mismatch, never invent one, so nothing in the metrics or the logs
 	// would have pointed at it.
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

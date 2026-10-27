@@ -60,8 +60,8 @@ type Result struct {
 	//     genuine DAG fork
 	//   - a prev event has no state group at all, which means it is an outlier
 	//
-	// Keeping the flag rather than hiding the fallback is what lets the shadow
-	// MEASURE the remaining gap instead of guessing at it; see internal/difflog.
+	// Keeping the flag rather than hiding the fallback is what lets the gap be
+	// measured (gofed_approximate_routes_total) instead of guessed at.
 	Approximate bool
 
 	// Fallback names why an approximate answer was given, so the two causes can

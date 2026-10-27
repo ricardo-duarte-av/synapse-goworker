@@ -1,16 +1,12 @@
 // Package store provides read-only access to Synapse's PostgreSQL database.
 //
-// Every query here is a SELECT, and the role it connects as has only SELECT
-// granted with default_transaction_read_only set (deploy/readonly-role.sql), so
-// a bug cannot write even if it tries.
+// Every query here is a SELECT; the no-write tests hold it.
 //
-// That is not merely defensive. A real federation sender CONSUMES what it
-// reads: it deletes rows from device_federation_outbox and
-// device_lists_outbound_pokes once a transaction succeeds, and advances
-// destinations.last_successful_stream_ordering. This worker does none of that,
-// and the asymmetry has to be handled deliberately rather than discovered --
-// see internal/state for where our own cursors live, and docs/shadow-safety.md
-// for why writing any of Synapse's tables would break the live homeserver.
+// A federation sender CONSUMES what it reads: it deletes rows from
+// device_federation_outbox and device_lists_outbound_pokes once a transaction
+// succeeds, and advances destinations.last_successful_stream_ordering. Those
+// writes are write.go's, on their own pool; package state holds our own
+// cursors.
 package store
 
 import (

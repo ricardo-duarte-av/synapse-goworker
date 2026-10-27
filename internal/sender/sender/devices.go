@@ -27,16 +27,12 @@ type DeviceStore interface {
 // Devices moves to-device messages and device list updates into destination
 // queues.
 //
-// This path is where being read-only bites hardest. A real sender DELETES from
-// device_federation_outbox and device_lists_outbound_pokes once a transaction
-// succeeds -- that deletion IS its cursor. We must not delete (it would stop
-// real device updates reaching real servers and break E2EE for real users, with
-// nothing in any log to say so), so each destination gets a high-water mark in
-// our own table instead. See docs/shadow-safety.md.
-//
-// The consequence: our marks and Synapse's deletions drift apart the moment
-// either sender does anything the other does not, which is expected and is
-// itself worth watching.
+// A sender DELETES from device_federation_outbox and
+// device_lists_outbound_pokes once a transaction succeeds -- that deletion IS
+// Synapse's cursor, and app/writer.go performs it. Each destination also gets
+// a high-water mark in our own table (package state), which is what this
+// worker reads from: a deletion that failed is not retried inline, and the
+// mark keeps the same rows from being re-read on every pass meanwhile.
 type Devices struct {
 	store   DeviceStore
 	cursors Cursors

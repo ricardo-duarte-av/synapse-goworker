@@ -6,9 +6,7 @@ import (
 )
 
 var (
-	// nativeServed counts requests answered from our own implementation, which
-	// in canary and native modes are the ones that actually reach a remote
-	// server.
+	// nativeServed counts requests answered from our own implementation.
 	nativeServed = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "gopro_native_served_total",
 		Help: "Requests answered by the native implementation, by endpoint and status class.",
@@ -17,8 +15,8 @@ var (
 	// nativeFallback counts requests that were meant to be answered natively
 	// and were proxied instead.
 	//
-	// This is the number that says whether a canary is healthy. A fallback is
-	// not an outage — the client gets Synapse's answer either way — but a
+	// This is the number that says whether the native path is healthy. A
+	// fallback is not an outage — the client gets Synapse's answer either way — but a
 	// rising rate means the native path is failing on real traffic, and the
 	// reason label says whether that is our code, our verifier, or a timeout.
 	nativeFallback = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -26,14 +24,13 @@ var (
 		Help: "Requests that fell back to Synapse instead of being answered natively, by reason.",
 	}, []string{"endpoint", "reason"})
 
-	// nativeFallbackServed counts requests that were sampled into the canary
-	// and ended up served by Synapse anyway. It is the denominator for the
-	// fallback reasons: a canary at 5% that falls back on all of them is
-	// indistinguishable from shadow mode, and should look like it in metrics
-	// rather than quietly appearing healthy.
+	// nativeFallbackServed counts requests we began and that ended up served
+	// by Synapse anyway: the denominator for the fallback reasons, so a native
+	// path that falls back on everything looks like it in the metrics rather
+	// than quietly appearing healthy.
 	nativeFallbackServed = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "gopro_native_fallback_served_total",
-		Help: "Requests sampled for native serving that were proxied instead.",
+		Help: "Requests begun natively that were served by Synapse instead.",
 	}, []string{"endpoint"})
 
 	// fallbackUpstream records what Synapse did for a request that fell back,
@@ -58,8 +55,7 @@ var (
 	}, []string{"endpoint", "reason"})
 
 	// nativeDuration measures only requests actually served natively, so it
-	// describes what remote servers experienced rather than what a shadow
-	// comparison computed.
+	// describes what remote servers experienced.
 	// upstreamSkipped counts requests never forwarded because the client had
 	// already hung up.
 	//

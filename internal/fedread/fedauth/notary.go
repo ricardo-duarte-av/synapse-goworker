@@ -76,8 +76,8 @@ func (v *Verifier) queryNotaries(ctx context.Context, serverName string, keyID i
 // warmCache tries the cheap key sources before mautrix falls back to fetching
 // from the origin server directly.
 //
-// Called off the request path during shadow comparison; when serving natively
-// it runs inline, which is why every tier is bounded by the request context.
+// It runs inline on the request path, which is why every tier is bounded by
+// the request context.
 func (v *Verifier) warmCache(ctx context.Context, authHeader string) {
 	if len(v.notaries) == 0 {
 		return

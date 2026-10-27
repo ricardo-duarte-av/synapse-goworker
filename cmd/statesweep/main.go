@@ -3,28 +3,23 @@
 // /state receives essentially no real traffic on this deployment: 59 organic
 // requests over four days, 57 of them from a single misbehaving peer that has
 // since gone quiet, against 4,652 /state_ids and 11,775 /event in a single
-// day. Waiting for a shadow soak to accumulate would mean waiting past the
-// deprecation of the very worker the comparison runs against.
+// day. Organic traffic will not exercise it.
 //
 // So this walks every room and asks for /state at each one's forward
-// extremity, aimed at gopro-worker rather than at Synapse. That matters: the
-// worker performs the real comparison, on the real code path, and records the
-// result to the diff log and the metrics the promotion gate reads. This
-// program generates traffic; it deliberately does not judge it.
+// extremity, aimed at the worker rather than at Synapse. This program
+// generates traffic; it deliberately does not judge it.
 //
-// The evidence it produces is weaker than organic traffic in one specific way,
-// and the difference should not be glossed over. Shadow mode's value on this
-// project was that every bug it caught was found by a traffic pattern nobody
-// anticipated. A sweep tests the rooms its author thought to enumerate. What
-// it offers instead is exhaustiveness: organic /state traffic touched three
+// The evidence it produces is weaker than organic traffic in one specific way:
+// a sweep tests the rooms its author thought to enumerate, where organic
+// traffic finds the patterns nobody anticipated. What it offers instead is
+// exhaustiveness: organic /state traffic touched three
 // rooms in four days, and this touches all of them -- every room version,
 // every ACL, the rooms with rejected events, the room full of depth-invalid
 // attack artefacts.
 //
-// In goworker there is no canary or diff log any more: every request is
-// answered natively and nothing compares it. This now only generates the
-// traffic -- useful as a soak and memory test against the risk strata below
-// -- and judging the answers means comparing them with main's.
+// Every request is answered natively and nothing compares it: this is a soak
+// and memory test against the risk strata below, and judging the answers means
+// comparing them with main's.
 package main
 
 import (

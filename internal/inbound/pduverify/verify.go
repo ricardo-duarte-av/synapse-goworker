@@ -1,7 +1,8 @@
 // Package pduverify replays events through the Go port of Synapse's PDU
 // handling -- signatures, content hash, state resolution, the receive-path
 // auth pipeline -- and compares each outcome with what Synapse decided and
-// stored. The offline sweep (cmd/pdusweep) and the live PDU shadow share it.
+// stored, for the offline sweep (cmd/pdusweep); write mode decides with the
+// same code (Decide).
 package pduverify
 
 import (

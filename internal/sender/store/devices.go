@@ -26,9 +26,9 @@ type ToDeviceMessage struct {
 // rather than to the last row -- the gap is rows for other destinations, and
 // leaving the cursor behind them would re-scan the same range forever.
 //
-// The real sender DELETES these rows once the transaction succeeds. We never
-// do; our cursor lives in internal/state instead. See docs/shadow-safety.md:
-// consuming them would silently stop to-device messages reaching real servers.
+// A sender DELETES these rows once the transaction succeeds; that is
+// Writer.DeleteDeviceMsgsForRemote, called from app/writer.go. Reading never
+// consumes them.
 func (s *Store) GetNewDeviceMsgsForRemote(
 	ctx context.Context, destination string, lastStreamID, currentStreamID int64, limit int,
 ) ([]ToDeviceMessage, int64, error) {
@@ -136,8 +136,8 @@ func (s *Store) GetDestinationsForDevice(ctx context.Context, streamID int64) ([
 // MaxDeviceOutboxStreamID and MaxDeviceListOutboundStreamID bound the device
 // queries above.
 //
-// A real sender learns these from the replication stream's POSITION. We do not
-// publish REPLICATE, so we read them (docs/shadow-safety.md).
+// A Python sender learns these from the replication stream's POSITION. We do
+// not publish REPLICATE (package replication), so we read them.
 func (s *Store) MaxDeviceOutboxStreamID(ctx context.Context) (int64, error) {
 	return s.maxStreamID(ctx, `SELECT COALESCE(MAX(stream_id), 0) FROM device_federation_outbox`)
 }

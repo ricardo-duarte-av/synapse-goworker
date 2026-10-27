@@ -78,9 +78,8 @@ func (s *Sender) handleEvent(ctx context.Context, e store.Event) (bool, error) {
 	// database about destinations that are actually ours.
 	//
 	// Synapse writes destination_rooms BEFORE this filter, so a server that is
-	// down still has the event recorded as owed to it. We cannot write that
-	// table, which means our catch-up is driven by our own cursors instead --
-	// see docs/shadow-safety.md and internal/state.
+	// down still has the event recorded as owed to it. Catch-up here is driven
+	// by our own cursors (package state).
 	retryStart := time.Now()
 	timings, err := s.cfg.Store.GetDestinationRetryTimings(ctx, ours)
 	if err != nil {

@@ -57,8 +57,8 @@ type pushRow struct {
 //
 // before is the state before the event (Replay computes it); nil falls back
 // to the event's own state group, which is the state before a non-state
-// event. snap, from the live shadow, holds the room as Synapse found it; nil
-// in the sweep. Who is in the room, and their display names, are read from
+// event. snap holds the room as Synapse found it, when the caller has one;
+// nil in the sweep. Who is in the room, and their display names, are read from
 // current state, so the check is skipped when any member event has been
 // persisted since -- the reads would not be what Synapse saw.
 func (s *Verifier) Push(ctx context.Context, id string, before pdu.StateMap, snap *pdustore.Snapshot) *Result {

@@ -75,7 +75,7 @@ type Processor struct {
 }
 
 // NewProcessor builds a Processor. send may be nil for a processor that only
-// plans, as in shadow mode.
+// plans, as in tests.
 func NewProcessor(router *Router, aclChecker ACL, send Sender, trackPresence bool, log zerolog.Logger) *Processor {
 	return &Processor{
 		router:        router,
@@ -287,13 +287,12 @@ func (p *Processor) Execute(ctx context.Context, origin string, steps []Step) er
 	return firstErr
 }
 
-// Record counts a plan's decisions. path is "native" for EDUs actually
-// handled, "shadow" for what shadow mode would have done.
-func Record(path string, steps []Step) {
+// Record counts a plan's decisions.
+func Record(steps []Step) {
 	for _, s := range steps {
-		edusDecided.WithLabelValues(path, edutype.Label(s.Type), string(s.Action), s.Instance).Inc()
+		edusDecided.WithLabelValues(edutype.Label(s.Type), string(s.Action), s.Instance).Inc()
 		if s.RemovedRooms > 0 {
-			receiptRoomsRemoved.WithLabelValues(path).Add(float64(s.RemovedRooms))
+			receiptRoomsRemoved.Add(float64(s.RemovedRooms))
 		}
 	}
 }
@@ -301,10 +300,10 @@ func Record(path string, steps []Step) {
 var (
 	edusDecided = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "goinbound_edus_total",
-		Help: "Inbound EDUs by path (native or shadow), type, action and destination writer instance.",
-	}, []string{"path", "edu_type", "action", "writer"})
-	receiptRoomsRemoved = promauto.NewCounterVec(prometheus.CounterOpts{
+		Help: "Inbound EDUs by type, action and destination writer instance.",
+	}, []string{"edu_type", "action", "writer"})
+	receiptRoomsRemoved = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "goinbound_receipt_rooms_removed_by_acl_total",
 		Help: "Rooms removed from receipt EDUs because the origin is banned by the room's server ACL.",
-	}, []string{"path"})
+	})
 )

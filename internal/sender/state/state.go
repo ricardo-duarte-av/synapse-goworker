@@ -1,22 +1,20 @@
 // Package state stores this worker's own stream cursors.
 //
-// It is the only thing the worker writes, anywhere, and it exists because none
-// of the mechanisms a real federation sender uses to remember its place are
-// available to a shadow:
+// Synapse's own bookkeeping is written too (app/writer.go), but neither of
+// its mechanisms is a cursor this worker can resume from on its own:
 //
 //   - federation_stream_position is keyed (type, instance_name), and Synapse
 //     rewrites it at every startup from MIN(stream_id) across the configured
-//     senders, deleting rows for instances it does not recognise. A row of ours
-//     would either be deleted or drag both real senders backwards.
+//     senders, deleting rows for instances it does not recognise.
 //   - device_federation_outbox and device_lists_outbound_pokes are consumed by
-//     DELETE once a transaction succeeds. We must not consume them, so without
-//     our own high-water marks we would re-read the same device pokes on every
-//     pass, forever.
+//     DELETE once a transaction succeeds. A deletion that failed is not
+//     retried inline, and without our own high-water marks the same rows
+//     would be re-read on every pass until one succeeded.
 //
 // The table lives in its own schema under its own role, which can reach nothing
 // else, and nothing in Synapse reads it. Open creates the tables on first start
 // (see ensureTables); deploy/state-role.sql creates them together with that
-// role. See docs/shadow-safety.md.
+// role.
 package state
 
 import (
@@ -43,8 +41,8 @@ type Store struct {
 	table string
 	// retryTable holds our own per-destination backoff. Empty disables it.
 	retryTable string
-	// instance is the sender we impersonate, so two shadows of two different
-	// senders can share a database without overwriting each other.
+	// instance keys every row, so two senders can share a database without
+	// overwriting each other's cursors.
 	instance string
 	// created names the tables Open had to create, for the startup log.
 	created []string

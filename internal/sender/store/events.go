@@ -62,9 +62,9 @@ func (s *Store) GetAllNewEventIDsStream(ctx context.Context, from, upto int64, l
 
 // MaxStreamOrdering is the newest event in the database.
 //
-// Used to seed the pickup loop's upper bound at startup. A real sender learns
-// this from the replication stream's POSITION, which we never ask for
-// (docs/shadow-safety.md), so we read it instead.
+// Used to seed the pickup loop's upper bound at startup. A Python sender
+// learns this from the replication stream's POSITION, which we never ask for
+// (package replication), so we read it instead.
 func (s *Store) MaxStreamOrdering(ctx context.Context) (int64, error) {
 	ctx = dbtrace.WithQueryName(ctx, "max_stream_ordering")
 	var max int64

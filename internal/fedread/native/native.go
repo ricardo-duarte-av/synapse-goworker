@@ -1,14 +1,7 @@
 // Package native computes an endpoint's answer from our own implementation.
 //
-// It exists so the shadow comparator and the request path cannot disagree
-// about what "our answer" is. They previously would have had to each carry
-// their own dispatch and error mapping, and that pattern has already caused a
-// bug in this project: the diff-log replay kept a private copy of the
-// comparison rules and drifted from the live comparator twice.
-//
-// A canary makes the distinction matter much more than it did in shadow mode.
-// Shadow answers are only ever compared; canary answers are served to remote
-// servers.
+// The request path and the sweeps (cmd/*sweep) call the same dispatch and
+// error mapping, so they cannot disagree about what "our answer" is.
 package native
 
 import (
@@ -26,8 +19,7 @@ import (
 //
 // State is the odd one out: it writes its answer rather than returning it,
 // because a /state response can reach 97MB here and returning one would defeat
-// the point of implementing the endpoint at all. Callers that only want to
-// compare pass io.Discard and use the digest.
+// the point of implementing the endpoint at all.
 type Resolver interface {
 	StateIDs(ctx context.Context, origin, roomID, eventID string) (*matrixstate.StateIDsResponse, error)
 	Event(ctx context.Context, origin, serverName, eventID string) (*matrixstate.TransactionResponse, error)
@@ -42,8 +34,8 @@ type Request struct {
 	RoomID   string
 	EventID  string
 	// Body is the raw request body, for endpoints whose answer depends on it.
-	// Carried as bytes rather than parsed so the shadow comparator and the
-	// request path parse it identically.
+	// Carried as bytes rather than parsed, so every caller parses it
+	// identically.
 	Body []byte
 }
 

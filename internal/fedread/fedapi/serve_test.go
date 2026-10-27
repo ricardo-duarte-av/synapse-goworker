@@ -607,9 +607,8 @@ func (f *fakeResolver) State(ctx context.Context, w io.Writer, origin, roomID, e
 	if _, err := io.WriteString(w, f.stateBody); err != nil {
 		return matrixstate.StateResult{}, err
 	}
-	// Digested the same way the real resolver digests what it writes, so the
-	// test exercises the comparison rather than a shortcut around it.
-	return matrixstate.DigestStateResponse(strings.NewReader(f.stateBody))
+	d, err := matrixstate.DigestStateResponse(strings.NewReader(f.stateBody))
+	return matrixstate.StateResult{PDUs: d.PDUs, AuthChain: d.AuthChain, Bytes: int64(len(f.stateBody))}, err
 }
 
 func (s *slowResolver) State(ctx context.Context, w io.Writer, origin, roomID, eventID string) (matrixstate.StateResult, error) {

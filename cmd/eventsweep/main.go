@@ -22,15 +22,10 @@
 // taken back. It is reachable with our own signing key, because our membership
 // has a beginning: everything before it is invisible to us too.
 //
-// Like statesweep, this generates traffic and does not judge it. /event runs
-// at canary:100, so each request is served natively and then verified against
-// Synapse by the worker itself, on the real code path, with any disagreement
-// landing in the diff log.
-//
-// In goworker there is no canary or diff log any more: every request is
-// answered natively and nothing compares it. This now only generates the
-// traffic -- useful as a soak and memory test against the risk strata below
-// -- and judging the answers means comparing them with main's.
+// Like statesweep, this generates traffic and does not judge it: every
+// request is answered natively and nothing compares it. It is a soak and
+// memory test against the risk strata below, and judging the answers means
+// comparing them with main's.
 package main
 
 import (

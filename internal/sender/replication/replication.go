@@ -101,8 +101,8 @@ type Handler interface {
 	// about.
 	OnPosition(stream, instance string, position int64)
 	// OnRemoteServerUp says a destination that was backing off has been seen
-	// to work by somebody else. A real sender wakes that destination
-	// immediately; a shadow records the same intent.
+	// to work by somebody else; the sender wakes that destination
+	// immediately.
 	OnRemoteServerUp(server string)
 	// OnReplicate says a Synapse process has (re)connected to the bus. It is
 	// called on the subscriber's goroutine and must not block.

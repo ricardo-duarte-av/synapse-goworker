@@ -53,15 +53,6 @@ func TestStateCache(t *testing.T) {
 	if c.get([]int64{9, 7}).Group() != 42 {
 		t.Error("group not shared")
 	}
-	c.DropUngrouped([]int64{7, 9})
-	if c.get([]int64{7, 9}) == nil {
-		t.Error("a grouped entry was dropped")
-	}
-	c.put([]int64{1, 2}, NewEntry(0, 0, nil, pdu.StateMap{}))
-	c.DropUngrouped([]int64{2, 1})
-	if c.get([]int64{1, 2}) != nil {
-		t.Error("an ungrouped entry was kept")
-	}
 	now = now.Add(61 * time.Minute)
 	if c.get([]int64{7, 9}) != nil {
 		t.Error("an entry outlived its hour")

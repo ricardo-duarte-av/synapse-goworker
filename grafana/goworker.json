@@ -7931,8 +7931,8 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (path, edu_type, action) (rate(goinbound_edus_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
-          "legendFormat": "{{path}} {{edu_type}} {{action}}",
+          "expr": "sum by (edu_type, action) (rate(goinbound_edus_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{edu_type}} {{action}}",
           "range": true,
           "refId": "A"
         }
@@ -7995,8 +7995,8 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (path, writer) (rate(goinbound_edus_total{job=~\"$job\", instance=~\"$instance\", action=\"forward\"}[$bucket]))",
-          "legendFormat": "{{path}} \u2192 {{writer}}",
+          "expr": "sum by (writer) (rate(goinbound_edus_total{job=~\"$job\", instance=~\"$instance\", action=\"forward\"}[$bucket]))",
+          "legendFormat": "\u2192 {{writer}}",
           "range": true,
           "refId": "A"
         }
@@ -8209,8 +8209,8 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (path) (rate(goinbound_receipt_rooms_removed_by_acl_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
-          "legendFormat": "receipt rooms removed ({{path}})",
+          "expr": "sum(rate(goinbound_receipt_rooms_removed_by_acl_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "receipt rooms removed",
           "range": true,
           "refId": "B"
         }
@@ -13506,73 +13506,13 @@
       "id": 215
     },
     {
-      "type": "timeseries",
-      "title": "/state PDUs with prev_content",
-      "description": "PDUs served on /state carrying prev_content or prev_sender.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 486,
-        "w": 8,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(gopro_state_prev_content_emitted_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
-          "legendFormat": "PDUs",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "id": 216
-    },
-    {
       "type": "row",
       "title": "Outbound federation: Status",
       "id": 217,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 494,
+        "y": 486,
         "w": 24,
         "h": 1
       },
@@ -13589,7 +13529,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 495,
+        "y": 487,
         "w": 4,
         "h": 4
       },
@@ -13663,7 +13603,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 495,
+        "y": 487,
         "w": 4,
         "h": 4
       },
@@ -13737,7 +13677,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 495,
+        "y": 487,
         "w": 4,
         "h": 4
       },
@@ -13811,7 +13751,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 495,
+        "y": 487,
         "w": 4,
         "h": 4
       },
@@ -13869,7 +13809,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 495,
+        "y": 487,
         "w": 4,
         "h": 4
       },
@@ -13931,7 +13871,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 495,
+        "y": 487,
         "w": 4,
         "h": 4
       },
@@ -13985,7 +13925,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 499,
+        "y": 491,
         "w": 24,
         "h": 1
       },
@@ -14002,7 +13942,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 500,
+        "y": 492,
         "w": 12,
         "h": 8
       },
@@ -14076,7 +14016,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 500,
+        "y": 492,
         "w": 12,
         "h": 8
       },
@@ -14140,7 +14080,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 508,
+        "y": 500,
         "w": 12,
         "h": 8
       },
@@ -14269,7 +14209,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 508,
+        "y": 500,
         "w": 12,
         "h": 8
       },
@@ -14329,7 +14269,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 516,
+        "y": 508,
         "w": 24,
         "h": 1
       },
@@ -14346,7 +14286,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 517,
+        "y": 509,
         "w": 12,
         "h": 9
       },
@@ -14430,7 +14370,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 517,
+        "y": 509,
         "w": 12,
         "h": 9
       },
@@ -14525,7 +14465,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 526,
+        "y": 518,
         "w": 8,
         "h": 8
       },
@@ -14609,7 +14549,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 526,
+        "y": 518,
         "w": 8,
         "h": 8
       },
@@ -14693,7 +14633,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 526,
+        "y": 518,
         "w": 8,
         "h": 8
       },
@@ -14757,7 +14697,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 534,
+        "y": 526,
         "w": 24,
         "h": 7
       },
@@ -14878,7 +14818,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 541,
+        "y": 533,
         "w": 24,
         "h": 1
       },
@@ -14895,7 +14835,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 542,
+        "y": 534,
         "w": 12,
         "h": 8
       },
@@ -14979,7 +14919,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 542,
+        "y": 534,
         "w": 12,
         "h": 8
       },
@@ -15043,7 +14983,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 550,
+        "y": 542,
         "w": 8,
         "h": 7
       },
@@ -15107,7 +15047,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 550,
+        "y": 542,
         "w": 8,
         "h": 7
       },
@@ -15171,7 +15111,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 550,
+        "y": 542,
         "w": 8,
         "h": 7
       },
@@ -15231,7 +15171,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 557,
+        "y": 549,
         "w": 24,
         "h": 1
       },
@@ -15248,7 +15188,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 558,
+        "y": 550,
         "w": 12,
         "h": 8
       },
@@ -15308,7 +15248,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 566,
+        "y": 558,
         "w": 24,
         "h": 1
       },
@@ -15325,7 +15265,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 567,
+        "y": 559,
         "w": 12,
         "h": 8
       },
@@ -15389,7 +15329,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 567,
+        "y": 559,
         "w": 12,
         "h": 8
       },
@@ -15449,7 +15389,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 575,
+        "y": 567,
         "w": 24,
         "h": 1
       },
@@ -15466,7 +15406,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 576,
+        "y": 568,
         "w": 12,
         "h": 8
       },
@@ -15530,7 +15470,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 576,
+        "y": 568,
         "w": 12,
         "h": 8
       },
@@ -15594,7 +15534,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 584,
+        "y": 576,
         "w": 8,
         "h": 7
       },
@@ -15658,7 +15598,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 584,
+        "y": 576,
         "w": 8,
         "h": 7
       },
@@ -15742,7 +15682,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 584,
+        "y": 576,
         "w": 8,
         "h": 7
       },
@@ -15812,7 +15752,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 591,
+        "y": 583,
         "w": 24,
         "h": 1
       },
@@ -15829,7 +15769,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 592,
+        "y": 584,
         "w": 8,
         "h": 8
       },
@@ -15914,7 +15854,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 592,
+        "y": 584,
         "w": 8,
         "h": 8
       },
@@ -15974,7 +15914,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 592,
+        "y": 584,
         "w": 8,
         "h": 8
       },
@@ -16035,7 +15975,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 600,
+        "y": 592,
         "w": 8,
         "h": 8
       },

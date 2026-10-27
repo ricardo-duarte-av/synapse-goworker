@@ -59,7 +59,7 @@ type Config struct {
 }
 
 // Loader reads persisted timings, and Persister writes them. Both are optional:
-// a shadow has no persistence and keeps the backoff in memory for its own life.
+// without them (tests) the backoff lives in memory for the process's life.
 type Loader func(ctx context.Context, destinations []string) (map[string]Timings, error)
 
 // Persister writes a destination's timings.

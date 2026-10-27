@@ -1,7 +1,7 @@
 // Command gmesweep drives a /get_missing_events soak across every room.
 //
-// Shadow mode gave this endpoint 237 clean comparisons in three hours, but
-// across only twelve rooms: eighty-eight servers asking about a dozen rooms.
+// gopro's comparison with Synapse gave this endpoint 237 clean answers in three
+// hours, but across only twelve rooms: eighty-eight servers asking about a dozen rooms.
 // The risk surface here is per-room -- history visibility, server ACLs, room
 // versions, rejected events reachable through the DAG -- so depth in twelve
 // rooms exercises almost none of it. That is the same shape of coverage that
@@ -15,13 +15,10 @@
 // overnight logs show real servers behave this way: median earliest_events
 // around three to five, and only one request in a night sent an empty list.
 //
-// Like the other sweeps this generates traffic and does not judge it. The
-// worker compares, on the real code path, and records to the diff log.
-//
-// In goworker there is no canary or diff log any more: every request is
-// answered natively and nothing compares it. This now only generates the
-// traffic -- useful as a soak and memory test against the risk strata below
-// -- and judging the answers means comparing them with main's.
+// Like the other sweeps this generates traffic and does not judge it: every
+// request is answered natively and nothing compares it. It is a soak and
+// memory test against the risk strata below, and judging the answers means
+// comparing them with main's.
 package main
 
 import (
