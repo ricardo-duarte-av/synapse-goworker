@@ -1,8 +1,6 @@
 package store
 
 import (
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
-
 	"context"
 	"errors"
 	"fmt"
@@ -11,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
-// StateKey identifies a piece of room state.
-type StateKey struct {
-	Type     string
-	StateKey string
-}
+// StateKey identifies a piece of room state. The same type as the shared
+// state cache's, so a cached map is handed out as it is.
+type StateKey = statecache.Key
 
 // GetStateGroupForEvent returns the state group at an event.
 func (s *Store) GetStateGroupForEvent(ctx context.Context, eventID string) (int64, error) {

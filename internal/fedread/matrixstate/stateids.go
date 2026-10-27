@@ -8,8 +8,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // Resolver answers the federation read endpoints from the database.

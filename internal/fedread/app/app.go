@@ -9,7 +9,6 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
@@ -18,8 +17,10 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
 // Config is the `federation_reads:` block.
@@ -58,6 +59,10 @@ type Settings struct {
 	// subscription, which carries the cache invalidations. Nil without
 	// redis: the caches then do not run.
 	Replication *bus.Consumer
+	// States is the worker's one state cache, shared with inbound. This
+	// component arms and purges it: its replication consumer hears about
+	// purges.
+	States *statecache.Cache
 	// Upstream is Synapse's main process, the fallback for anything not
 	// answered natively.
 	Upstream *proxy.Proxy
@@ -91,6 +96,7 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 		MaxConns:       cfg.MaxConns,
 		ConnectTimeout: cfg.ConnectTimeout,
 		Cache:          fc.Caches,
+		States:         cfg.States,
 	})
 	if err != nil {
 		return nil, err
@@ -127,7 +133,6 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 
 	s := fc.Caches.WithDefaults()
 	log.Info().
-		Int("state_groups_mb", s.StateGroupsMB).
 		Int("events_mb", s.EventsMB).
 		Int("event_state_groups_mb", s.EventStateGroupsMB).
 		Int("auth_chains_mb", s.AuthChainsMB).

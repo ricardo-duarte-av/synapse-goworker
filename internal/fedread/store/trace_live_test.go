@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // TestLiveCacheTrace checks each traced lookup against the real database: a

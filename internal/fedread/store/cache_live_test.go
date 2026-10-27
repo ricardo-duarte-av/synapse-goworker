@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // TestLiveCachedEventsAreNotMutated guards the interaction between caching and

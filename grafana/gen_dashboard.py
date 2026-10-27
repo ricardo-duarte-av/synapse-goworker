@@ -135,7 +135,7 @@ ts("Heap against the memory limit", "Heap in use and RSS against memory.limit_mb
    [(f'go_memstats_heap_inuse_bytes {J}', "heap in use"),
     (f'process_resident_memory_bytes {J}', "RSS"),
     (f'max(goworker_memory_limit_bytes{{{G}}}) > 0', "limit")], unit="bytes", w=8)
-ts("Cache bytes", "The byte-bounded caches of the federation reads, against their configured maxima.",
+ts("Cache bytes", "The byte-bounded caches. state_groups is the one state cache, shared by the federation reads and inbound write mode (memory.state_cache_mb).",
    [(f'sum by (cache) (gopro_cache_bytes{{{G}}})', "{{cache}}"),
     (f'sum(gopro_cache_max_bytes{{{G}}})', "sum of maxima")], unit="bytes", w=8, stack=True)
 ts("Goroutines and GC", "Goroutines are cheap and spawned freely; a steady climb is a leak, not load.",
@@ -231,9 +231,8 @@ ts("Pulled, outliers, pruned, nudges", "", [
     (f'sum(rate(goinbound_write_outliers_total{{{G}}}{R}))', "outliers"),
     (f'sum(rate(goinbound_write_pruned_total{{{G}}}{R}))', "pruned"),
     (f'sum by (outcome) (rate(goinbound_sweep_nudges_total{{{G}}}{R}))', "nudge {{outcome}}")], unit="ops", w=8)
-ts("State resolution cache", "Entries, never groups: one big room's state is 150k entries.",
-   [(f'sum(goinbound_pdu_state_cache_entries{{{G}}})', "entries"),
-    (f'sum by (how) (rate(goinbound_pdu_state_cache_loads_total{{{G}}}{R}))', "loads {{how}}")], w=12)
+ts("State groups write mode needed", "From the one state cache shared with the federation reads: hit, rebuilt from a cached prev group (delta), or read whole (full).",
+   [(f'sum by (how) (rate(goinbound_pdu_state_cache_loads_total{{{G}}}{R}))', "{{how}}")], unit="ops", w=12)
 ts("ACL lookups", "", [(f'sum by (source) (rate(goinbound_acl_lookups_total{{{G}}}{R}))', "{{source}}")], unit="ops", w=12)
 
 # --------------------------------------------------------- Federation reads

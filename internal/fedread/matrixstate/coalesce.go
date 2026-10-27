@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // stateIDsComputeTimeout bounds one shared /state_ids computation.

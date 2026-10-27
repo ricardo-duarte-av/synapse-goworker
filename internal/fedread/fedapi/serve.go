@@ -8,9 +8,9 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/native"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // nativeResult reports what the native path did.

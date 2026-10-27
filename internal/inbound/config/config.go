@@ -35,9 +35,6 @@ type Config struct {
 	MarkOriginsUp *bool `yaml:"mark_origins_up"`
 	// Fallback is FallbackSynapse or FallbackNone.
 	Fallback string `yaml:"fallback"`
-	// StateCacheEntries bounds the state-resolution cache by state ENTRIES,
-	// never by group count: one big room's state is 150k entries.
-	StateCacheEntries int `yaml:"state_cache_entries"`
 	// KeyRefetchMinutes and KeyTimeoutSeconds tune signing key lookups.
 	KeyRefetchMinutes int `yaml:"key_refetch_minutes"`
 	KeyTimeoutSeconds int `yaml:"key_timeout_seconds"`
@@ -50,7 +47,6 @@ func Defaults() Config {
 		EDUForwardTimeoutSeconds: 60,
 		MissingEvents:            "fetch",
 		Fallback:                 FallbackSynapse,
-		StateCacheEntries:        400000,
 		KeyRefetchMinutes:        60,
 		KeyTimeoutSeconds:        30,
 	}
@@ -64,7 +60,6 @@ func (c Config) Validate() error {
 	}{
 		{"inbound.max_body_mb", c.MaxBodyMB},
 		{"inbound.edu_forward_timeout_seconds", c.EDUForwardTimeoutSeconds},
-		{"inbound.state_cache_entries", c.StateCacheEntries},
 		{"inbound.key_refetch_minutes", c.KeyRefetchMinutes},
 		{"inbound.key_timeout_seconds", c.KeyTimeoutSeconds},
 	} {

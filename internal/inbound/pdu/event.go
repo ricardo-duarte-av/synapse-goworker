@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/tidwall/gjson"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
 // Event is a PDU as Synapse's EventBase presents it to the auth rules and to
@@ -208,13 +210,13 @@ func (e *Event) Membership() (string, error) {
 }
 
 // StateKey is a (type, state_key) pair.
-type StateKey struct {
-	Type     string
-	StateKey string
-}
+// StateKey is (type, state_key): the shared state cache's key type, so a
+// cached map is used as it is.
+type StateKey = statecache.Key
 
-// StateMap is room state: (type, state_key) -> event ID.
-type StateMap map[StateKey]string
+// StateMap is room state: (type, state_key) -> event ID. One taken from the
+// state cache is shared and must never be modified.
+type StateMap = statecache.Map
 
 // domainOf is Synapse's get_domain_from_id: everything after the first colon.
 func domainOf(s string) (string, error) {

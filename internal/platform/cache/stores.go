@@ -12,7 +12,7 @@ type Settings struct {
 	// StateGroupsMB bounds resolved state maps. This is the one that matters:
 	// resolving state at an event is by far the most expensive read, and state
 	// groups never change once written.
-	StateGroupsMB int `yaml:"state_groups_mb"`
+	StateGroupsMB int `yaml:"-"`
 	// EventsMB bounds stored event JSON.
 	EventsMB int `yaml:"events_mb"`
 	// EventStateGroupsMB bounds the event-to-state-group mapping, which is tiny

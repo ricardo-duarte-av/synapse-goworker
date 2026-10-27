@@ -25,7 +25,7 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `statecache` (the one state cache), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
 | `internal/sync` | gosync, as `app.New` + `Register` |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
@@ -38,10 +38,12 @@ The approved plan is in
 
 Each component still has its own copy of these, which work but duplicate:
 
-- **Caches of the same immutable data**: event -> state group (sync,
-  fedread), state group -> state (fedread bytes-bounded, inbound
-  entries-bounded), filtered state, room versions, server keys (fedauth in
-  inbound and fedread, inbound's keyring).
+- **Smaller caches of immutable data.** State groups' full state is one
+  cache now (`platform/statecache`, shared by fedread and inbound, armed and
+  purged by fedread's replication consumer). Still per component: event ->
+  state group (sync, fedread), filtered state (sync's carries membership and
+  visibility, fedread's only event IDs), room versions, server keys (fedauth
+  in inbound and fedread, inbound's keyring).
 - **Destination backoff**: inbound's `backoff` (write mode's outbound
   requests) and the sender's `retry`. They agree through Synapse's
   `destinations` table and REMOTE_SERVER_UP, as separate workers did.

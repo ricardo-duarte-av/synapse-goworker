@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // TestLiveFilteredStateMatchesDatabase is the check this optimisation lives or

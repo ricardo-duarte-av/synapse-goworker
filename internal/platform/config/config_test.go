@@ -35,6 +35,8 @@ func TestNoComponentOrModeSwitches(t *testing.T) {
 		"inbound: { modes: { edu: native } }",
 		"federation_reads: { endpoints: { event: native } }",
 		"database: { manage_roles: true }",
+		"inbound: { state_cache_entries: 400000 }",
+		"federation_reads: { caches: { state_groups_mb: 768 } }",
 	} {
 		if _, err := Parse([]byte(minimal + extra + "\n")); err == nil {
 			t.Errorf("accepted %q", extra)
@@ -77,7 +79,7 @@ func TestExampleConfigParses(t *testing.T) {
 // The caches must leave room for requests in flight.
 func TestCachesMustFitTheMemoryLimit(t *testing.T) {
 	if _, err := Parse([]byte(minimal + "memory: { limit_mb: 800 }\n")); err == nil {
-		t.Error("default caches (~880MB) were accepted under an 800MB limit")
+		t.Error("default caches (~1.1GB) were accepted under an 800MB limit")
 	}
 	if _, err := Parse([]byte(minimal + "memory: { limit_mb: 3072 }\n")); err != nil {
 		t.Errorf("default caches under 3GB: %v", err)

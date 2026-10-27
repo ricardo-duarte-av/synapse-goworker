@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // Every event whose sender has an MSC4293 ban redaction must come back marked

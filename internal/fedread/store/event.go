@@ -1,13 +1,13 @@
 package store
 
 import (
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
-
 	"context"
 	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 )
 
 // Event is a stored event with the metadata needed to serve it.

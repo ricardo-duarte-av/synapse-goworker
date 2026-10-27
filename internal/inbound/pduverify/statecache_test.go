@@ -26,31 +26,3 @@ func TestDiffAfterOverlay(t *testing.T) {
 		t.Error("diffAfter changed the state before")
 	}
 }
-
-func TestGroupCacheBoundByEntries(t *testing.T) {
-	big := func(n int) pdu.StateMap {
-		m := pdu.StateMap{}
-		for i := 0; i < n; i++ {
-			m[pdu.StateKey{Type: "t", StateKey: string(rune(i + 1))}] = "$e"
-		}
-		return m
-	}
-	c := newGroupCache(250)
-	c.put(1, big(100))
-	c.put(2, big(100))
-	c.peek(1) // 1 is now more recent than 2
-	c.put(3, big(100))
-	if _, ok := c.peek(2); ok {
-		t.Error("the least recently used group was kept over the bound")
-	}
-	if _, ok := c.peek(1); !ok {
-		t.Error("a recently used group was evicted")
-	}
-	if c.entries > 250 {
-		t.Errorf("entries %d over the bound", c.entries)
-	}
-	c.put(4, big(300))
-	if _, ok := c.peek(4); ok {
-		t.Error("a group larger than the whole bound was cached")
-	}
-}

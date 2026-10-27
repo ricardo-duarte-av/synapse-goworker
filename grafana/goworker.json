@@ -1052,7 +1052,7 @@
     {
       "type": "timeseries",
       "title": "Cache bytes",
-      "description": "The byte-bounded caches of the federation reads, against their configured maxima.",
+      "description": "The byte-bounded caches. state_groups is the one state cache, shared by the federation reads and inbound write mode (memory.state_cache_mb).",
       "id": 17,
       "datasource": {
         "type": "prometheus",
@@ -3841,8 +3841,8 @@
     },
     {
       "type": "timeseries",
-      "title": "State resolution cache",
-      "description": "Entries, never groups: one big room's state is 150k entries.",
+      "title": "State groups write mode needed",
+      "description": "From the one state cache shared with the federation reads: hit, rebuilt from a cached prev group (delta), or read whole (full).",
       "id": 64,
       "datasource": {
         "type": "prometheus",
@@ -3856,7 +3856,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "ops",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 1,
@@ -3896,21 +3896,10 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(goinbound_pdu_state_cache_entries{job=~\"$job\", instance=~\"$instance\"})",
-          "legendFormat": "entries",
+          "expr": "sum by (how) (rate(goinbound_pdu_state_cache_loads_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{how}}",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (how) (rate(goinbound_pdu_state_cache_loads_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
-          "legendFormat": "loads {{how}}",
-          "range": true,
-          "refId": "B"
         }
       ]
     },

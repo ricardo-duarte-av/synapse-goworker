@@ -34,6 +34,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
@@ -136,6 +137,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		whoamiURL = "http://" + cfg.Upstream.Addrs[0]
 	}
 
+	// The one cache of state groups' full state, read by the federation
+	// reads and inbound write mode alike.
+	states := statecache.New(int64(cfg.Memory.StateCacheMB) << 20)
+
 	var closers []func()
 	defer func() {
 		for i := len(closers) - 1; i >= 0; i-- {
@@ -172,6 +177,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ConnectTimeout:    db.ConnectTimeout(),
 		Replication:       consumer("federation_reads"),
 		Upstream:          upstream,
+		States:            states,
 		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
 		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
 		Log:               log.With().Str("component", "federation_reads").Logger(),
@@ -193,6 +199,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ConnectTimeout: db.ConnectTimeout(),
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Replication:    consumer("inbound"),
+		States:         states,
 		Log:            log.With().Str("component", "inbound").Logger(),
 	})
 	var send http.Handler

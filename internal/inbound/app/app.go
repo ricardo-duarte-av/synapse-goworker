@@ -41,6 +41,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
@@ -63,6 +64,9 @@ type Settings struct {
 	// Transactions bounds /send transactions handled at once; past it they
 	// wait for a slot.
 	Transactions *limits.Gate
+	// States is the worker's one state cache, shared with the federation
+	// reads.
+	States *statecache.Cache
 	// Replication is this path's view of the worker's one subscription, on
 	// which it answers REPLICATE for the caches rows it publishes.
 	Replication *bus.Consumer
@@ -212,8 +216,8 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 		return nil, nil, fmt.Errorf("inbound: %w", err)
 	}
 	pv := pduverify.New(pst, stateres.Options{})
-	if ic.StateCacheEntries > 0 {
-		pv.SetStateCacheEntries(ic.StateCacheEntries)
+	if cfg.States != nil {
+		pv.SetStateCache(cfg.States)
 	}
 	pc, err := pduverify.PushConfigFor(hs)
 	if err != nil {

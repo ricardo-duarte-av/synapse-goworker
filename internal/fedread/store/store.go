@@ -13,7 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
 // Store holds a pool of read-only connections to Synapse's database, with
@@ -35,6 +36,9 @@ type Config struct {
 	ConnectTimeout time.Duration
 	// Cache bounds the in-process caches. Zero values take defaults.
 	Cache cache.Settings
+	// States is the worker's shared state cache. Nil builds one of
+	// Cache.StateGroupsMB for this store alone, as in tests.
+	States *statecache.Cache
 }
 
 // Open connects and verifies the database is reachable.
@@ -65,7 +69,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
-	return &Store{pool: pool, caches: newCaches(cfg.Cache)}, nil
+	return &Store{pool: pool, caches: newCaches(cfg.Cache, cfg.States)}, nil
 }
 
 // Close releases the pool.

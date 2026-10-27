@@ -1,7 +1,8 @@
 package store
 
 import (
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
 // caches holds the in-process caches for immutable data.
@@ -12,7 +13,10 @@ import (
 // membership, server ACLs, partial-state status, erasure — is deliberately
 // absent, because caching it would need invalidation we have no way to receive.
 type caches struct {
-	stateGroups     *cache.LRU[int64, map[StateKey]string]
+	// stateGroups is the worker's one state cache, shared with inbound.
+	// This store arms and purges it, since its replication consumer is the
+	// one that hears about purges.
+	stateGroups     *statecache.Cache
 	events          *cache.LRU[string, *Event]
 	eventStateGroup *cache.LRU[string, int64]
 	authChains      *cache.LRU[[32]byte, []string]
@@ -33,11 +37,13 @@ type FilteredStateKey struct {
 	Filter string
 }
 
-func newCaches(s cache.Settings) *caches {
+func newCaches(s cache.Settings, states *statecache.Cache) *caches {
 	s = s.WithDefaults()
+	if states == nil {
+		states = statecache.New(cache.MB(s.StateGroupsMB))
+	}
 	return &caches{
-		stateGroups: cache.NewLRU[int64, map[StateKey]string](
-			"state_groups", cache.MB(s.StateGroupsMB), sizeOfStateMap),
+		stateGroups: states,
 		events: cache.NewLRU[string, *Event](
 			"events", cache.MB(s.EventsMB), sizeOfEvent),
 		eventStateGroup: cache.NewLRU[string, int64](

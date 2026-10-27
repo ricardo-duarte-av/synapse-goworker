@@ -15,6 +15,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/stateres"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
 // Outcomes, in increasing order of interest.
@@ -81,7 +82,7 @@ type Verifier struct {
 
 // New builds a Verifier over st.
 func New(st *pdustore.Store, opts stateres.Options) *Verifier {
-	return &Verifier{st: st, groups: newGroupCache(DefaultStateCacheEntries), opts: opts}
+	return &Verifier{st: st, groups: &groupCache{states: statecache.New(DefaultStateCacheMB << 20)}, opts: opts}
 }
 
 // Replay recomputes an event's state before, auth verdict and state after,
