@@ -1,35 +1,43 @@
 # The goworker dashboard
 
-`goworker.json` is generated. Edit `gen_dashboard.py`, then:
+Import `goworker.json` into Grafana with a Prometheus data source. That is all.
 
-```sh
-python3 grafana/gen_dashboard.py > grafana/goworker.json
-```
+It has every panel of the four dashboards it replaces (gosync, goinbound,
+gofederation, gopro), less the shadow, canary and mode panels whose metrics
+are gone, plus the process-wide rows and a panel for each metric none of them
+showed. A part of the worker that nginx or homeserver.yaml gives no work
+shows empty panels; nothing is hidden or switched off.
 
-The generator refuses to write a dashboard that queries a metric the code
-does not register, which is how panels used to go silently empty after a
-rename.
+To change it, edit it in Grafana, export it ("Export for sharing externally"
+off), and save the export over `goworker.json`. `go test ./grafana/` checks
+the file, and runs in CI:
 
-Import it with a Prometheus data source. `$job` and `$instance` come from
-`goworker_build_info`; `$bucket` is the rate window (5s–15s windows return
-nothing at a 15s scrape interval, so it starts at 1m).
+- every metric a panel queries is registered by the code, so a rename cannot
+  leave a panel silently empty;
+- every metric the code registers has a panel, so a new metric needs one;
+- every panel uses the `${datasource}` variable and only defined variables,
+  and no two panels share an id.
+
+Variables: `$job` and `$instance` come from `goworker_build_info`; `$bucket`
+is the rate window (windows under 30s return nothing at a 15s scrape
+interval). `$sync_endpoint` and `$fedread_endpoint` filter the sync and
+federation-read panels. `$synapse_server`, `$synapse_inbound_job` and
+`$synapse_reader_job` name Synapse's own processes for the "vs Synapse"
+comparison panels.
+
+Prometheus must scrape the metrics listener (`listen.metrics.addr`,
+`av-goworker-1:9200` with the compose file); the old workers' scrape jobs can
+go once their containers do.
 
 ## Rows
 
-| Row | What it answers |
-|---|---|
-| Overview | Is this process the federation sender? Traffic per part, share answered here vs. by main, replication health, limits refusing. |
-| Memory & limits | Heap and RSS against `memory.limit_mb`, cache bytes, goroutines, each limit's slots in use, waits and refusals. |
-| Replication bus | The one Redis subscription: lines, reconnects, each part's queue, resyncs. |
-| Process | CPU, file descriptors, restarts. |
-| Database | Pool saturation and query times. |
-| Client sync | /sync traffic, latency, long-polls, token verdicts, caches, replication gaps. |
-| Sliding sync | MSC4186 outcomes, connections, writes. |
-| To-device & presence | Deletions and presence relays. |
-| Inbound /send | Route and reason, EDUs, origins marked up. |
-| Inbound PDUs (write mode) | Events written, staging, state resolution cache. |
-| Federation reads | Native answers, fallbacks to main, rate limiting, caches. |
-| Outbound federation | Routing, transactions, lag, queues, destinations, bookkeeping. |
+The process-wide rows come first: Overview (is this the federation sender,
+traffic per part, share answered here vs. by main, replication, limits),
+Memory & limits, Replication bus, and Process & Go runtime. Then each part's
+rows from its old dashboard, titled by part ("Client sync: Traffic",
+"Inbound federation: Write mode", "Federation reads: Caches", "Outbound
+federation: Queues and delivery", ...), each ending in an "other metrics" row
+for what its old dashboard did not show.
 
 ## Metric names
 

@@ -31,7 +31,7 @@ The approved plan is in
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
 | `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
-| `grafana/gen_dashboard.py` | the dashboard; never edit the JSON |
+| `grafana/goworker.json` | the dashboard: every metric has a panel; edit in Grafana, export over the file; `grafana/dashboard_test.go` checks it |
 | `docs/cutover.md` | moving a homeserver over |
 
 ## Not shared yet
