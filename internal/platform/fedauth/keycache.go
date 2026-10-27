@@ -3,13 +3,27 @@ package fedauth
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/federation"
-
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
 )
+
+// ServerKeyJSON is one row of Synapse's server_keys_json: a server's published
+// key response as Synapse fetched it, signatures included.
+type ServerKeyJSON struct {
+	KeyID        string
+	FromServer   string
+	ValidUntilMS int64
+	JSON         []byte
+}
+
+// KeyStore is Synapse's on-disk cache of published server keys: the rows for
+// a server still valid at validAtMS, newest expiry first.
+type KeyStore interface {
+	GetServerKeys(ctx context.Context, serverName string, validAtMS int64) ([]ServerKeyJSON, error)
+}
 
 // synapseCacheTimeout bounds the database lookup. The KeyCache interface takes
 // no context, so the bound is applied here.
@@ -26,30 +40,36 @@ const synapseCacheTimeout = 3 * time.Second
 // Synapse has already seen.
 type layeredCache struct {
 	mem *federation.InMemoryCache
-	db  *store.Store
+	db  atomic.Pointer[KeyStore]
 	log zerolog.Logger
 }
 
 var _ federation.KeyCache = (*layeredCache)(nil)
 
-func newLayeredCache(db *store.Store, refetchDelay time.Duration, log zerolog.Logger) *layeredCache {
+func newLayeredCache(refetchDelay time.Duration, log zerolog.Logger) *layeredCache {
 	mem := federation.NewInMemoryCache()
 	mem.MinKeyRefetchDelay = refetchDelay
-	return &layeredCache{mem: mem, db: db, log: log}
+	return &layeredCache{mem: mem, log: log}
+}
+
+// UseDB sets the on-disk tier, if none is set yet.
+func (c *layeredCache) UseDB(db KeyStore) {
+	c.db.CompareAndSwap(nil, &db)
 }
 
 func (c *layeredCache) LoadKeys(serverName string) (*federation.ServerKeyResponse, error) {
 	if res, err := c.mem.LoadKeys(serverName); err == nil && res != nil {
 		return res, nil
 	}
-	if c.db == nil {
+	db := c.db.Load()
+	if db == nil {
 		return nil, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), synapseCacheTimeout)
 	defer cancel()
 
-	rows, err := c.db.GetServerKeys(ctx, serverName, time.Now().UnixMilli())
+	rows, err := (*db).GetServerKeys(ctx, serverName, time.Now().UnixMilli())
 	if err != nil {
 		// A cache miss is not an error: mautrix will fetch from the origin.
 		c.log.Debug().Err(err).Str("server_name", serverName).
@@ -57,6 +77,16 @@ func (c *layeredCache) LoadKeys(serverName string) (*federation.ServerKeyRespons
 		return nil, nil
 	}
 
+	// Synapse keeps a row per key ID, each holding the whole response, and
+	// for a key in old_verify_keys its ts_valid_until_ms is that key's
+	// expired_ts, not the response's valid_until_ts. So the column says
+	// nothing of whether the response is still valid: an old key's row with
+	// a far expired_ts can hold a response that expired days ago (2026-10-17:
+	// nexy7574.co.uk, spiritcroc.de, refused here while Synapse accepted
+	// them). Each response is judged by its own valid_until_ts, and the
+	// longest-valid one used.
+	now := time.Now()
+	var best *federation.ServerKeyResponse
 	for _, row := range rows {
 		var resp federation.ServerKeyResponse
 		// Unmarshalling is what populates the raw bytes that self-signature
@@ -70,16 +100,26 @@ func (c *layeredCache) LoadKeys(serverName string) (*federation.ServerKeyRespons
 			// server's keys be served for another.
 			continue
 		}
+		if !now.Before(resp.ValidUntilTS.Time) {
+			continue
+		}
+		if best != nil && !resp.ValidUntilTS.Time.After(best.ValidUntilTS.Time) {
+			continue
+		}
 		if err := resp.VerifySelfSignature(); err != nil {
 			c.log.Debug().Err(err).Str("server_name", serverName).
 				Msg("Skipping cached key response with a bad self-signature")
 			continue
 		}
-		// Promote into memory so the next request skips the database.
-		c.mem.StoreKeys(&resp)
-		return &resp, nil
+		r := resp
+		best = &r
 	}
-	return nil, nil
+	if best == nil {
+		return nil, nil
+	}
+	// Promote into memory so the next request skips the database.
+	c.mem.StoreKeys(best)
+	return best, nil
 }
 
 func (c *layeredCache) StoreKeys(resp *federation.ServerKeyResponse) {

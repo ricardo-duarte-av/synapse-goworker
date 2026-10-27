@@ -10,7 +10,6 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/metrics"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
@@ -18,6 +17,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
@@ -63,6 +63,9 @@ type Settings struct {
 	// component arms and purges it: its replication consumer hears about
 	// purges.
 	States *statecache.Cache
+	// Keys is the worker's one cache of other servers' keys, shared with
+	// inbound. Nil builds one of this component's own.
+	Keys *fedauth.Keys
 	// Upstream is Synapse's main process, the fallback for anything not
 	// answered natively.
 	Upstream *proxy.Proxy
@@ -117,12 +120,17 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 		log.Warn().Msg("federation reads: no redis in homeserver.yaml; caches disabled")
 	}
 
+	keys := cfg.Keys
+	if keys == nil {
+		keys = fedauth.NewKeys(cfg.ServerName, fedauth.Options{Notaries: cfg.TrustedKeyServers, Log: log})
+	}
+	keys.UseDB(db)
 	verifier := fedauth.New(cfg.ServerName, fedauth.Options{
-		KeyRefetchDelay: time.Hour,
-		Timeout:         30 * time.Second,
-		Notaries:        cfg.TrustedKeyServers,
-		DB:              db,
-		Log:             log,
+		Keys: keys,
+		// These endpoints are all GET with no body; nothing legitimate is
+		// large.
+		MaxBodySize: 64 << 10,
+		Expired:     metrics.AuthExpiredKey,
 	})
 	f.handler = fedapi.New(cfg.ServerName, fc.RCFederation, cfg.Upstream, log,
 		fedapi.WithNative(matrixstate.NewResolver(db), verifier,

@@ -10,12 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	"go.mau.fi/util/jsontime"
 	"maunium.net/go/mautrix/federation"
 	"maunium.net/go/mautrix/id"
-
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 )
 
 func TestVerifyRejectsBadHeaders(t *testing.T) {
@@ -256,9 +253,9 @@ func TestNotaryWalkPassesAnExpiredAnswer(t *testing.T) {
 	}
 }
 
-type fakeKeyStore struct{ rows []store.ServerKeyJSON }
+type fakeKeyStore struct{ rows []ServerKeyJSON }
 
-func (f fakeKeyStore) GetServerKeys(context.Context, string, int64) ([]store.ServerKeyJSON, error) {
+func (f fakeKeyStore) GetServerKeys(context.Context, string, int64) ([]ServerKeyJSON, error) {
 	return f.rows, nil
 }
 
@@ -273,11 +270,11 @@ func TestSynapseCacheJudgesResponsesByTheirOwnValidity(t *testing.T) {
 	expired := signedKeyResponse(t, key, "remote.example", time.Now().Add(-time.Hour))
 	soon := signedKeyResponse(t, key, "remote.example", time.Now().Add(time.Hour))
 	later := signedKeyResponse(t, key, "remote.example", time.Now().Add(10*time.Hour))
-	c := newLayeredCache(fakeKeyStore{rows: []store.ServerKeyJSON{
+	c := NewKeys("example.com", Options{DB: fakeKeyStore{rows: []ServerKeyJSON{
 		{KeyID: "ed25519:old", FromServer: "a", ValidUntilMS: far, JSON: expired},
 		{KeyID: "ed25519:old", FromServer: "b", ValidUntilMS: far, JSON: soon},
 		{KeyID: string(key.ID), FromServer: "c", ValidUntilMS: far - 1, JSON: later},
-	}}, 0, zerolog.Nop())
+	}}})
 	res, err := c.LoadKeys("remote.example")
 	if err != nil || res == nil {
 		t.Fatalf("no response: %v", err)
@@ -286,10 +283,39 @@ func TestSynapseCacheJudgesResponsesByTheirOwnValidity(t *testing.T) {
 		t.Errorf("picked a response valid for %s more, want the longest-valid (about 10h)", got.Round(time.Minute))
 	}
 
-	only := newLayeredCache(fakeKeyStore{rows: []store.ServerKeyJSON{
+	only := NewKeys("example.com", Options{DB: fakeKeyStore{rows: []ServerKeyJSON{
 		{KeyID: "ed25519:old", FromServer: "a", ValidUntilMS: far, JSON: expired},
-	}}, 0, zerolog.Nop())
+	}}})
 	if res, _ := only.LoadKeys("remote.example"); res != nil {
 		t.Error("returned a response that has expired")
+	}
+}
+
+// The verifiers of /send and of the federation reads share one Keys: a key
+// either one finds is there for the other, and the database the first
+// component offers is the one used.
+func TestVerifiersShareKeys(t *testing.T) {
+	_, key := signedRequest(t, "remote.example", "example.com")
+	first := fakeKeyStore{rows: []ServerKeyJSON{{KeyID: string(key.ID), FromServer: "a",
+		ValidUntilMS: time.Now().Add(time.Hour).UnixMilli(),
+		JSON:         signedKeyResponse(t, key, "remote.example", time.Now().Add(time.Hour))}}}
+	keys := NewKeys("example.com", Options{})
+	keys.UseDB(first)
+	keys.UseDB(fakeKeyStore{})
+	if res, _ := keys.LoadKeys("remote.example"); res == nil {
+		t.Fatal("the first database offered was not the one used")
+	}
+
+	shared := NewKeys("example.com", Options{})
+	send := New("example.com", Options{Keys: shared})
+	reads := New("example.com", Options{Keys: shared, MaxBodySize: 64 << 10})
+	req, key := signedRequest(t, "other.example", "example.com")
+	var parsed federation.ServerKeyResponse
+	if err := json.Unmarshal(signedKeyResponse(t, key, "other.example", time.Now().Add(time.Hour)), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	send.auth.Keys.StoreKeys(&parsed)
+	if res := reads.Verify(req); !res.OK() {
+		t.Errorf("a key held for /send was not used by the reads: %v", res.Err)
 	}
 }

@@ -22,7 +22,7 @@ import (
 // server's own signature over its key list, and mautrix verifies that
 // self-signature before trusting anything from the cache.
 func (v *Verifier) queryNotaries(ctx context.Context, serverName string, keyID id.KeyID) bool {
-	if len(v.notaries) == 0 {
+	if len(v.keys.notaries) == 0 {
 		return false
 	}
 
@@ -39,7 +39,7 @@ func (v *Verifier) queryNotaries(ctx context.Context, serverName string, keyID i
 		},
 	}
 
-	for _, notary := range v.notaries {
+	for _, notary := range v.keys.notaries {
 		if notary == serverName {
 			// Asking a server about itself is just a direct fetch, which
 			// mautrix already does as the final tier.
@@ -64,6 +64,15 @@ func (v *Verifier) queryNotaries(ctx context.Context, serverName string, keyID i
 					Msg("Notary returned keys with an invalid self-signature")
 				continue
 			}
+			if !time.Now().Before(keys.ValidUntilTS.Time) {
+				// Not valid for this request, so not what we asked for:
+				// ask the next notary. Stopping here served a key past its
+				// validity while every other notary had a current one
+				// (nexy7574.co.uk, whose keys last 30 minutes, 2026-10-17).
+				zerolog.Ctx(ctx).Debug().Str("notary", notary).Str("server_name", serverName).
+					Msg("Notary returned keys no longer valid; asking the next one")
+				continue
+			}
 			v.auth.Keys.StoreKeys(keys)
 			if keys.HasKey(keyID) {
 				return true
@@ -79,7 +88,7 @@ func (v *Verifier) queryNotaries(ctx context.Context, serverName string, keyID i
 // It runs inline on the request path, which is why every tier is bounded by
 // the request context.
 func (v *Verifier) warmCache(ctx context.Context, authHeader string) {
-	if len(v.notaries) == 0 {
+	if len(v.keys.notaries) == 0 {
 		return
 	}
 	parsed := federation.ParseXMatrixAuth(authHeader)

@@ -16,9 +16,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 )
 

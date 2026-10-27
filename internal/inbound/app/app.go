@@ -18,13 +18,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/acl"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/edu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedfetch"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
@@ -39,6 +40,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
@@ -67,6 +69,9 @@ type Settings struct {
 	// States is the worker's one state cache, shared with the federation
 	// reads.
 	States *statecache.Cache
+	// Keys is the worker's one cache of other servers' keys, shared with
+	// the federation reads. Nil builds one of this component's own.
+	Keys *fedauth.Keys
 	// Replication is this path's view of the worker's one subscription, on
 	// which it answers REPLICATE for the caches rows it publishes.
 	Replication *bus.Consumer
@@ -128,13 +133,15 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 	out.closers = append(out.closers, db.Close)
 
 	notaries := hs.TrustedKeyServers
+	keys := cfg.Keys
+	if keys == nil {
+		keys = fedauth.NewKeys(hs.ServerName, KeyOptions(ic, notaries, log))
+	}
+	keys.UseDB(db)
 	verifier := fedauth.New(hs.ServerName, fedauth.Options{
-		KeyRefetchDelay: time.Duration(ic.KeyRefetchMinutes) * time.Minute,
-		Timeout:         time.Duration(ic.KeyTimeoutSeconds) * time.Second,
-		Notaries:        notaries,
-		DB:              db,
-		MaxBodySize:     ic.MaxBodyBytes(),
-		Log:             log,
+		Keys:        keys,
+		MaxBodySize: ic.MaxBodyBytes(),
+		Expired:     authExpiredKey,
 	})
 
 	router := edu.NewRouter(hs.Writers)
@@ -302,3 +309,23 @@ func orDefault(v, def int32) int32 {
 	}
 	return def
 }
+
+// KeyOptions are the key-fetching settings in inbound's config, which tune
+// the worker's one key cache: inbound.key_refetch_minutes and
+// inbound.key_timeout_seconds.
+func KeyOptions(ic config.Config, notaries []string, log zerolog.Logger) fedauth.Options {
+	return fedauth.Options{
+		KeyRefetchDelay: time.Duration(ic.KeyRefetchMinutes) * time.Minute,
+		Timeout:         time.Duration(ic.KeyTimeoutSeconds) * time.Second,
+		Notaries:        notaries,
+		Log:             log,
+	}
+}
+
+// authExpiredKey counts /send requests refused for being signed with a key
+// past its valid_until_ts. Synapse refuses these too; a non-zero rate means
+// remote servers with broken key servers, not a fault here.
+var authExpiredKey = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "goinbound_auth_expired_key_total",
+	Help: "Requests rejected because the origin's published key was past its valid_until_ts.",
+})

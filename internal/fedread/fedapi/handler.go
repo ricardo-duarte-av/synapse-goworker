@@ -12,11 +12,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/metrics"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/native"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 )
 

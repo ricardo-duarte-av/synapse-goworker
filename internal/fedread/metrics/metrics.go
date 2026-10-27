@@ -104,6 +104,15 @@ func (c *cacheCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 var (
+	// AuthExpiredKey counts requests refused for being signed with a key
+	// past its valid_until_ts. Synapse refuses these too; a non-zero rate
+	// means remote servers with broken key servers, not a fault here.
+	AuthExpiredKey = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "gopro",
+		Name:      "auth_expired_key_total",
+		Help:      "Requests rejected because the origin's published key was past its valid_until_ts.",
+	})
+
 	// RequestsTotal counts requests by endpoint and status.
 	RequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "gopro",

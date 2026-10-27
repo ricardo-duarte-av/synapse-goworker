@@ -1,4 +1,4 @@
-package fedauth
+package store
 
 import (
 	"context"
@@ -6,9 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
-
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 )
 
 // TestLiveSynapseKeyCache checks that we can resolve published keys from
@@ -20,7 +18,7 @@ func TestLiveSynapseKeyCache(t *testing.T) {
 		t.Skip("GOPRO_TEST_DSN not set; skipping live database test")
 	}
 	ctx := context.Background()
-	db, err := store.Open(ctx, store.Config{DSN: dsn, MaxConns: 4})
+	db, err := Open(ctx, Config{DSN: dsn, MaxConns: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +44,7 @@ func TestLiveSynapseKeyCache(t *testing.T) {
 		t.Skip("no currently-valid cached keys")
 	}
 
-	cache := newLayeredCache(db, time.Hour, zerolog.Nop())
+	cache := fedauth.NewKeys("example.com", fedauth.Options{DB: db})
 
 	var resolved, badSelfSig int
 	for _, server := range servers {
@@ -85,7 +83,7 @@ func TestLiveKeyCachePromotesToMemory(t *testing.T) {
 		t.Skip("GOPRO_TEST_DSN not set; skipping live database test")
 	}
 	ctx := context.Background()
-	db, err := store.Open(ctx, store.Config{DSN: dsn, MaxConns: 2})
+	db, err := Open(ctx, Config{DSN: dsn, MaxConns: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +96,7 @@ func TestLiveKeyCachePromotesToMemory(t *testing.T) {
 		t.Skipf("no valid cached key: %v", err)
 	}
 
-	cache := newLayeredCache(db, time.Hour, zerolog.Nop())
+	cache := fedauth.NewKeys("example.com", fedauth.Options{DB: db})
 	if _, err := cache.LoadKeys(server); err != nil {
 		t.Fatal(err)
 	}

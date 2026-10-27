@@ -19,11 +19,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/native"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 )
 

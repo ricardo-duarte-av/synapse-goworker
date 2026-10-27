@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 )
 
 // ErrNotFound is returned when a room or event is not in the database.
@@ -142,12 +144,7 @@ func (s *Store) GetCurrentStateEvent(ctx context.Context, roomID, evType, stateK
 
 // ServerKeyJSON is a cached published key response for a remote server, as
 // Synapse stores it in server_keys_json.
-type ServerKeyJSON struct {
-	KeyID        string
-	FromServer   string
-	ValidUntilMS int64
-	JSON         []byte
-}
+type ServerKeyJSON = fedauth.ServerKeyJSON
 
 // GetServerKeys returns Synapse's cached key responses for a server that are
 // still within their validity window, newest first.

@@ -25,7 +25,7 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `statecache` (the one state cache), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
 | `internal/sync` | gosync, as `app.New` + `Register` |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
@@ -34,21 +34,34 @@ The approved plan is in
 | `grafana/goworker.json` | the dashboard: every metric has a panel; edit in Grafana, export over the file; `grafana/dashboard_test.go` checks it |
 | `docs/cutover.md` | moving a homeserver over |
 
-## Not shared yet
+## Shared, and deliberately not shared
 
-Each component still has its own copy of these, which work but duplicate:
+Shared: the Redis subscription (`platform/bus`), state groups' full state and
+events' state groups (`platform/statecache`: the first read by fedread and
+inbound, the second by fedread and sync; armed and purged by fedread's
+replication consumer), and other servers' published keys (`platform/fedauth`
+`Keys`, which /send and the federation reads verify with; it reads
+server_keys_json through whichever component's pool offers first). Before the
+keys were shared, fedread's copy of fedauth lacked inbound's 2026-10-17 fixes
+and refused requests Synapse accepted.
 
-- **Smaller caches of immutable data.** State groups' full state and
-  events' state groups are one cache now (`platform/statecache`: the first
-  shared by fedread and inbound, the second by fedread and sync; armed and
-  purged by fedread's replication consumer). Still per component: filtered
-  state (sync's carries membership and visibility, fedread's only event
-  IDs), room versions, server keys (fedauth in inbound and fedread,
-  inbound's keyring).
-- **Destination backoff**: inbound's `backoff` (write mode's outbound
-  requests) and the sender's `retry`. They agree through Synapse's
-  `destinations` table and REMOTE_SERVER_UP, as separate workers did.
-- **Read pools**: sync, fedread and the sender each open a read pool.
+Still per component, on purpose:
+
+- **Filtered state**: sync's carries membership and visibility, fedread's only
+  event IDs. Different values under similar keys.
+- **inbound's keyring** (PDU signatures): Synapse's Keyring, per key ID with
+  each key's own validity, over server_signature_keys. Not the per-response
+  model mautrix's request verification uses; merging them would change what
+  either accepts.
+- **Destination backoff** (operator, 2026-10-27): inbound's `backoff` is
+  Synapse's RetryDestinationLimiter exactly (reads `destinations` on every
+  request; a 429 is a failure). The sender's `retry` departs from it on
+  purpose: in memory, seeded from the table; a 429 is a cooldown, not a
+  backoff; a host that answered with an error is capped at an hour on
+  REMOTE_SERVER_UP rather than cleared. One limiter would mean one set of
+  rules. They agree as separate workers did: both write `destinations`, and
+  inbound's originup publishes REMOTE_SERVER_UP, which the sender hears (it
+  carries no instance name, so the sender's echo drop does not catch it).
 
 ## Decisions that are easy to undo by accident
 

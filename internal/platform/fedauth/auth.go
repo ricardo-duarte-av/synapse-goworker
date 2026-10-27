@@ -17,26 +17,40 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/exhttp"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/federation"
-
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
 )
 
 // Verifier authenticates incoming federation requests.
 type Verifier struct {
 	auth       *federation.ServerAuth
 	serverName string
+	keys       *Keys
+	expired    prometheus.Counter
+}
+
+// Keys is what verifying needs to know about other servers: their published
+// keys (in memory, over Synapse's server_keys_json) and the client that
+// fetches the ones neither holds, from the trusted key servers and then the
+// server itself. One Keys serves every verifier in the process, so a key
+// fetched for a /send is there for the federation reads, and the other way
+// round.
+type Keys struct {
+	cache  *layeredCache
+	client *federation.Client
 	// notaries are the trusted key servers queried before falling back to a
 	// direct fetch, mirroring Synapse's trusted_key_servers.
 	notaries []string
 }
 
-// Options tunes key fetching.
+// Options tunes key fetching and verification.
 type Options struct {
+	// Keys is the key cache to verify with, shared with other verifiers.
+	// Nil builds one of this verifier's own from the fields below.
+	Keys *Keys
+
 	// KeyRefetchDelay is the minimum time before re-querying a server whose
 	// key fetch failed, so an unreachable server cannot be turned into a
 	// stream of outbound requests. Zero uses one hour.
@@ -50,21 +64,30 @@ type Options struct {
 	Notaries []string
 	// DB is Synapse's database, read only, used to reuse its cached keys.
 	// Optional; without it every unknown server needs a network fetch.
-	DB *store.Store
+	DB KeyStore
 	// Log is used for cache and notary diagnostics.
 	Log zerolog.Logger
+
+	// MaxBodySize bounds the request body read for verification. Zero uses
+	// mautrix's default of 50MB.
+	MaxBodySize int64
+	// Expired counts requests refused for a key past its valid_until_ts.
+	// Each verifier has its own, so the metric keeps its component's name.
+	Expired prometheus.Counter
 }
 
-// New builds a Verifier for the given homeserver name.
-func New(serverName string, opts Options) *Verifier {
+// NewKeys builds a key cache from opts' key fields.
+func NewKeys(serverName string, opts Options) *Keys {
 	if opts.KeyRefetchDelay <= 0 {
 		opts.KeyRefetchDelay = time.Hour
 	}
 	if opts.Timeout <= 0 {
 		opts.Timeout = 30 * time.Second
 	}
-
-	cache := newLayeredCache(opts.DB, opts.KeyRefetchDelay, opts.Log)
+	cache := newLayeredCache(opts.KeyRefetchDelay, opts.Log)
+	if opts.DB != nil {
+		cache.UseDB(opts.DB)
+	}
 
 	settings := exhttp.SensibleClientSettings
 	settings.GlobalTimeout = opts.Timeout
@@ -74,17 +97,38 @@ func New(serverName string, opts Options) *Verifier {
 	// The resolution cache (well-known and SRV lookups) is separate from the
 	// key cache; only the latter is layered over Synapse's.
 	client := federation.NewClient(serverName, nil, cache.mem, settings)
+	return &Keys{cache: cache, client: client, notaries: opts.Notaries}
+}
 
-	auth := federation.NewServerAuth(client, cache, func(federation.XMatrixAuth) string {
+// UseDB reads Synapse's server_keys_json through db, unless a database was
+// already given. Every component's read pool reaches the same table, so the
+// first to offer one is as good as any.
+func (k *Keys) UseDB(db KeyStore) { k.cache.UseDB(db) }
+
+// LoadKeys returns the keys held for a server, from memory or Synapse's
+// table; nil when neither has a currently valid response.
+func (k *Keys) LoadKeys(serverName string) (*federation.ServerKeyResponse, error) {
+	return k.cache.LoadKeys(serverName)
+}
+
+// New builds a Verifier for the given homeserver name.
+func New(serverName string, opts Options) *Verifier {
+	keys := opts.Keys
+	if keys == nil {
+		keys = NewKeys(serverName, opts)
+	}
+
+	auth := federation.NewServerAuth(keys.client, keys.cache, func(federation.XMatrixAuth) string {
 		// This worker serves exactly one homeserver, so the only acceptable
 		// destination is that server. Returning it unconditionally makes
 		// mautrix reject a request addressed to anyone else.
 		return serverName
 	})
-	// These endpoints are all GET with no body; nothing legitimate is large.
-	auth.MaxBodySize = 64 * 1024
+	if opts.MaxBodySize > 0 {
+		auth.MaxBodySize = opts.MaxBodySize
+	}
 
-	return &Verifier{auth: auth, serverName: serverName, notaries: opts.Notaries}
+	return &Verifier{auth: auth, serverName: serverName, keys: keys, expired: opts.Expired}
 }
 
 // Result describes the outcome of verifying a request.
@@ -113,7 +157,8 @@ func (r Result) Status() int {
 //
 // The returned origin is the only value safe to use for access control: the
 // origin field of an unverified X-Matrix header is attacker-controlled, and
-// trusting it would let any server read state from rooms it is not in.
+// trusting it would let any server inject EDUs in another server's name, or
+// read state from rooms it is not in.
 func (v *Verifier) Verify(r *http.Request) Result {
 	// mautrix unconditionally closes the body, which panics when it is nil.
 	// A server-built request always has one, but a request constructed in code
@@ -177,7 +222,9 @@ func (v *Verifier) requireCurrentlyValidKey(authHeader string) *mautrix.RespErro
 		return nil
 	}
 
-	authVerdictExpiredKey.Inc()
+	if v.expired != nil {
+		v.expired.Inc()
+	}
 	return &mautrix.RespError{
 		ErrCode: "M_UNAUTHORIZED",
 		Err: fmt.Sprintf("No currently valid key to satisfy %s for %s: the published key is past its valid_until_ts",
@@ -188,11 +235,3 @@ func (v *Verifier) requireCurrentlyValidKey(authHeader string) *mautrix.RespErro
 
 // ServerName returns the homeserver this verifier accepts requests for.
 func (v *Verifier) ServerName() string { return v.serverName }
-
-// authVerdictExpiredKey counts requests rejected for being signed with a key
-// past its valid_until_ts. Synapse rejects these too; a non-zero rate here
-// means remote servers with broken key servers, not a fault in this worker.
-var authVerdictExpiredKey = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "gopro_auth_expired_key_total",
-	Help: "Requests rejected because the origin's published key was past its valid_until_ts.",
-})

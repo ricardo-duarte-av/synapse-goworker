@@ -7,16 +7,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 )
 
-// ServerKeyJSON is one row of Synapse's server_keys_json: a server's published
-// key response as Synapse fetched it, signatures included.
-type ServerKeyJSON struct {
-	KeyID        string
-	FromServer   string
-	ValidUntilMS int64
-	JSON         []byte
-}
+// ServerKeyJSON is one row of Synapse's server_keys_json.
+type ServerKeyJSON = fedauth.ServerKeyJSON
 
 const qServerKeys = `
 	SELECT key_id, from_server, ts_valid_until_ms, key_json

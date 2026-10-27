@@ -31,6 +31,7 @@ import (
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
@@ -140,6 +141,11 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	// The one cache of state groups' full state, read by the federation
 	// reads and inbound write mode alike.
 	states := statecache.New(int64(cfg.Memory.StateCacheMB)<<20, int64(cfg.Memory.EventGroupCacheMB)<<20)
+	// The one cache of other servers' published keys, which /send and the
+	// federation reads verify requests with. It reads Synapse's
+	// server_keys_json through whichever of the two opens a pool first.
+	keys := fedauth.NewKeys(hs.ServerName,
+		inboundapp.KeyOptions(cfg.Inbound, hs.TrustedKeyServers, componentLogger(log, cfg.Log, "inbound")))
 
 	var closers []func()
 	defer func() {
@@ -179,6 +185,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Replication:       consumer("federation_reads"),
 		Upstream:          upstream,
 		States:            states,
+		Keys:              keys,
 		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
 		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
 		Log:               componentLogger(log, cfg.Log, "federation_reads"),
@@ -201,6 +208,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Replication:    consumer("inbound"),
 		States:         states,
+		Keys:           keys,
 		Log:            componentLogger(log, cfg.Log, "inbound"),
 	})
 	var send http.Handler
