@@ -20,6 +20,7 @@ nothing at a 15s scrape interval, so it starts at 1m).
 |---|---|
 | Overview | Is this process the federation sender? Traffic per part, share answered here vs. by main, replication health, limits refusing. |
 | Memory & limits | Heap and RSS against `memory.limit_mb`, cache bytes, goroutines, each limit's slots in use, waits and refusals. |
+| Replication bus | The one Redis subscription: lines, reconnects, each part's queue, resyncs. |
 | Process | CPU, file descriptors, restarts. |
 | Database | Pool saturation and query times. |
 | Client sync | /sync traffic, latency, long-polls, token verdicts, caches, replication gaps. |
@@ -36,7 +37,8 @@ Each part keeps the prefix it had as a separate worker (`gosync_`,
 `goinbound_`, `gofed_`, `gopro_`), so Prometheus history continues across
 the cutover and existing alerts keep working. Only what is about the whole
 process is new: `goworker_build_info`, `goworker_memory_limit_bytes`,
-`goworker_limit_*{limit}` and `goworker_homeserver_yaml_reloads_total`.
+`goworker_limit_*{limit}`, `goworker_bus_*` (the one replication
+subscription), `goworker_degraded` and `goworker_homeserver_yaml_reloads_total`.
 
 Changed in the merge:
 

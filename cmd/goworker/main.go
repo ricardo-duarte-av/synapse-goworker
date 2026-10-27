@@ -29,6 +29,7 @@ import (
 	fedreadapp "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
@@ -111,7 +112,22 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		return fmt.Errorf("no database: homeserver.yaml has no usable database block and database.dsn is unset")
 	}
 	log.Info().Str("database", redactDSN(dsn)).Msg("connecting every pool as homeserver.yaml does")
-	redis := redisAddress(hs.Redis)
+	// The one subscription to Synapse's replication stream; every part
+	// reads it through a consumer of its own.
+	var stream *bus.Bus
+	consumer := func(name string) *bus.Consumer { return nil }
+	if hs.Redis.Enabled {
+		stream = bus.New(bus.Config{
+			Address:  redisAddress(hs.Redis),
+			Username: hs.Redis.Username,
+			Password: hs.Redis.Password,
+			DB:       hs.Redis.DBID,
+			Channel:  hs.ServerName,
+		}, log.With().Str("component", "bus").Logger())
+		consumer = func(name string) *bus.Consumer { return stream.Consumer(name, 0) }
+	} else {
+		log.Warn().Msg("homeserver.yaml has no redis: nothing wakes long-polls, invalidates caches or shows the sender new events")
+	}
 
 	whoamiSocket, whoamiURL := "", ""
 	if len(cfg.Upstream.Sockets) > 0 {
@@ -136,7 +152,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ConnectTimeout: db.ConnectTimeout(),
 		WhoamiSocket:   whoamiSocket,
 		WhoamiURL:      whoamiURL,
-		Redis:          syncapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
+		Replication:    consumer("sync"),
 		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),
 		InitialSyncs:   limits.NewGate("initial_syncs", lim.InitialSyncs),
 		Tag:            tag,
@@ -154,7 +170,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		DSN:               dsn,
 		MaxConns:          pools.Read,
 		ConnectTimeout:    db.ConnectTimeout(),
-		Redis:             fedreadapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
+		Replication:       consumer("federation_reads"),
 		Upstream:          upstream,
 		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
 		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
@@ -176,6 +192,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		WriteMaxConns:  pools.InboundWrite,
 		ConnectTimeout: db.ConnectTimeout(),
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
+		Replication:    consumer("inbound"),
 		Log:            log.With().Str("component", "inbound").Logger(),
 	})
 	var send http.Handler
@@ -199,6 +216,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ConnectTimeout:            db.ConnectTimeout(),
 		MaxConcurrentDestinations: lim.SenderDestinations,
 		CatchUpConcurrency:        lim.SenderCatchUp,
+		Replication:               consumer("sender"),
 		UserAgent:                 "synapse-goworker/" + tag,
 		Tag:                       tag, Commit: commit, BuildTime: buildTime,
 		Log: log.With().Str("component", "sender").Logger(),
@@ -241,6 +259,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	metricsSrv := metricsServer(cfg.Listen.Metrics)
 
 	g, gctx := errgroup.WithContext(ctx)
+	if stream != nil {
+		g.Go(func() error { stream.Run(gctx); return gctx.Err() })
+	}
 	g.Go(func() error { return clientSync.Run(gctx) })
 	g.Go(func() error { return reads.Run(gctx) })
 	g.Go(func() error { return sender.Run(gctx) })

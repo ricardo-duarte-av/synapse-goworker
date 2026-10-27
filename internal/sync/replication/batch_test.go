@@ -1,10 +1,14 @@
 package replication
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 )
 
 // posListener records the position each call carried, which recordingListener
@@ -297,8 +301,8 @@ func TestUnknownEventsRowShapeNamesNobody(t *testing.T) {
 func TestAnUnterminatedBatchEndsTheSession(t *testing.T) {
 	s := newTestSub()
 
-	aborted := false
-	s.abortSession = func() { aborted = true }
+	c := bus.New(bus.Config{}, zerolog.Nop()).Consumer("test", 0)
+	s.cfg.Bus = c
 
 	// One row past the cap. Each carries the "batch" token, so none of them
 	// ever names a position.
@@ -306,7 +310,7 @@ func TestAnUnterminatedBatchEndsTheSession(t *testing.T) {
 		s.handle(`RDATA events p1 batch ` + eventRow("!r:e.com"))
 	}
 
-	if !aborted {
+	if !resynced(c) {
 		t.Error("the session was not ended; the subscriber would report " +
 			"itself disconnected forever while still reading the stream")
 	}
@@ -320,17 +324,17 @@ func TestAnUnterminatedBatchEndsTheSession(t *testing.T) {
 func TestANormalBatchDoesNotEndTheSession(t *testing.T) {
 	s := newTestSub()
 
-	aborted := false
-	s.abortSession = func() { aborted = true }
+	c := bus.New(bus.Config{}, zerolog.Nop()).Consumer("test", 0)
+	s.cfg.Bus = c
 
 	for i := 0; i < maxPendingBatch-1; i++ {
 		s.handle(`RDATA events p1 batch ` + eventRow("!r:e.com"))
 	}
-	if aborted {
+	if resynced(c) {
 		t.Fatal("ended the session on a batch that was still within the limit")
 	}
 	s.handle(`RDATA events p1 900 ` + eventRow("!r:e.com"))
-	if aborted {
+	if resynced(c) {
 		t.Error("ended the session on a batch that terminated normally")
 	}
 	if got := len(s.pending[StreamEvents]); got != 0 {
@@ -378,4 +382,12 @@ func TestCachesRecordBeforeThePositionMovesAndClientsWakeAfter(t *testing.T) {
 			}
 		})
 	}
+}
+
+// resynced reports whether the subscriber asked the bus to start it over.
+func resynced(c *bus.Consumer) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	ev, ok := c.Next(ctx)
+	return ok && ev.Kind == bus.Dropped
 }

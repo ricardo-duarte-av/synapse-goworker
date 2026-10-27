@@ -29,6 +29,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedfetch"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/keyring"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/originup"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/policysign"
@@ -37,6 +38,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
@@ -61,6 +63,9 @@ type Settings struct {
 	// Transactions bounds /send transactions handled at once; past it they
 	// wait for a slot.
 	Transactions *limits.Gate
+	// Replication is this path's view of the worker's one subscription, on
+	// which it answers REPLICATE for the caches rows it publishes.
+	Replication *bus.Consumer
 
 	Log zerolog.Logger
 }
@@ -175,19 +180,19 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		out.closers = append(out.closers, stop)
 	}
 
-	if ic.MarksOriginsUp() && wdb != nil {
-		bus, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, log)
+	if ic.MarksOriginsUp() && wdb != nil && cfg.Replication != nil {
+		pub, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, log)
 		if err != nil {
 			log.Warn().Err(err).Msg("Inbound: origins in backoff cannot be marked up; their transactions go to Synapse")
 		} else {
 			busCtx, stopBus := context.WithCancel(context.Background())
-			go bus.Listen(busCtx, r.OnReplicate)
+			go originup.Listen(busCtx, cfg.Replication, r.OnReplicate)
 			opts.OriginUp = r
 			if limiter != nil {
 				// Write mode's backoff timings are stored once the bus is up.
 				limiter.SetWriter(r)
 			}
-			out.closers = append(out.closers, func() { stopBus(); bus.Close() })
+			out.closers = append(out.closers, func() { stopBus(); pub.Close() })
 		}
 	}
 

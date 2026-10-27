@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
@@ -33,14 +34,6 @@ type Pool struct {
 	MaxConns int32
 }
 
-// Redis is where the replication stream is read.
-type Redis struct {
-	Enabled  bool
-	Address  string
-	Password string
-	DB       int
-}
-
 // Settings is everything the sync path runs on.
 type Settings struct {
 	// Synapse is homeserver.yaml. It is reloaded for the presence writer's
@@ -58,7 +51,9 @@ type Settings struct {
 	// Synapse's main process.
 	WhoamiSocket, WhoamiURL string
 
-	Redis Redis
+	// Replication is sync's view of the worker's one subscription. Nil
+	// without redis: positions are then approximated from the database.
+	Replication *bus.Consumer
 	// Requests bounds concurrent requests, refused past it; InitialSyncs
 	// bounds syncs without a since token, which wait for a slot.
 	Requests, InitialSyncs *limits.Gate
@@ -332,13 +327,7 @@ func (s *Sync) openPresence(log zerolog.Logger) (*presence.Client, error) {
 // keeps the caches honest.
 func (s *Sync) subscribe(ctx context.Context, notif *notifier.Notifier) *replication.Subscriber {
 	db, log := s.db, s.log
-	sub := replication.New(replication.Config{
-		Enabled:  s.cfg.Redis.Enabled,
-		Address:  s.cfg.Redis.Address,
-		Channel:  s.cfg.Synapse.Current().ServerName,
-		Password: s.cfg.Redis.Password,
-		DB:       s.cfg.Redis.DB,
-	}, log, notif)
+	sub := replication.New(replication.Config{Bus: s.cfg.Replication}, log, notif)
 
 	// The stream-change caches ride alongside the notifier rather than inside
 	// it. Both read every row; see streamfeed.go for why they cannot share a

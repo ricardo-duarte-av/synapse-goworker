@@ -17,6 +17,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 )
@@ -45,14 +46,6 @@ func (c Config) Validate() error {
 	return c.RCFederation.Validate()
 }
 
-// Redis is where cache invalidations are read.
-type Redis struct {
-	Enabled  bool
-	Address  string
-	Password string
-	DB       int
-}
-
 // Settings is everything the read endpoints run on.
 type Settings struct {
 	ServerName        string
@@ -61,7 +54,10 @@ type Settings struct {
 	DSN               string
 	MaxConns          int32
 	ConnectTimeout    time.Duration
-	Redis             Redis
+	// Replication is the federation reads' view of the worker's one
+	// subscription, which carries the cache invalidations. Nil without
+	// redis: the caches then do not run.
+	Replication *bus.Consumer
 	// Upstream is Synapse's main process, the fallback for anything not
 	// answered natively.
 	Upstream *proxy.Proxy
@@ -104,14 +100,8 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 
 	// Caching is safe against deletions only while the cache-invalidation
 	// stream is followed; without it the caches do not run.
-	if cfg.Redis.Enabled {
-		f.sub, err = replication.New(replication.Config{
-			Enabled:  true,
-			Address:  cfg.Redis.Address,
-			Channel:  cfg.ServerName,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-		}, db, log)
+	if cfg.Replication != nil {
+		f.sub, err = replication.New(replication.Config{Bus: cfg.Replication}, db, log)
 		if err != nil {
 			db.SetCachesArmed(false)
 			log.Error().Err(err).Msg("federation reads: replication misconfigured; caches disabled")

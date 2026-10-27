@@ -117,9 +117,9 @@ stat("Reads answered here", "Share of federation reads answered natively. The re
 stat("Sync 5xx", "Share of client sync requests answered 5xx (499, the client hanging up, excluded).",
      [(f'sum(rate(gosync_requests_total{{{G}, status=~"5.."}}{R})) / sum(rate(gosync_requests_total{{{G}}}{R}))', "5xx")],
      unit="percentunit", decimals=2, thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 0.01}])
-stat("Replication connected", "Every subscriber this process runs. Below the count of three, something is reconnecting.",
-     [(f'max(gosync_replication_connected{{{G}}}) + max(gopro_replication_connected{{{G}}}) + max(gofed_replication_live{{{G}}})', "connected")],
-     decimals=0, thresholds=[{"color": "red", "value": None}, {"color": "green", "value": 3}])
+stat("Replication connected", "The one subscription to Synapse's replication stream that every part reads.",
+     [(f'max(goworker_bus_connected{{{G}}})', "connected")],
+     decimals=0, thresholds=[{"color": "red", "value": None}, {"color": "green", "value": 1}])
 stat("Limits refusing (window)", "Requests refused because a limit was full. See Memory & limits.",
      [(f'sum(increase(goworker_limit_refused_total{{{G}}}{R}))', "refused")], decimals=0,
      thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 1}])
@@ -147,6 +147,16 @@ ts("Slots in use by limit", "Work holding a slot, by limit; a line at its capaci
 ts("Wait for a slot (p99)", "Zero waits are observed too, so this is meaningful at low traffic.",
    [(q(0.99, "goworker_limit_wait_seconds", "le, limit"), "{{limit}}")], unit="s", w=8)
 ts("Refused by limit", "", [(f'sum by (limit) (rate(goworker_limit_refused_total{{{G}}}{R}))', "{{limit}}")], unit="ops", w=8)
+
+# ------------------------------------------------------------ Replication bus
+row("Replication bus")
+ts("Lines read and reconnects", "One subscription for the whole process. Each reconnect empties and re-arms every cache that depends on the stream.",
+   [(f'sum(rate(goworker_bus_lines_total{{{G}}}{R}))', "lines/s"),
+    (f'sum(increase(goworker_bus_subscriptions_total{{{G}}}{R}))', "subscriptions")], w=8)
+ts("Lines waiting per consumer", "Each part reads through its own queue. A queue that climbs is a part falling behind; at its bound it is resynced.",
+   [(f'max by (consumer) (goworker_bus_queued_lines{{{G}}})', "{{consumer}}")], w=8)
+ts("Consumer resyncs", "A part fell a whole queue behind and started over, as if its connection had dropped.",
+   [(f'sum by (consumer) (increase(goworker_bus_consumer_resyncs_total{{{G}}}{R}))', "{{consumer}}")], decimals=0, w=8)
 
 # ------------------------------------------------------------------- Process
 row("Process")

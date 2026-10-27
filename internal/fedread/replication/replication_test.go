@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/rs/zerolog"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 )
 
 // fakeCaches records what the subscriber did, so tests can assert on the thing
@@ -36,7 +38,7 @@ func (f *fakeCaches) DropEvent(id string) {
 func newTestSubscriber(t *testing.T) (*Subscriber, *fakeCaches) {
 	t.Helper()
 	f := &fakeCaches{}
-	s, err := New(Config{Enabled: true, Address: "/tmp/x", Channel: "example.org"},
+	s, err := New(Config{Bus: bus.New(bus.Config{}, zerolog.Nop()).Consumer("test", 0)},
 		f, zerolog.New(io.Discard))
 	if err != nil {
 		t.Fatal(err)
@@ -136,13 +138,9 @@ func TestMalformedRowEmptiesCaches(t *testing.T) {
 	}
 }
 
-func TestConfigRequiresChannel(t *testing.T) {
-	// One Redis can carry several homeservers' streams, so a wrong or missing
-	// channel would look healthy and never invalidate anything.
-	if _, err := New(Config{Enabled: true, Address: "/tmp/x"}, &fakeCaches{}, zerolog.New(io.Discard)); err == nil {
-		t.Error("a missing channel was accepted")
-	}
-	if _, err := New(Config{Enabled: true, Channel: "example.org"}, &fakeCaches{}, zerolog.New(io.Discard)); err == nil {
-		t.Error("a missing address was accepted")
+// Without the stream nothing could invalidate the caches.
+func TestConfigRequiresABus(t *testing.T) {
+	if _, err := New(Config{}, &fakeCaches{}, zerolog.New(io.Discard)); err == nil {
+		t.Error("no bus was accepted")
 	}
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/destinations"
@@ -60,6 +61,10 @@ type Settings struct {
 	// loops, and CatchUpConcurrency the destinations caught up at once.
 	MaxConcurrentDestinations int
 	CatchUpConcurrency        int
+
+	// Replication is the sender's view of the worker's one subscription.
+	// Nil without redis: no new events are seen.
+	Replication *bus.Consumer
 
 	// UserAgent is sent on every federation request.
 	UserAgent string
@@ -343,16 +348,8 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 		},
 	})
 
-	redisAddr := scfg.Redis.Socket
-	if redisAddr == "" {
-		redisAddr = scfg.Redis.Addr
-	}
 	w.sub = replication.New(replication.Config{
-		Enabled:      scfg.Redis.Enabled,
-		Address:      redisAddr,
-		Channel:      scfg.ServerName,
-		Password:     scfg.Redis.Password,
-		DB:           scfg.Redis.DBID,
+		Bus:          cfg.Replication,
 		InstanceName: cfg.InstanceName,
 	}, log, &handler{worker: w, log: log})
 

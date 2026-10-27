@@ -15,30 +15,23 @@ package replication
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
 )
 
-// Config describes how to reach Redis.
+// Config says where the stream comes from.
 type Config struct {
-	Enabled bool
-	// Address is a unix socket path, or host:port.
-	Address string
-	// Channel MUST equal Synapse's server_name: the channel is named after it.
-	// Subscribing to the wrong channel raises no error and delivers nothing, so
-	// the worker would simply never wake up and would look merely idle.
-	Channel  string
-	Password string
-	DB       int
+	// Bus is this subscriber's view of the worker's one replication
+	// subscription. Nil: no replication, positions approximated from the
+	// database.
+	Bus *bus.Consumer
 }
 
 // Stream names carried on the replication channel that matter to a sync.
@@ -203,16 +196,6 @@ type Subscriber struct {
 	// about the store.
 	onDrop    func()
 	onConnect func(positions map[string]int64)
-
-	// abortSession ends the running session, so the Run loop reconnects.
-	//
-	// Something that goes wrong while reading the stream -- a batch that never
-	// terminates is the one we have hit -- leaves the subscription unusable
-	// but not closed: Redis is still happily delivering to a reader that can no
-	// longer make sense of what it gets. Marking ourselves not-live is then a
-	// statement with no way back, because only a NEW session ever marks us live
-	// again. Cancelling the session is what turns that into a reconnect.
-	abortSession context.CancelFunc
 }
 
 // SetInvalidator registers the cache invalidator.
@@ -349,119 +332,44 @@ func (s *Subscriber) TypingIn(roomID string) []string {
 	return out
 }
 
-// Run follows the channel until the context is cancelled, reconnecting with
-// backoff.
+// Run follows the stream until ctx ends.
+//
+// Connected and Dropped are the subscription's edges, as the bus reports
+// them; between them every line is a command to handle.
 func (s *Subscriber) Run(ctx context.Context) {
-	if !s.cfg.Enabled {
+	if s.cfg.Bus == nil {
 		s.log.Info().Msg("replication disabled; stream positions will be approximated from the database")
 		return
 	}
-	backoff := time.Second
-	for ctx.Err() == nil {
-		subscribed, err := s.session(ctx)
-		if err != nil && ctx.Err() == nil {
-			s.log.Warn().Err(err).Dur("retry_in", backoff).Msg("replication connection lost")
-		}
-		s.setLive(false)
-		// A session that got as far as subscribing was a working connection,
-		// so the next failure starts its backoff from the bottom again.
-		// Without this the delay only ever grows, and a worker that has been
-		// up long enough to see a handful of unrelated blips waits the full
-		// thirty seconds before every subsequent reconnect.
-		if subscribed {
-			backoff = time.Second
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
-		}
-	}
-}
-
-// errResubscribed ends a session that go-redis silently reconnected.
-var errResubscribed = errors.New("redis reconnected underneath the subscription; resyncing")
-
-func (s *Subscriber) session(ctx context.Context) (subscribed bool, err error) {
-	// Own cancel, so a fault found while reading can end this session and let
-	// the Run loop build a fresh one.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	s.mu.Lock()
-	s.abortSession = cancel
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.abortSession = nil
-		s.mu.Unlock()
-	}()
-
-	opts := &redis.Options{Addr: s.cfg.Address, Password: s.cfg.Password, DB: s.cfg.DB}
-	if strings.HasPrefix(s.cfg.Address, "/") {
-		opts.Network = "unix"
-	}
-	client := redis.NewClient(opts)
-	defer func() { _ = client.Close() }()
-
-	// The main channel carries every stream. Synapse puts a few commands on
-	// `<channel>/SUFFIX` sub-channels -- USER_IP is one -- which are none of
-	// our business.
-	pubsub := client.Subscribe(ctx, s.cfg.Channel)
-	defer func() { _ = pubsub.Close() }()
-
-	if _, err := pubsub.Receive(ctx); err != nil {
-		return false, err
-	}
-	subscribed = true
-	s.setLive(true)
-	s.log.Info().Str("channel", s.cfg.Channel).Msg("following the replication stream")
-
-	// ChannelWithSubscriptions rather than Channel: go-redis reconnects and
-	// resubscribes on its own, without this loop ever seeing it. Rows
-	// published while it was disconnected are then simply missing, with
-	// caches still armed and positions still trusted. A resubscribe ends the
-	// session instead, so Run goes through the same drop and reconnect as
-	// any other lost connection.
-	ch := pubsub.ChannelWithSubscriptions()
 	for {
-		select {
-		case <-ctx.Done():
-			return subscribed, ctx.Err()
-		case ev, ok := <-ch:
-			if !ok {
-				return subscribed, nil
-			}
-			switch v := ev.(type) {
-			case *redis.Subscription:
-				if v.Kind == "subscribe" {
-					return subscribed, errResubscribed
-				}
-			case *redis.Message:
-				s.handle(v.Payload)
-			}
+		ev, ok := s.cfg.Bus.Next(ctx)
+		if !ok {
+			s.setLive(false)
+			return
+		}
+		switch ev.Kind {
+		case bus.Connected:
+			s.setLive(true)
+			s.log.Info().Msg("following the replication stream")
+		case bus.Dropped:
+			s.setLive(false)
+		case bus.Message:
+			s.handle(ev.Line)
 		}
 	}
 }
 
-// abort ends the running session so Run reconnects and resyncs from scratch.
+// abort starts over from scratch: what this subscriber holds can no longer
+// be trusted, so it goes through the same drop and reconnect as a lost
+// connection would.
 //
-// Both halves matter. Clearing the liveness flag is what stops us serving from
-// caches we can no longer keep current, and it has to happen now rather than
-// whenever the session goroutine unwinds. Cancelling is what makes the flag
-// recoverable: setLive(true) runs only when a new session subscribes, so
-// clearing it without ending the session leaves the subscriber wedged for the
-// life of the process -- which is exactly the bug this function was extracted
-// to fix. Neither half is correct alone.
+// Clearing the liveness flag now is what stops us serving from caches we can
+// no longer keep current; Resync is what brings it back, by delivering
+// Dropped and Connected after the lines already queued are discarded.
 func (s *Subscriber) abort() {
 	s.setLive(false)
-	s.mu.Lock()
-	cancel := s.abortSession
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if s.cfg.Bus != nil {
+		s.cfg.Bus.Resync()
 	}
 }
 

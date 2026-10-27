@@ -25,7 +25,7 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
 | `internal/sync` | gosync, as `app.New` + `Register` |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
@@ -38,10 +38,6 @@ The approved plan is in
 
 Each component still has its own copy of these, which work but duplicate:
 
-- **The Redis subscriber.** sync, fedread and the sender each subscribe;
-  inbound's originup has its own client for publishing. All four read one
-  channel. (sync and the sender now resync on a silent reconnect, as
-  fedread did.)
 - **Caches of the same immutable data**: event -> state group (sync,
   fedread), state group -> state (fedread bytes-bounded, inbound
   entries-bounded), filtered state, room versions, server keys (fedauth in

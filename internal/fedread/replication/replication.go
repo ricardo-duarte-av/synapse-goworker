@@ -28,10 +28,10 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 )
 
 // Synapse's fake cache names for bulk invalidations. They are not real cached
@@ -56,27 +56,16 @@ var perEventCaches = map[string]int{
 	"have_seen_event":            1, // keys: [room_id, event_id]
 }
 
-// Config selects the Redis carrying Synapse's replication stream.
+// Config says where the stream comes from.
 type Config struct {
-	// Enabled turns consumption on. When false the caches stay armed and
-	// inherit Synapse's staleness, which is only acceptable knowingly.
-	Enabled bool `yaml:"enabled"`
-	// Address is a unix socket path or host:port.
-	Address string `yaml:"address"`
-	// Channel must equal Synapse's server_name. It is required rather than
-	// derived because one Redis can carry several homeservers' streams, and
-	// subscribing to the wrong one would silently never invalidate anything.
-	Channel  string `yaml:"channel"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	// Bus is this subscriber's view of the worker's one replication
+	// subscription.
+	Bus *bus.Consumer
 }
 
 func (c Config) validate() error {
-	if c.Address == "" {
-		return errors.New("replication.address is required when replication is enabled")
-	}
-	if c.Channel == "" {
-		return errors.New("replication.channel is required when replication is enabled; it must match Synapse's server_name")
+	if c.Bus == nil {
+		return errors.New("replication: no bus; without the stream the caches cannot be invalidated")
 	}
 	return nil
 }
@@ -119,77 +108,23 @@ func New(cfg Config, caches Caches, log zerolog.Logger) (*Subscriber, error) {
 // database rather than quickly from a cache it cannot invalidate.
 func (s *Subscriber) Run(ctx context.Context) {
 	s.disarm("startup")
-
-	backoff := time.Second
-	const maxBackoff = 30 * time.Second
-
-	for ctx.Err() == nil {
-		err := s.session(ctx)
-		if ctx.Err() != nil {
-			break
-		}
-		s.disarm("disconnected")
-		s.log.Warn().Err(err).Dur("retry_in", backoff).
-			Msg("replication stream lost; caches disarmed until it returns")
-
-		select {
-		case <-ctx.Done():
-		case <-time.After(backoff):
-		}
-		if backoff *= 2; backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-	}
-	s.disarm("shutdown")
-}
-
-// session holds one subscription for as long as it stays healthy.
-func (s *Subscriber) session(ctx context.Context) error {
-	opts := &redis.Options{
-		Addr:     s.cfg.Address,
-		Password: s.cfg.Password,
-		DB:       s.cfg.DB,
-	}
-	if strings.HasPrefix(s.cfg.Address, "/") {
-		opts.Network = "unix"
-	}
-	client := redis.NewClient(opts)
-	defer client.Close()
-
-	pubsub := client.Subscribe(ctx, s.cfg.Channel)
-	defer pubsub.Close()
-
-	// ChannelWithSubscriptions rather than Channel: go-redis reconnects and
-	// resubscribes on its own, without the read loop ever returning. That is
-	// convenient for ordinary clients and dangerous here — a purge published
-	// while we were disconnected would be missed with nothing to show for it.
-	// Surfacing the resubscribe lets every gap in the stream empty the caches.
-	ch := pubsub.ChannelWithSubscriptions()
+	defer s.disarm("shutdown")
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case ev, ok := <-ch:
-			if !ok {
-				return errors.New("replication channel closed")
-			}
-			switch v := ev.(type) {
-			case *redis.Subscription:
-				if v.Kind != "subscribe" {
-					continue
-				}
-				// Either the first subscribe or a silent reconnect. Both mean
-				// we cannot account for what happened in between.
-				s.arm()
-				s.log.Info().
-					Str("channel", s.cfg.Channel).
-					Str("address", s.cfg.Address).
-					Msg("subscribed to Synapse's replication stream; caches emptied and armed")
-			case *redis.Message:
-				s.handle(v.Payload)
-			case *redis.Pong:
-				// Health check; carries no data.
-			}
+		ev, ok := s.cfg.Bus.Next(ctx)
+		if !ok {
+			return
+		}
+		switch ev.Kind {
+		case bus.Connected:
+			// Either the first subscription or a reconnect. Both mean we
+			// cannot account for what happened in between.
+			s.arm()
+			s.log.Info().Msg("following the replication stream; caches emptied and armed")
+		case bus.Dropped:
+			s.disarm("disconnected")
+			s.log.Warn().Msg("replication stream lost; caches disarmed until it returns")
+		case bus.Message:
+			s.handle(ev.Line)
 		}
 	}
 }

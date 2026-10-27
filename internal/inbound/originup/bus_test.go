@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
+	platformbus "github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
@@ -37,7 +38,9 @@ func TestBusEndToEnd(t *testing.T) {
 	got := sub.Channel()
 
 	r := New(Options{Store: &fakeStore{}, Publisher: bus, Instance: "goinbound-worker", Log: zerolog.Nop()})
-	go bus.Listen(ctx, r.OnReplicate)
+	sb := platformbus.New(platformbus.Config{Address: addr, Channel: "hs.test"}, zerolog.Nop())
+	go sb.Run(ctx)
+	go Listen(ctx, sb.Consumer("originup", 0), r.OnReplicate)
 	r.Reset("down.example", "")
 	want := []string{
 		`RDATA caches goinbound-worker 101 ["get_destination_retry_timings",["down.example"],1700000000000]`,

@@ -1,8 +1,8 @@
 // Package replication follows Synapse's replication stream over Redis.
 //
-// It is SUBSCRIBE-only, and that is a safety property rather than a
-// simplification. A real federation sender publishes two things, and both would
-// perturb the live cluster we are shadowing:
+// It only reads, from the worker's one subscription (package bus), and that is
+// deliberate. A Python federation sender publishes two things, both of which
+// this one leaves out:
 //
 //   - REPLICATE on connect, which makes every other worker on the bus broadcast
 //     its stream positions on our account.
@@ -11,27 +11,23 @@
 //     from a worker that has not actually delivered anything could drop EDUs a
 //     real sender had not yet taken.
 //
-// So this connection cannot publish: newSubscriber takes a client whose only
-// use is Subscribe, and there is no code path here that calls Publish. See
-// docs/shadow-safety.md.
+// There is no code path here that publishes (TestPackageNeverPublishes).
 //
-// The consequence we accept is that we never receive the POSITION broadcast a
+// The consequence is that we never receive the POSITION broadcast a
 // REPLICATE would have triggered. Positions are seeded from the database at
 // startup instead and corrected as RDATA arrives; a seeded position is a lower
-// bound, which for a shadow means at worst re-examining events we already
-// examined.
+// bound, which means at worst re-examining events already examined.
 package replication
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 )
 
 // Stream names carried on the replication channel. The rest are here so an
@@ -113,18 +109,11 @@ type Handler interface {
 	OnReplicate()
 }
 
-// Config describes how to reach Redis.
+// Config says where the stream comes from.
 type Config struct {
-	Enabled bool
-	// Address is a unix socket path, or host:port.
-	Address string
-	// Channel MUST equal Synapse's server_name: the channel is named after it
-	// and there is no prefix setting (replication/tcp/redis.py:399).
-	// Subscribing to the wrong channel raises no error and delivers nothing, so
-	// the worker would simply never wake up and would look merely idle.
-	Channel  string
-	Password string
-	DB       int
+	// Bus is this subscriber's view of the worker's one replication
+	// subscription. Nil: no replication, so no new events are seen.
+	Bus *bus.Consumer
 	// InstanceName is ours, used to drop our own echo: rows this process's
 	// inbound path published under the same name.
 	InstanceName string
@@ -210,97 +199,28 @@ func (s *Subscriber) Live() bool {
 	return s.live
 }
 
-// Run follows the channel until the context is cancelled, reconnecting with
-// backoff.
+// Run follows the stream until ctx ends.
 func (s *Subscriber) Run(ctx context.Context) {
-	if !s.cfg.Enabled {
+	if s.cfg.Bus == nil {
 		s.log.Info().Msg("replication disabled; the worker will not see new events")
 		return
 	}
-	backoff := time.Second
-	for ctx.Err() == nil {
-		subscribed, err := s.session(ctx)
-		if err != nil && ctx.Err() == nil {
-			s.log.Warn().Err(err).Dur("retry_in", backoff).Msg("replication connection lost")
-		}
-		s.setLive(false)
-		// A session that got as far as subscribing was a working connection, so
-		// the next failure starts its backoff from the bottom again. Without
-		// this the delay only ever grows, and a worker that has been up long
-		// enough to see a handful of unrelated blips waits the full thirty
-		// seconds before every subsequent reconnect.
-		if subscribed {
-			backoff = time.Second
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
-		}
-	}
-}
-
-// errResubscribed ends a session that go-redis silently reconnected.
-var errResubscribed = errors.New("redis reconnected underneath the subscription; resyncing")
-
-func (s *Subscriber) session(ctx context.Context) (subscribed bool, err error) {
-	opts := &redis.Options{
-		Addr:     s.cfg.Address,
-		Password: s.cfg.Password,
-		DB:       s.cfg.DB,
-	}
-	// A path rather than host:port means a unix socket, which is how this
-	// deployment reaches KeyDB.
-	if strings.HasPrefix(s.cfg.Address, "/") {
-		opts.Network = "unix"
-	}
-	client := redis.NewClient(opts)
-	defer client.Close()
-
-	// The only call made on this client. Nothing in this package publishes;
-	// see the package comment.
-	sub := client.Subscribe(ctx, s.cfg.Channel)
-	defer sub.Close()
-
-	if _, err := sub.Receive(ctx); err != nil {
-		return false, err
-	}
-	subscribed = true
-	s.setLive(true)
-	s.log.Info().
-		Str("channel", s.cfg.Channel).
-		Str("address", s.cfg.Address).
-		Msg("subscribed to the replication channel (subscribe-only; we never publish)")
-	if s.onConnect != nil {
-		s.onConnect()
-	}
-
-	// ChannelWithSubscriptions rather than Channel: go-redis reconnects and
-	// resubscribes on its own, without this loop ever seeing it. Rows
-	// published while it was disconnected are then simply missing, with
-	// caches still armed and positions still trusted. A resubscribe ends the
-	// session instead, so Run goes through the same drop and reconnect as
-	// any other lost connection.
-	ch := sub.ChannelWithSubscriptions()
 	for {
-		select {
-		case <-ctx.Done():
-			return subscribed, ctx.Err()
-		case ev, ok := <-ch:
-			if !ok {
-				return subscribed, nil
+		ev, ok := s.cfg.Bus.Next(ctx)
+		if !ok {
+			s.setLive(false)
+			return
+		}
+		switch ev.Kind {
+		case bus.Connected:
+			s.setLive(true)
+			if s.onConnect != nil {
+				s.onConnect()
 			}
-			switch v := ev.(type) {
-			case *redis.Subscription:
-				if v.Kind == "subscribe" {
-					return subscribed, errResubscribed
-				}
-			case *redis.Message:
-				s.handleLine(v.Payload)
-			}
+		case bus.Dropped:
+			s.setLive(false)
+		case bus.Message:
+			s.handleLine(ev.Line)
 		}
 	}
 }
