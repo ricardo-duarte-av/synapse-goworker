@@ -25,9 +25,7 @@ federation-read panels. `$synapse_server`, `$synapse_inbound_job` and
 `$synapse_reader_job` name Synapse's own processes for the "vs Synapse"
 comparison panels.
 
-Prometheus must scrape the metrics listener (`listen.metrics.addr`,
-`av-goworker-1:9200` with the compose file); the old workers' scrape jobs can
-go once their containers do.
+Prometheus must scrape the metrics listener; see [Prometheus](#prometheus).
 
 ## Rows
 
@@ -86,29 +84,136 @@ and an unjoined `go_*` sums all of them.
 - **`goinbound_*` and `gofed_*` carry no `server_name`.** That is a label of
   Synapse's own metrics; filter goworker's by `job`/`instance`.
 
-## Alerts
+## Prometheus
 
-Kept outside the JSON, as before. Both need `or vector(0)` and "No data" set
-to OK, or they fire on a worker that has simply had nothing to do:
+### Scrape job
 
-```promql
-# Staged events that are ours to sweep and are not being swept.
-max(goinbound_staging_unattended_oldest_seconds) > 300
+Add to the `scrape_configs:` of `prometheus.yml` and reload Prometheus
+(`kill -HUP`, or `POST /-/reload` with `--web.enable-lifecycle`). The target
+is `listen.metrics.addr` from goworker.yaml, reached by container name over a
+network Prometheus shares with the worker (`npm-nw` with the compose file):
 
-# Events write mode gave up on.
-sum(increase(goinbound_write_events_total{outcome="given_up"}[15m])) > 0
+```yaml
+scrape_configs:
+  - job_name: goworker
+    scrape_interval: 15s       # $bucket's shortest useful window is 2x this
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["av-goworker-1:9200"]
+        labels:
+          deployment: aguiarvieira.pt
+      # One target per worker; the dashboard's $instance picks between them.
+      # - targets: ["mb-goworker-1:9200"]
+      #   labels:
+      #     deployment: matrixbridg.es
 ```
 
-Worth adding now that one process does the work of four:
+Everything the dashboard needs comes from this one job: the process
+collectors (`go_*`, `process_*`) are scraped from the same listener and joined
+on `goworker_build_info`. Do not add a `job` or `instance` label of your own
+beyond what Prometheus sets; the panels key on those two. The old workers'
+jobs (`gosync-worker`, `goinbound-worker`, `gopro-worker`,
+`av-gofederation-worker`) can go once their containers do; their history stays
+queryable, under the same metric names, by selecting their job.
 
-```promql
-# The sender role is what homeserver.yaml says; alert if nothing is sending.
-max(gofed_sender_active) == 0   # only where this worker is meant to be the sender
+Check before reloading:
 
-# A limit refusing work for a sustained period.
-sum by (limit) (rate(goworker_limit_refused_total[10m])) > 0
+```sh
+promtool check config prometheus.yml
 ```
+
+### Alert rules
+
+Kept outside the dashboard, as before. Save as `goworker.rules.yml`, list it
+under `rule_files:` in `prometheus.yml`, and route the `goworker` alerts in
+Alertmanager as you like:
+
+```yaml
+groups:
+  - name: goworker
+    rules:
+      - alert: GoworkerDown
+        expr: up{job="goworker"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "goworker {{ $labels.instance }} is not being scraped"
+          description: "Sync, inbound /send, federation reads and (if listed) the federation sender all stop with it; nginx sends their traffic nowhere."
+
+      - alert: GoworkerReplicationDisconnected
+        expr: max by (instance) (goworker_bus_connected{job="goworker"}) == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "goworker {{ $labels.instance }} has lost Synapse's replication stream"
+          description: "Every part reads the one Redis subscription. Without it sync stops waking, caches are disarmed and the sender stops picking up events."
+
+      - alert: GoworkerNotSending
+        # Only meaningful where homeserver.yaml is meant to list this worker in
+        # federation_sender_instances; not being listed is a normal state.
+        expr: max by (instance) (gofed_sender_active{job="goworker", instance="av-goworker-1:9200"}) == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "goworker {{ $labels.instance }} is not sending federation"
+          description: "homeserver.yaml does not name its instance_name in federation_sender_instances, or the role was not re-read (it is re-read on REPLICATE and SIGHUP)."
+
+      - alert: GoworkerDegraded
+        expr: max by (instance, capability) (goworker_degraded{job="goworker"}) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "goworker {{ $labels.instance }} hands {{ $labels.capability }} to main"
+          description: "A part could not start (its log says why at startup) and its requests are proxied to main, which is single-threaded."
+
+      - alert: GoworkerLimitRefusing
+        expr: sum by (instance, limit) (rate(goworker_limit_refused_total{job="goworker"}[10m])) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "goworker {{ $labels.instance }}: limit {{ $labels.limit }} is refusing work"
+          description: "Requests over the limit get 429/503. Raise it in goworker.yaml's limits, or find what is holding slots (Memory & limits row)."
+
+      - alert: GoworkerNearMemoryLimit
+        expr: |
+          max by (instance) (go_memstats_heap_inuse_bytes{job="goworker"})
+            / max by (instance) (goworker_memory_limit_bytes{job="goworker"} > 0) > 0.9
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "goworker {{ $labels.instance }} heap is over 90% of memory.limit_mb"
+          description: "The collector is working hard to stay under the limit. Check the cache bytes panel against memory.state_cache_mb."
+
+      - alert: GoinboundStagingUnattended
+        # Staged events that are ours to sweep and are not being swept.
+        expr: max by (instance) (goinbound_staging_unattended_oldest_seconds{job="goworker"}) > 300
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Staged inbound events are not being processed"
+          description: "The oldest unattended staged event is {{ $value | humanizeDuration }} old."
+
+      - alert: GoinboundWriteGivenUp
+        # Events write mode dropped after retries.
+        expr: sum by (instance) (increase(goinbound_write_events_total{job="goworker", outcome="given_up"}[15m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Inbound write mode gave up on {{ $value | humanize }} events in 15m"
+          description: "See the Inbound federation: Write mode row and the worker's log."
+```
+
+A rule over a series that does not exist yet simply does not fire, so a
+worker that has had nothing to do raises nothing; no `or vector(0)` is
+needed here (it was for Grafana-managed alerts, whose "No data" state must
+be set to OK if you keep using those).
 
 Do not alert on `goinbound_staging_oldest_seconds`: a process working through
 a big room's missing prevs keeps an event staged for many minutes while it
 holds the lock (over 8 for Matrix HQ, 2026-10-16), which is not a fault.
+
+Check before reloading:
+
+```sh
+promtool check rules goworker.rules.yml
+```
