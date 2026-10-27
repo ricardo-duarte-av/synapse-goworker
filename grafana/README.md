@@ -97,5 +97,6 @@ max(gofed_sender_active) == 0   # only where this worker is meant to be the send
 sum by (limit) (rate(goworker_limit_refused_total[10m])) > 0
 ```
 
-Do not alert on `goinbound_staging_oldest_seconds`: events Synapse is
-sweeping itself are counted there too.
+Do not alert on `goinbound_staging_oldest_seconds`: a process working through
+a big room's missing prevs keeps an event staged for many minutes while it
+holds the lock (over 8 for Matrix HQ, 2026-10-16), which is not a fault.
