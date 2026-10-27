@@ -21,9 +21,9 @@ the file, and runs in CI:
 Variables: `$job` and `$instance` come from `goworker_build_info`; `$bucket`
 is the rate window (windows under 30s return nothing at a 15s scrape
 interval). `$sync_endpoint` and `$fedread_endpoint` filter the sync and
-federation-read panels. `$synapse_server`, `$synapse_inbound_job` and
-`$synapse_reader_job` name Synapse's own processes for the "vs Synapse"
-comparison panels.
+federation-read panels. `$synapse_server` and `$synapse_inbound_job` name
+Synapse's Python inbound worker, for the panels that check /send no longer
+reaches it.
 
 Prometheus must scrape the metrics listener; see [Prometheus](#prometheus).
 
