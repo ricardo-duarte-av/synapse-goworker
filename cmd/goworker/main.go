@@ -183,10 +183,17 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Log:            log.With().Str("component", "inbound").Logger(),
 	})
+	var send http.Handler
 	if err != nil {
-		return fmt.Errorf("inbound: %w", err)
+		// Degraded, not down: /send then goes to main, as it did before
+		// goinbound. The usual cause is a homeserver whose one database user
+		// cannot create the inbound roles (database.manage_roles: false).
+		degraded.WithLabelValues("inbound").Set(1)
+		log.Warn().Err(err).Msg("inbound /send unavailable; it is proxied to main")
+	} else {
+		closers = append(closers, inbound.Close)
+		send = inbound.Handler()
 	}
-	closers = append(closers, inbound.Close)
 
 	sender, err := senderapp.New(ctx, senderapp.Settings{
 		InstanceName:              cfg.InstanceName,
@@ -216,7 +223,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	client := http.NewServeMux()
 	clientSync.Register(client)
 	router := &httpserve.Router{
-		Send:       inbound.Handler(),
+		Send:       send,
 		Reads:      reads.Handler(),
 		ReadsMatch: func(p string) bool { _, ok := fedapi.Match(p); return ok },
 		Client:     client,

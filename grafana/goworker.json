@@ -824,8 +824,8 @@
     },
     {
       "type": "stat",
-      "title": "homeserver.yaml reloads (window)",
-      "description": "Changes to homeserver.yaml picked up at runtime. An error keeps the last good copy.",
+      "title": "Degraded",
+      "description": "Parts that could not start and whose requests go to main (goworker_degraded). Each one is logged at start.",
       "id": 13,
       "datasource": {
         "type": "prometheus",
@@ -834,6 +834,72 @@
       "gridPos": {
         "x": 20,
         "y": 5,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(goworker_degraded{job=~\"$job\", instance=~\"$instance\"}) or vector(0)",
+          "legendFormat": "degraded",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "homeserver.yaml reloads (window)",
+      "description": "Changes to homeserver.yaml picked up at runtime. An error keeps the last good copy.",
+      "id": 14,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
         "w": 4,
         "h": 4
       },
@@ -887,11 +953,11 @@
     {
       "type": "row",
       "title": "Memory & limits",
-      "id": 14,
+      "id": 15,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 13,
         "w": 24,
         "h": 1
       },
@@ -901,14 +967,14 @@
       "type": "timeseries",
       "title": "Heap against the memory limit",
       "description": "Heap in use and RSS against memory.limit_mb. The collector works harder as the heap nears the limit; RSS lags the heap after a drop.",
-      "id": 15,
+      "id": 16,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 10,
+        "y": 14,
         "w": 8,
         "h": 8
       },
@@ -987,14 +1053,14 @@
       "type": "timeseries",
       "title": "Cache bytes",
       "description": "The byte-bounded caches of the federation reads, against their configured maxima.",
-      "id": 16,
+      "id": 17,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 10,
+        "y": 14,
         "w": 8,
         "h": 8
       },
@@ -1062,14 +1128,14 @@
       "type": "timeseries",
       "title": "Goroutines and GC",
       "description": "Goroutines are cheap and spawned freely; a steady climb is a leak, not load.",
-      "id": 17,
+      "id": 18,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 10,
+        "y": 14,
         "w": 8,
         "h": 8
       },
@@ -1137,14 +1203,14 @@
       "type": "timeseries",
       "title": "Slots in use by limit",
       "description": "Work holding a slot, by limit; a line at its capacity is a limit binding.",
-      "id": 18,
+      "id": 19,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 22,
         "w": 8,
         "h": 8
       },
@@ -1212,14 +1278,14 @@
       "type": "timeseries",
       "title": "Wait for a slot (p99)",
       "description": "Zero waits are observed too, so this is meaningful at low traffic.",
-      "id": 19,
+      "id": 20,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 18,
+        "y": 22,
         "w": 8,
         "h": 8
       },
@@ -1276,14 +1342,14 @@
       "type": "timeseries",
       "title": "Refused by limit",
       "description": "",
-      "id": 20,
+      "id": 21,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 18,
+        "y": 22,
         "w": 8,
         "h": 8
       },
@@ -1339,11 +1405,11 @@
     {
       "type": "row",
       "title": "Process",
-      "id": 21,
+      "id": 22,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 30,
         "w": 24,
         "h": 1
       },
@@ -1353,14 +1419,14 @@
       "type": "timeseries",
       "title": "CPU",
       "description": "",
-      "id": 22,
+      "id": 23,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 31,
         "w": 8,
         "h": 8
       },
@@ -1417,14 +1483,14 @@
       "type": "timeseries",
       "title": "Open file descriptors",
       "description": "Thousands is normal: one connection per remote server being sent to.",
-      "id": 23,
+      "id": 24,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 27,
+        "y": 31,
         "w": 8,
         "h": 8
       },
@@ -1481,14 +1547,14 @@
       "type": "timeseries",
       "title": "Restarts",
       "description": "",
-      "id": 24,
+      "id": 25,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 27,
+        "y": 31,
         "w": 8,
         "h": 8
       },
@@ -1545,11 +1611,11 @@
     {
       "type": "row",
       "title": "Database",
-      "id": 25,
+      "id": 26,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 39,
         "w": 24,
         "h": 1
       },
@@ -1559,14 +1625,14 @@
       "type": "timeseries",
       "title": "Sender pool connections",
       "description": "",
-      "id": 26,
+      "id": 27,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 40,
         "w": 8,
         "h": 8
       },
@@ -1623,14 +1689,14 @@
       "type": "timeseries",
       "title": "Sender query time (p99)",
       "description": "Queries named 'other' should stay near zero; a hot unnamed query hides there.",
-      "id": 27,
+      "id": 28,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 36,
+        "y": 40,
         "w": 8,
         "h": 8
       },
@@ -1687,14 +1753,14 @@
       "type": "timeseries",
       "title": "Sync and inbound queries",
       "description": "",
-      "id": 28,
+      "id": 29,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 36,
+        "y": 40,
         "w": 8,
         "h": 8
       },
@@ -1761,11 +1827,11 @@
     {
       "type": "row",
       "title": "Client sync",
-      "id": 29,
+      "id": 30,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 48,
         "w": 24,
         "h": 1
       },
@@ -1775,14 +1841,14 @@
       "type": "timeseries",
       "title": "Requests by endpoint and status",
       "description": "",
-      "id": 30,
+      "id": 31,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 49,
         "w": 12,
         "h": 8
       },
@@ -1839,14 +1905,14 @@
       "type": "timeseries",
       "title": "Latency",
       "description": "Long-polls dominate the high quantiles by design; a 30s p99 is a client's timeout, not slowness.",
-      "id": 31,
+      "id": 32,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 12,
-        "y": 45,
+        "y": 49,
         "w": 12,
         "h": 8
       },
@@ -1914,14 +1980,14 @@
       "type": "timeseries",
       "title": "Waiting long-polls",
       "description": "",
-      "id": 32,
+      "id": 33,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 57,
         "w": 8,
         "h": 8
       },
@@ -1978,14 +2044,14 @@
       "type": "timeseries",
       "title": "Token verdicts",
       "description": "",
-      "id": 33,
+      "id": 34,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 53,
+        "y": 57,
         "w": 8,
         "h": 8
       },
@@ -2042,14 +2108,14 @@
       "type": "timeseries",
       "title": "Wakeups by stream",
       "description": "",
-      "id": 34,
+      "id": 35,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 53,
+        "y": 57,
         "w": 8,
         "h": 8
       },
@@ -2106,14 +2172,14 @@
       "type": "timeseries",
       "title": "Derived cache hit rate",
       "description": "Reads zero while a cache is disarmed (replication down); read cache_armed beside it.",
-      "id": 35,
+      "id": 36,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 61,
+        "y": 65,
         "w": 8,
         "h": 8
       },
@@ -2170,14 +2236,14 @@
       "type": "timeseries",
       "title": "Caches armed",
       "description": "",
-      "id": 36,
+      "id": 37,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 61,
+        "y": 65,
         "w": 8,
         "h": 8
       },
@@ -2246,14 +2312,14 @@
       "type": "timeseries",
       "title": "Replication rows and discontinuities",
       "description": "",
-      "id": 37,
+      "id": 38,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 61,
+        "y": 65,
         "w": 8,
         "h": 8
       },
@@ -2320,11 +2386,11 @@
     {
       "type": "row",
       "title": "Sliding sync",
-      "id": 38,
+      "id": 39,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 69,
+        "y": 73,
         "w": 24,
         "h": 1
       },
@@ -2334,14 +2400,14 @@
       "type": "timeseries",
       "title": "Responses by outcome",
       "description": "",
-      "id": 39,
+      "id": 40,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 74,
         "w": 8,
         "h": 8
       },
@@ -2398,14 +2464,14 @@
       "type": "timeseries",
       "title": "Connections and positions",
       "description": "",
-      "id": 40,
+      "id": 41,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 70,
+        "y": 74,
         "w": 8,
         "h": 8
       },
@@ -2473,14 +2539,14 @@
       "type": "timeseries",
       "title": "Rows written",
       "description": "",
-      "id": 41,
+      "id": 42,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 70,
+        "y": 74,
         "w": 8,
         "h": 8
       },
@@ -2536,11 +2602,11 @@
     {
       "type": "row",
       "title": "To-device & presence",
-      "id": 42,
+      "id": 43,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 82,
         "w": 24,
         "h": 1
       },
@@ -2550,14 +2616,14 @@
       "type": "timeseries",
       "title": "To-device messages deleted",
       "description": "",
-      "id": 43,
+      "id": 44,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 79,
+        "y": 83,
         "w": 8,
         "h": 8
       },
@@ -2614,14 +2680,14 @@
       "type": "timeseries",
       "title": "Presence relays",
       "description": "",
-      "id": 44,
+      "id": 45,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 79,
+        "y": 83,
         "w": 8,
         "h": 8
       },
@@ -2700,14 +2766,14 @@
       "type": "timeseries",
       "title": "Presence devices tracked",
       "description": "",
-      "id": 45,
+      "id": 46,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 79,
+        "y": 83,
         "w": 8,
         "h": 8
       },
@@ -2763,11 +2829,11 @@
     {
       "type": "row",
       "title": "Inbound /send",
-      "id": 46,
+      "id": 47,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 87,
+        "y": 91,
         "w": 24,
         "h": 1
       },
@@ -2777,14 +2843,14 @@
       "type": "timeseries",
       "title": "Transactions by route and reason",
       "description": "native, proxy (to main) or abandoned (the sender hung up), and why proxied: has_pdus (write mode unavailable), auth_failed, origin_in_backoff, uncertain, db_error, too_large, not_send...",
-      "id": 47,
+      "id": 48,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 92,
         "w": 12,
         "h": 8
       },
@@ -2841,14 +2907,14 @@
       "type": "timeseries",
       "title": "Latency by route",
       "description": "",
-      "id": 48,
+      "id": 49,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 12,
-        "y": 88,
+        "y": 92,
         "w": 12,
         "h": 8
       },
@@ -2916,14 +2982,14 @@
       "type": "timeseries",
       "title": "EDUs by type and action",
       "description": "",
-      "id": 49,
+      "id": 50,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 100,
         "w": 8,
         "h": 8
       },
@@ -2980,14 +3046,14 @@
       "type": "timeseries",
       "title": "EDU forwards by writer and outcome",
       "description": "",
-      "id": 50,
+      "id": 51,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 96,
+        "y": 100,
         "w": 8,
         "h": 8
       },
@@ -3044,14 +3110,14 @@
       "type": "timeseries",
       "title": "Origins marked up",
       "description": "",
-      "id": 51,
+      "id": 52,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 96,
+        "y": 100,
         "w": 8,
         "h": 8
       },
@@ -3107,11 +3173,11 @@
     {
       "type": "row",
       "title": "Inbound PDUs (write mode)",
-      "id": 52,
+      "id": 53,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 108,
         "w": 24,
         "h": 1
       },
@@ -3121,14 +3187,14 @@
       "type": "timeseries",
       "title": "Events written by outcome",
       "description": "given_up is an event dropped after retries; alert on it.",
-      "id": 53,
+      "id": 54,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 109,
         "w": 8,
         "h": 8
       },
@@ -3185,14 +3251,14 @@
       "type": "timeseries",
       "title": "Event write time",
       "description": "",
-      "id": 54,
+      "id": 55,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 105,
+        "y": 109,
         "w": 8,
         "h": 8
       },
@@ -3260,14 +3326,14 @@
       "type": "timeseries",
       "title": "Persist over replication",
       "description": "",
-      "id": 55,
+      "id": 56,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 105,
+        "y": 109,
         "w": 8,
         "h": 8
       },
@@ -3324,14 +3390,14 @@
       "type": "timeseries",
       "title": "Staging",
       "description": "Unattended staged events are ours to sweep and are not being swept: alert past 5 minutes. Don't alert on staging_oldest.",
-      "id": 56,
+      "id": 57,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 113,
+        "y": 117,
         "w": 8,
         "h": 8
       },
@@ -3399,14 +3465,14 @@
       "type": "timeseries",
       "title": "Oldest unattended",
       "description": "",
-      "id": 57,
+      "id": 58,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 113,
+        "y": 117,
         "w": 8,
         "h": 8
       },
@@ -3463,14 +3529,14 @@
       "type": "timeseries",
       "title": "Pulled, outliers, pruned, nudges",
       "description": "",
-      "id": 58,
+      "id": 59,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 113,
+        "y": 117,
         "w": 8,
         "h": 8
       },
@@ -3560,14 +3626,14 @@
       "type": "timeseries",
       "title": "State resolution cache",
       "description": "Entries, never groups: one big room's state is 150k entries.",
-      "id": 59,
+      "id": 60,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 121,
+        "y": 125,
         "w": 12,
         "h": 8
       },
@@ -3635,14 +3701,14 @@
       "type": "timeseries",
       "title": "ACL lookups",
       "description": "",
-      "id": 60,
+      "id": 61,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 12,
-        "y": 121,
+        "y": 125,
         "w": 12,
         "h": 8
       },
@@ -3698,11 +3764,11 @@
     {
       "type": "row",
       "title": "Federation reads",
-      "id": 61,
+      "id": 62,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 133,
         "w": 24,
         "h": 1
       },
@@ -3712,14 +3778,14 @@
       "type": "timeseries",
       "title": "Requests by endpoint and status",
       "description": "403 and 404 are normal; watch 502 and none.",
-      "id": 62,
+      "id": 63,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 130,
+        "y": 134,
         "w": 12,
         "h": 8
       },
@@ -3776,14 +3842,14 @@
       "type": "timeseries",
       "title": "Native answer time",
       "description": "Our own time, without the client's draining of a streamed /state.",
-      "id": 63,
+      "id": 64,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 12,
-        "y": 130,
+        "y": 134,
         "w": 12,
         "h": 8
       },
@@ -3851,14 +3917,14 @@
       "type": "timeseries",
       "title": "Fell back to main, by reason",
       "description": "auth_rejected, timeout, error, panic, client_gone. Any sustained rate is worth a look.",
-      "id": 64,
+      "id": 65,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 138,
+        "y": 142,
         "w": 8,
         "h": 8
       },
@@ -3915,14 +3981,14 @@
       "type": "timeseries",
       "title": "Rate limiting",
       "description": "",
-      "id": 65,
+      "id": 66,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 138,
+        "y": 142,
         "w": 8,
         "h": 8
       },
@@ -3990,14 +4056,14 @@
       "type": "timeseries",
       "title": "Cache hit rate",
       "description": "",
-      "id": 66,
+      "id": 67,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 138,
+        "y": 142,
         "w": 8,
         "h": 8
       },
@@ -4054,14 +4120,14 @@
       "type": "timeseries",
       "title": "Invalidations",
       "description": "",
-      "id": 67,
+      "id": 68,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 146,
+        "y": 150,
         "w": 12,
         "h": 8
       },
@@ -4129,14 +4195,14 @@
       "type": "timeseries",
       "title": "Response size",
       "description": "",
-      "id": 68,
+      "id": 69,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 12,
-        "y": 146,
+        "y": 150,
         "w": 12,
         "h": 8
       },
@@ -4192,11 +4258,11 @@
     {
       "type": "row",
       "title": "Outbound federation",
-      "id": 69,
+      "id": 70,
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 154,
+        "y": 158,
         "w": 24,
         "h": 1
       },
@@ -4206,14 +4272,14 @@
       "type": "timeseries",
       "title": "Events routed and skipped",
       "description": "",
-      "id": 70,
+      "id": 71,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 155,
+        "y": 159,
         "w": 8,
         "h": 8
       },
@@ -4281,14 +4347,14 @@
       "type": "timeseries",
       "title": "Transactions, PDUs, EDUs",
       "description": "",
-      "id": 71,
+      "id": 72,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 155,
+        "y": 159,
         "w": 8,
         "h": 8
       },
@@ -4367,14 +4433,14 @@
       "type": "timeseries",
       "title": "EDUs by type",
       "description": "",
-      "id": 72,
+      "id": 73,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 155,
+        "y": 159,
         "w": 8,
         "h": 8
       },
@@ -4431,14 +4497,14 @@
       "type": "timeseries",
       "title": "Event processing lag",
       "description": "Meaningless during a catch-up replay; read stage time then. Quantiles here are usually from a handful of samples: read them beside the count.",
-      "id": 73,
+      "id": 74,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 163,
+        "y": 167,
         "w": 8,
         "h": 8
       },
@@ -4517,14 +4583,14 @@
       "type": "timeseries",
       "title": "Stage time (p99)",
       "description": "",
-      "id": 74,
+      "id": 75,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 163,
+        "y": 167,
         "w": 8,
         "h": 8
       },
@@ -4581,14 +4647,14 @@
       "type": "timeseries",
       "title": "Send time by outcome",
       "description": "",
-      "id": 75,
+      "id": 76,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 163,
+        "y": 167,
         "w": 8,
         "h": 8
       },
@@ -4656,14 +4722,14 @@
       "type": "timeseries",
       "title": "Queues",
       "description": "",
-      "id": 76,
+      "id": 77,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 171,
+        "y": 175,
         "w": 8,
         "h": 8
       },
@@ -4753,14 +4819,14 @@
       "type": "timeseries",
       "title": "Destinations",
       "description": "Backing off is normal for dead servers; the backoff here reaches a year.",
-      "id": 77,
+      "id": 78,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 8,
-        "y": 171,
+        "y": 175,
         "w": 8,
         "h": 8
       },
@@ -4839,14 +4905,14 @@
       "type": "timeseries",
       "title": "Bookkeeping writes",
       "description": "",
-      "id": 78,
+      "id": 79,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 16,
-        "y": 171,
+        "y": 175,
         "w": 8,
         "h": 8
       },
@@ -4903,14 +4969,14 @@
       "type": "timeseries",
       "title": "Approximate routes",
       "description": "Destinations computed without the state before the event (forked DAG, missing group).",
-      "id": 79,
+      "id": 80,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 0,
-        "y": 179,
+        "y": 183,
         "w": 12,
         "h": 8
       },
@@ -4967,14 +5033,14 @@
       "type": "timeseries",
       "title": "Rows and positions",
       "description": "",
-      "id": 80,
+      "id": 81,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
         "x": 12,
-        "y": 179,
+        "y": 183,
         "w": 12,
         "h": 8
       },

@@ -123,6 +123,9 @@ stat("Replication connected", "Every subscriber this process runs. Below the cou
 stat("Limits refusing (window)", "Requests refused because a limit was full. See Memory & limits.",
      [(f'sum(increase(goworker_limit_refused_total{{{G}}}{R}))', "refused")], decimals=0,
      thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 1}])
+stat("Degraded", "Parts that could not start and whose requests go to main (goworker_degraded). Each one is logged at start.",
+     [(f'sum(goworker_degraded{{{G}}}) or vector(0)', "degraded")], decimals=0,
+     thresholds=[{"color": "green", "value": None}, {"color": "orange", "value": 1}])
 stat("homeserver.yaml reloads (window)", "Changes to homeserver.yaml picked up at runtime. An error keeps the last good copy.",
      [(f'sum(increase(goworker_homeserver_yaml_reloads_total{{{G}}}{R}))', "reloads")], decimals=0)
 

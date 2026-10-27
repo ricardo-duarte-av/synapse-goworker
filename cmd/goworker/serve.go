@@ -29,6 +29,10 @@ var (
 		Name: "goworker_memory_limit_bytes",
 		Help: "The Go runtime's soft memory limit (memory.limit_mb), or 0 when unset.",
 	})
+	degraded = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "goworker_degraded",
+		Help: "1 for a part of the worker that could not start, whose requests go to main instead.",
+	}, []string{"capability"})
 	homeserverReloads = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "goworker_homeserver_yaml_reloads_total",
 		Help: "Re-reads of homeserver.yaml after it changed, by outcome.",
