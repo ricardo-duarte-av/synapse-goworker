@@ -41,3 +41,6 @@ secrets/
 *.log
 logs.txt
 /goworker
+
+# The deployed config, next to docker-compose.yaml.
+/goworker.yaml

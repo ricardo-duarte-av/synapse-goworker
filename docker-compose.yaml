@@ -1,0 +1,96 @@
+# goworker: client sync, inbound /send, the federation reads and the outbound
+# federation sender, in one process.
+#
+# Written to match the Synapse worker services it runs beside (unix sockets
+# under /var/sockets, the npm-nw networks, uid 991, restart: unless-stopped),
+# so the service block can be copied into an existing stack as it is.
+#
+# Before first start:
+#
+#   cp deploy/goworker.example.yaml ./goworker.yaml
+#   $EDITOR ./goworker.yaml        # instance_name, at least
+#   chown 991:991 ./goworker.yaml
+#   docker compose run --rm av-goworker-1 -config /data/goworker.yaml -check
+#
+# Starting it changes nothing: until an nginx location points at its socket
+# it serves nothing, and until homeserver.yaml names its instance_name in
+# federation_sender_instances it sends nothing. docs/cutover.md moves the work
+# over one piece at a time.
+#
+# The image is built and published by .github/workflows/docker.yml.
+
+name: synapse-goworker
+
+services:
+  av-goworker-1:
+    image: ghcr.io/ricardo-duarte-av/synapse-goworker:latest
+    container_name: av-goworker-1
+    restart: unless-stopped
+
+    # Synapse's uid. The listening socket this creates in the shared
+    # /var/sockets is then owned like the other workers' sockets.
+    user: "991:991"
+
+    command: ["-config", "/data/goworker.yaml"]
+
+    volumes:
+      # Read-only: the worker never writes its own config.
+      - ./goworker.yaml:/data/goworker.yaml:ro
+      # Synapse's config directory, READ-ONLY. homeserver.yaml is the source
+      # of truth for the database (pgcat), redis, the stream writers, the
+      # federation sender list and the experimental flags. The directory
+      # rather than the file alone, because the signing key the sender signs
+      # with lives beside it: signing_key_path names Synapse's own container
+      # path, and the worker falls back to the same file name here.
+      #
+      # :ro is the point of the line. Nothing in it is ever written by this
+      # worker, and the key in particular must not be.
+      - /opt/matrix/synapse/synapse:/etc/synapse:ro
+      # NOT read-only: the listening socket is created here (nginx/), and the
+      # replication sockets of main and the stream writers, and KeyDB, are
+      # reached here.
+      - /var/sockets:/var/sockets
+
+    # matrix-pgcat, which homeserver.yaml's database block names, resolves on
+    # these; so do the other workers.
+    networks:
+      - npm-nw6
+      - npm-nw
+
+    # Distroless: no curl, so the binary probes its own metrics listener.
+    healthcheck:
+      test: ["CMD", "/goworker", "-healthcheck", "-config", "/data/goworker.yaml"]
+      start_period: "20s"
+      interval: "10s"
+      timeout: "5s"
+      retries: 3
+
+    # Shutdown drains in-flight requests and transactions for up to 30s;
+    # give it that before the kill.
+    stop_grace_period: 40s
+
+    # memory.limit_mb in goworker.yaml is the Go runtime's own soft limit.
+    # A hard cap here, if wanted, belongs above it, so the runtime collects
+    # harder before the kernel kills:
+    #mem_limit: 4g
+
+    # Prometheus scrapes metrics.addr over the compose network by container
+    # name (av-goworker-1:9200), as it scrapes the Synapse workers. /metrics
+    # and /debug/pprof are unauthenticated: publish the port to the host for
+    # debugging only, and never route it through the proxy.
+    #ports:
+    #  - "127.0.0.1:9200:9200"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  npm-nw6:
+    external: true
+    enable_ipv6: true
+  npm-nw:
+    external: true
+    enable_ipv6: false

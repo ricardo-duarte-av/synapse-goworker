@@ -32,6 +32,10 @@ step.
 
 ## Running
 
+`docker-compose.yaml` runs it beside the Synapse workers (uid 991, the
+`npm-nw` networks, `/var/sockets`, Synapse's config directory read-only);
+its header has the first-start steps.
+
 Moving a homeserver over, one piece at a time: [docs/cutover.md](docs/cutover.md).
 
 ```sh
