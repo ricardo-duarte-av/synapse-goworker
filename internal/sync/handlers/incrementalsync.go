@@ -7,7 +7,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/eventfilter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/filter"
@@ -29,7 +29,7 @@ import (
 // answer is the same one this function would go and ask for; passing it down
 // halves a query that runs on every sync of every client. Nil means fetch it,
 // which is what the non-polling callers do.
-func incrementalSync(r *http.Request, d Deps, verdict auth.Verdict, sinceRaw string,
+func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceRaw string,
 	useStateAfter bool, f *filter.Collection, rooms []store.RoomForUser) (
 	[]byte, int, *matrixerr.Error) {
 
@@ -94,7 +94,7 @@ func incrementalSync(r *http.Request, d Deps, verdict auth.Verdict, sinceRaw str
 	requester := clientevent.Requester{
 		UserID: verdict.UserID, DeviceID: verdict.DeviceID, IsGuest: verdict.IsGuest,
 	}
-	if tokenID, err := d.Store.AccessTokenID(ctx, auth.ExtractToken(r)); err == nil {
+	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
 		requester.TokenID = tokenID
 	}
 	cfg := clientevent.Config{

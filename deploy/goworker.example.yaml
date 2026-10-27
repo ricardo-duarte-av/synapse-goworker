@@ -43,6 +43,7 @@ database:
     inbound_read: 4
     inbound_pdu: 4
     inbound_write: 4
+    client_auth: 4             # access token lookups, and marking a token used
 
 memory:
   limit_mb: 3072               # GOMEMLIMIT; caches below must fit well inside it
@@ -67,10 +68,10 @@ sync:
   sliding_sync:
     enabled: true
     reap_interval_minutes: 60
-  auth:
-    positive_ttl: 5m
-    negative_ttl: 30s
-    max_entries: 20000
+  auth:                        # platform/clientauth, for every client-API part
+    positive_ttl: 5m           # a lookup kept without an invalidation; and /whoami's yes
+    negative_ttl: 30s          # /whoami's no
+    max_entries: 20000         # /whoami's answers
 
 federation_reads:
   native_timeout_seconds: 5

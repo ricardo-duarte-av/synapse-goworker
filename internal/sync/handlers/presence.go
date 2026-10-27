@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/presence"
 )
@@ -62,7 +62,7 @@ func parseSetPresence(r *http.Request) (string, *matrixerr.Error) {
 // implement that limiter because our own throttle is stricter: one relay per
 // device per 25 seconds against the limiter's one per ten. The limiter could
 // therefore never fire on traffic that got past the throttle.
-func relayPresence(ctx context.Context, d Deps, verdict auth.Verdict, state string) {
+func relayPresence(ctx context.Context, d Deps, verdict clientauth.Verdict, state string) {
 	if d.Presence == nil || state == presence.StateOffline {
 		return
 	}

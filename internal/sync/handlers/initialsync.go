@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
@@ -48,7 +48,7 @@ func InitialSync(d Deps) http.Handler {
 	})
 }
 
-func initialSync(r *http.Request, d Deps, verdict auth.Verdict) ([]byte, int, *matrixerr.Error) {
+func initialSync(r *http.Request, d Deps, verdict clientauth.Verdict) ([]byte, int, *matrixerr.Error) {
 	ctx := store.WithRequestCache(r.Context())
 	ann := server.Annotate(ctx)
 
@@ -97,7 +97,7 @@ func initialSync(r *http.Request, d Deps, verdict auth.Verdict) ([]byte, int, *m
 		DeviceID: verdict.DeviceID,
 		IsGuest:  verdict.IsGuest,
 	}
-	if tokenID, err := d.Store.AccessTokenID(ctx, auth.ExtractToken(r)); err == nil {
+	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
 		requester.TokenID = tokenID
 	}
 

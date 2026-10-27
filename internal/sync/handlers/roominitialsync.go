@@ -10,7 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/deviceinbox"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/lazyload"
@@ -28,7 +28,7 @@ import (
 // Deps are what every handler needs.
 type Deps struct {
 	Store *store.Store
-	Auth  *auth.Authenticator
+	Auth  *clientauth.Authenticator
 	Log   zerolog.Logger
 	// MSC4354Enabled mirrors Synapse's experimental.msc4354_enabled.
 	MSC4354Enabled bool
@@ -111,7 +111,7 @@ func RoomInitialSync(d Deps) http.Handler {
 	})
 }
 
-func roomInitialSync(r *http.Request, d Deps, verdict auth.Verdict, roomID string, limit int) (
+func roomInitialSync(r *http.Request, d Deps, verdict clientauth.Verdict, roomID string, limit int) (
 	[]byte, int, *matrixerr.Error) {
 
 	ctx := store.WithRequestCache(r.Context())
@@ -209,7 +209,7 @@ func roomInitialSync(r *http.Request, d Deps, verdict auth.Verdict, roomID strin
 	}
 	// Only needed for events stored without a device_id, which are rare, so the
 	// lookup is done once per request rather than never.
-	if tokenID, err := d.Store.AccessTokenID(ctx, auth.ExtractToken(r)); err == nil {
+	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
 		requester.TokenID = tokenID
 	}
 

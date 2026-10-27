@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/filter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
@@ -17,39 +17,33 @@ import (
 
 // authenticate validates the caller and annotates the request log.
 //
-// A whoami failure is 502, never 401: refusing a valid token because Synapse
-// could not be reached would log real clients out. That distinction is the
-// whole reason auth.AuthenticateAs separates "rejected" from "unknown".
-func authenticate(w http.ResponseWriter, r *http.Request, d Deps, ann *server.Annotation) (auth.Verdict, bool) {
-	creds := auth.ExtractCredentials(r)
-	if creds.Token == "" {
-		metrics.AuthVerdictsTotal.WithLabelValues("missing").Inc()
-		refuse(w, ann, http.StatusUnauthorized, matrixerr.Error{
-			ErrCode: matrixerr.CodeMissingToken, Error: "Missing access token"})
-		return auth.Verdict{}, false
-	}
-
-	verdict, err := d.Auth.AuthenticateAs(r.Context(), creds)
+// An unknown answer is 502, never 401: refusing a valid token because the
+// database or Synapse could not be reached would log real clients out. That
+// distinction is why clientauth separates "rejected" from an error.
+func authenticate(w http.ResponseWriter, r *http.Request, d Deps, ann *server.Annotation) (clientauth.Verdict, bool) {
+	verdict, err := d.Auth.Authenticate(r.Context(), r)
 	if err != nil {
 		metrics.AuthVerdictsTotal.WithLabelValues("unavailable").Inc()
-		d.Log.Error().Err(err).Msg("cannot reach Synapse to validate a token")
+		d.Log.Error().Err(err).Msg("cannot validate a token")
 		refuse(w, ann, http.StatusBadGateway, matrixerr.Error{
 			ErrCode: matrixerr.CodeUnknown, Error: "Cannot validate the access token right now"})
-		return auth.Verdict{}, false
+		return clientauth.Verdict{}, false
 	}
 	if !verdict.Valid {
-		metrics.AuthVerdictsTotal.WithLabelValues("rejected").Inc()
-		// Pass Synapse's own rejection through. It distinguishes an expired
-		// token (soft logout: keep local state) from an unknown one (hard
-		// logout: wipe), and clients act very differently on the two.
-		mxErr := matrixerr.Error{ErrCode: matrixerr.CodeUnknownToken, Error: "Invalid access token"}
-		status := http.StatusUnauthorized
-		if verdict.Rejection != nil {
-			mxErr = *verdict.Rejection
-			status = verdict.Status
+		rej := verdict.Rejection
+		if rej.ErrCode == matrixerr.CodeMissingToken {
+			metrics.AuthVerdictsTotal.WithLabelValues("missing").Inc()
+		} else {
+			metrics.AuthVerdictsTotal.WithLabelValues("rejected").Inc()
 		}
-		refuse(w, ann, status, mxErr)
-		return auth.Verdict{}, false
+		// Synapse's own body, as Synapse sends it: soft_logout tells an
+		// expired token (keep local state) from an unknown one (wipe), and
+		// clients act very differently on the two.
+		annotateRefusal(ann, rej.Status, rej.ErrCode)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(rej.Status)
+		_, _ = w.Write(rej.Body)
+		return clientauth.Verdict{}, false
 	}
 
 	metrics.AuthVerdictsTotal.WithLabelValues("accepted").Inc()
@@ -66,6 +60,11 @@ func authenticate(w http.ResponseWriter, r *http.Request, d Deps, ann *server.An
 }
 
 func refuse(w http.ResponseWriter, ann *server.Annotation, status int, e matrixerr.Error) {
+	annotateRefusal(ann, status, e.ErrCode)
+	matrixerr.Write(w, status, e)
+}
+
+func annotateRefusal(ann *server.Annotation, status int, errcode string) {
 	if ann != nil {
 		// An outcome already set is more specific than "refused" and wins.
 		// `client_gone` is the case that matters: a long poll the caller
@@ -85,10 +84,9 @@ func refuse(w http.ResponseWriter, ann *server.Annotation, status int, e matrixe
 			}
 		}
 		if ann.Reason == "" {
-			ann.Reason = e.ErrCode
+			ann.Reason = errcode
 		}
 	}
-	matrixerr.Write(w, status, e)
 }
 
 // internalError logs the cause and returns a body that does not leak it.
@@ -290,4 +288,18 @@ func applyUnreadCounts(entry map[string]any, notifs store.RoomNotifCounts,
 	if msc3773 {
 		entry["org.matrix.msc3773.unread_thread_notifications"] = threads
 	}
+}
+
+// accessTokenID is the requester's access_token_id, which decides whose
+// transaction_id an event carries. A native verdict has it; one from /whoami
+// is looked up.
+func accessTokenID(ctx context.Context, d Deps, r *http.Request, verdict clientauth.Verdict) (int64, error) {
+	if verdict.TokenID != 0 || verdict.Source == clientauth.SourceNative {
+		return verdict.TokenID, nil
+	}
+	token, rej := clientauth.TokenFromRequest(r)
+	if rej != nil {
+		return 0, nil
+	}
+	return d.Store.AccessTokenID(ctx, token)
 }

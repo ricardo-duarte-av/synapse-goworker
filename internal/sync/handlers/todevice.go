@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/streamtoken"
@@ -28,7 +28,7 @@ import (
 // Returns nil when the worker is not configured to serve the section at all.
 // That is not a degraded mode: see the note on deviceinbox, serving to_device
 // without being able to delete it is worse than not serving it.
-func toDeviceEvents(ctx context.Context, d Deps, verdict auth.Verdict,
+func toDeviceEvents(ctx context.Context, d Deps, verdict clientauth.Verdict,
 	from int64, now *streamtoken.Token) ([]json.RawMessage, error) {
 
 	if d.Inbox == nil || verdict.DeviceID == "" || from == now.ToDevice {
@@ -57,7 +57,7 @@ func toDeviceEvents(ctx context.Context, d Deps, verdict auth.Verdict,
 // device sees a message twice; the cost of failing the sync is that it sees
 // nothing at all, and a transient database error should not be the difference
 // between a client working and not.
-func deleteAcknowledgedToDevice(ctx context.Context, d Deps, verdict auth.Verdict, since streamtoken.Token) {
+func deleteAcknowledgedToDevice(ctx context.Context, d Deps, verdict clientauth.Verdict, since streamtoken.Token) {
 	if d.Inbox == nil || verdict.DeviceID == "" {
 		return
 	}

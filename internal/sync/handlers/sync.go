@@ -13,7 +13,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/eventfilter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/filter"
@@ -93,7 +93,7 @@ func Sync(d Deps) http.Handler {
 	})
 }
 
-func initialSyncV2(r *http.Request, d Deps, verdict auth.Verdict, useStateAfter bool,
+func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useStateAfter bool,
 	f *filter.Collection) ([]byte, int, *matrixerr.Error) {
 	ctx := store.WithRequestCache(r.Context())
 	ann := server.Annotate(ctx)
@@ -160,7 +160,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict auth.Verdict, useStateAfter 
 		DeviceID: verdict.DeviceID,
 		IsGuest:  verdict.IsGuest,
 	}
-	if tokenID, err := d.Store.AccessTokenID(ctx, auth.ExtractToken(r)); err == nil {
+	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
 		requester.TokenID = tokenID
 	}
 	// /sync strips room_id: the room is already the key in the response.
@@ -974,7 +974,7 @@ func dropAliases(state map[store.StateKey]string) {
 // answer. An event that lands while the answer is being computed then still
 // wakes it. Registering afterwards loses everything that arrives in the gap,
 // and the client hangs for its full timeout on news that had already come.
-func longPoll(r *http.Request, d Deps, verdict auth.Verdict, since string,
+func longPoll(r *http.Request, d Deps, verdict clientauth.Verdict, since string,
 	useStateAfter bool, f *filter.Collection, ann *server.Annotation) ([]byte, int, *matrixerr.Error) {
 
 	timeout := time.Duration(intParam(r, "timeout", 0)) * time.Millisecond

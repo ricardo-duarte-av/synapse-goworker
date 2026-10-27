@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/presence"
 )
 
@@ -59,6 +59,6 @@ func TestOfflineRelaysNothing(t *testing.T) {
 	// relayPresence returns before touching the client, so a nil client with
 	// a non-offline state would panic if the guard were the other way round.
 	relayPresence(context.Background(), Deps{},
-		auth.Verdict{Valid: true, UserID: "@a:e.com", DeviceID: "DEV"},
+		clientauth.Verdict{Valid: true, UserID: "@a:e.com", DeviceID: "DEV"},
 		presence.StateOffline)
 }

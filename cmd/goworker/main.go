@@ -30,6 +30,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
@@ -154,6 +155,39 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		}
 	}()
 
+	// Access tokens, checked as Synapse's InternalAuth does, with main's
+	// /whoami for what is not reproduced (platform/clientauth).
+	var userIPs clientauth.Publisher
+	if hs.Redis.Enabled {
+		r := clientauth.NewRedis(hs.Redis)
+		closers = append(closers, func() { _ = r.Close() })
+		userIPs = r
+	}
+	clientAuth, err := clientauth.New(ctx, clientauth.Config{
+		ServerName:      hs.ServerName,
+		Synapse:         hs.ClientAuth,
+		AppServiceFiles: hs.AppServiceFiles,
+		DSN:             dsn,
+		MaxConns:        pools.ClientAuth,
+		ConnectTimeout:  db.ConnectTimeout(),
+		Whoami: clientauth.WhoamiConfig{
+			Socket:      whoamiSocket,
+			URL:         whoamiURL,
+			PositiveTTL: cfg.Sync.Auth.Positive(),
+			NegativeTTL: cfg.Sync.Auth.Negative(),
+			MaxEntries:  cfg.Sync.Auth.Entries(),
+			Timeout:     cfg.Sync.Auth.Timeout(),
+		},
+		TTL:         cfg.Sync.Auth.Positive(),
+		Replication: consumer("client_auth"),
+		Publisher:   userIPs,
+		Log:         componentLogger(log, cfg.Log, "client_auth"),
+	})
+	if err != nil {
+		return fmt.Errorf("client auth: %w", err)
+	}
+	closers = append(closers, clientAuth.Close)
+
 	clientSync, err := syncapp.New(ctx, syncapp.Settings{
 		Synapse:        src,
 		Sync:           cfg.Sync,
@@ -161,8 +195,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Inbox:          syncapp.Pool{DSN: dsn, MaxConns: pools.ToDevice},
 		Sliding:        syncapp.Pool{DSN: dsn, MaxConns: pools.SlidingSync},
 		ConnectTimeout: db.ConnectTimeout(),
-		WhoamiSocket:   whoamiSocket,
-		WhoamiURL:      whoamiURL,
+		Auth:           clientAuth,
 		Replication:    consumer("sync"),
 		States:         states,
 		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),
@@ -278,6 +311,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if stream != nil {
 		g.Go(func() error { stream.Run(gctx); return gctx.Err() })
 	}
+	g.Go(func() error { clientAuth.Run(gctx); return gctx.Err() })
 	g.Go(func() error { return clientSync.Run(gctx) })
 	g.Go(func() error { return reads.Run(gctx) })
 	g.Go(func() error { return sender.Run(gctx) })

@@ -10,7 +10,10 @@ The approved plan is in
 ## Where things are
 
 - Synapse source: `/home/daedric/synapse`. Port against the deployed tag
-  (`git show v1.163.0:<path>`), not the checkout, which runs ahead.
+  (`git show v1.164.0:<path>`), not the checkout, which runs ahead. On
+  2026-10-27 matrixbridg.es ran 1.164.0 and aguiarvieira.pt 1.163.2; check
+  with `docker exec <synapse container> python -c 'import synapse;
+  print(synapse.__version__)'` and diff the tags for what you port.
 - The four workers being merged, and their working notes, which hold the traps
   and measurements behind nearly every rule. Read the relevant one before
   porting from it:
@@ -25,7 +28,7 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
 | `internal/sync` | gosync, as `app.New` + `Register` |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
@@ -68,6 +71,16 @@ Still per component, on purpose:
   sync_read`, `federation_reads_read`, `sender_read`; unset takes `read`).
 
 ## Decisions that are easy to undo by accident
+
+- **Access tokens are checked natively** (`platform/clientauth`, operator,
+  2026-10-27): access_tokens, the appservice registrations, `used` marked,
+  USER_IP published as a worker does. What it does not reproduce goes to
+  main's /whoami, and the worker does not hold `macaroon_secret_key`: a
+  guest's macaroon, a wrong token, an appservice regex RE2 cannot compile;
+  everything, when homeserver.yaml enables MAS, account_validity or any
+  module. Before this, /whoami calls from the worker recorded every sync
+  client in user_ips as `Go-http-client/1.1` at the socket's path; the
+  fallback now forwards X-Forwarded-For and User-Agent.
 
 - **No component switches** (operator, 2026-10-26). The worker serves whatever
   nginx sends it and sends federation only while homeserver.yaml lists its

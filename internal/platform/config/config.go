@@ -106,13 +106,15 @@ type Pools struct {
 	InboundRead  int32 `yaml:"inbound_read"`
 	InboundPDU   int32 `yaml:"inbound_pdu"`
 	InboundWrite int32 `yaml:"inbound_write"`
+	// ClientAuth looks up access tokens and marks them used.
+	ClientAuth int32 `yaml:"client_auth"`
 }
 
 // settle refuses a negative size and gives each part's read pool Read's
 // size unless it has its own.
 func (p *Pools) settle() error {
 	for _, n := range []int32{p.Read, p.SyncRead, p.FederationReadsRead, p.SenderRead, p.ToDevice,
-		p.SlidingSync, p.SenderWrite, p.SenderState, p.InboundRead, p.InboundPDU, p.InboundWrite} {
+		p.SlidingSync, p.SenderWrite, p.SenderState, p.InboundRead, p.InboundPDU, p.InboundWrite, p.ClientAuth} {
 		if n < 0 {
 			return fmt.Errorf("config: database.pools: sizes must not be negative")
 		}
@@ -208,7 +210,7 @@ func Parse(data []byte) (*Config, error) {
 		Database: Database{
 			ConnectTimeoutSeconds: 10,
 			Pools: Pools{
-				Read: 16, ToDevice: 4, SlidingSync: 8, SenderWrite: 8, SenderState: 4,
+				Read: 16, ToDevice: 4, SlidingSync: 8, SenderWrite: 8, SenderState: 4, ClientAuth: 4,
 				InboundRead: 4, InboundPDU: 4, InboundWrite: 4,
 			},
 		},

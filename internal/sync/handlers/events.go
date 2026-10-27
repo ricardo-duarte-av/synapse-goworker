@@ -10,7 +10,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
@@ -66,7 +66,7 @@ func Events(d Deps) http.Handler {
 	})
 }
 
-func eventStream(r *http.Request, d Deps, verdict auth.Verdict, ann *server.Annotation) (
+func eventStream(r *http.Request, d Deps, verdict clientauth.Verdict, ann *server.Annotation) (
 	[]byte, int, *matrixerr.Error) {
 
 	ctx := r.Context()
@@ -156,7 +156,7 @@ func eventStream(r *http.Request, d Deps, verdict auth.Verdict, ann *server.Anno
 	if wants, err := d.Store.AdminWantsSoftFailedEvents(ctx, verdict.UserID); err == nil {
 		cfg.IncludeAdminMetadata = wants
 	}
-	if tokenID, err := d.Store.AccessTokenID(ctx, auth.ExtractToken(r)); err == nil {
+	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
 		cfg.Requester.TokenID = tokenID
 	}
 

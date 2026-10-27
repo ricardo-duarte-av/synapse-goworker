@@ -11,10 +11,10 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/deviceinbox"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/handlers"
@@ -48,9 +48,8 @@ type Settings struct {
 	Read, Inbox, Sliding Pool
 	ConnectTimeout       time.Duration
 
-	// WhoamiSocket or WhoamiURL is where access tokens are resolved:
-	// Synapse's main process.
-	WhoamiSocket, WhoamiURL string
+	// Auth authenticates every request (platform/clientauth).
+	Auth *clientauth.Authenticator
 
 	// States is the worker's one state cache; sync uses its event -> state
 	// group entries.
@@ -155,19 +154,6 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		return nil, err
 	}
 
-	authenticator, err := auth.New(auth.Config{
-		WhoamiSocket: cfg.WhoamiSocket,
-		WhoamiURL:    cfg.WhoamiURL,
-		PositiveTTL:  cfg.Sync.Auth.Positive(),
-		NegativeTTL:  cfg.Sync.Auth.Negative(),
-		MaxEntries:   cfg.Sync.Auth.Entries(),
-		Timeout:      cfg.Sync.Auth.Timeout(),
-	})
-	if err != nil {
-		s.Close()
-		return nil, err
-	}
-
 	notif := notifier.New()
 	s.sub = s.subscribe(ctx, notif)
 
@@ -191,7 +177,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		MSC3575Enabled:      flag("msc3575_enabled", true),
 		MSC4308Enabled:      flag("msc4308_enabled", false),
 		ServerName:          cfg.Synapse.Current().ServerName,
-		Auth:                authenticator,
+		Auth:                cfg.Auth,
 		Log:                 log,
 		MSC4354Enabled:      flag("msc4354_enabled", false),
 		MSC3391Enabled:      flag("msc3391_enabled", false),

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/auth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
@@ -126,7 +126,7 @@ const maxSlidingSyncBody = 1 << 20
 // is computed BEFORE any waiting because the request's own config may have
 // changed since the last one. A client that adds a room subscription and polls
 // must be answered immediately, not when the next event happens to arrive.
-func slidingSyncPoll(r *http.Request, d Deps, verdict auth.Verdict,
+func slidingSyncPoll(r *http.Request, d Deps, verdict clientauth.Verdict,
 	req *slidingsync.Request, posParam string, timeoutMS int,
 	ann *server.Annotation) ([]byte, int, *matrixerr.Error) {
 
@@ -223,7 +223,7 @@ func slidingOutcome(updates, waited bool) string {
 	}
 }
 
-func slidingSyncOnce(r *http.Request, d Deps, verdict auth.Verdict,
+func slidingSyncOnce(r *http.Request, d Deps, verdict clientauth.Verdict,
 	req *slidingsync.Request, posParam string) ([]byte, bool, int, *matrixerr.Error) {
 
 	ctx := r.Context()

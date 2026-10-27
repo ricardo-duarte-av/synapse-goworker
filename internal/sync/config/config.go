@@ -32,8 +32,9 @@ type SlidingSync struct {
 	ReapIntervalMinutes int `yaml:"reap_interval_minutes"`
 }
 
-// Auth bounds the access-token cache. Tokens are resolved by asking
-// Synapse's /whoami on the upstream, never by reading access_tokens.
+// Auth bounds the access-token caches (platform/clientauth): how long a
+// lookup is kept without an invalidation, and how long /whoami's answers
+// are, for what is not checked natively.
 type Auth struct {
 	PositiveTTL    time.Duration `yaml:"positive_ttl"`
 	NegativeTTL    time.Duration `yaml:"negative_ttl"`

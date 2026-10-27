@@ -132,7 +132,30 @@ type Config struct {
 	SyncOnlineTimeout     time.Duration
 	LastActiveGranularity time.Duration
 
+	// ClientAuth is what decides how Synapse authenticates a client's
+	// access token.
+	ClientAuth ClientAuth
+
 	signingKey, signingKeyPath string
+}
+
+// ClientAuth is the configuration behind Synapse's InternalAuth
+// (api/auth/internal.py), and what would replace it.
+type ClientAuth struct {
+	// Delegated is matrix_authentication_service.enabled, or the
+	// experimental msc3861.enabled: tokens are MAS's, not access_tokens'.
+	Delegated bool
+	// AccountValidity is account_validity.enabled: the legacy expiry of
+	// whole accounts (config/account_validity.py).
+	AccountValidity bool
+	// Modules is how many modules are configured. Any of them may register
+	// an is_user_expired callback, which this worker cannot run.
+	Modules int
+	// TrackAppserviceUserIPs is track_appservice_user_ips
+	// (config/appservice.py) and TrackPuppetedUserIPs
+	// track_puppeted_user_ips (config/api.py); both default false.
+	TrackAppserviceUserIPs bool
+	TrackPuppetedUserIPs   bool
 }
 
 // Flag reads a boolean experimental feature, with Synapse's default.
@@ -197,6 +220,16 @@ type raw struct {
 
 	ExperimentalFeatures  yaml.Node `yaml:"experimental_features"`
 	AppServiceConfigFiles []string  `yaml:"app_service_config_files"`
+
+	MatrixAuthenticationService struct {
+		Enabled bool `yaml:"enabled"`
+	} `yaml:"matrix_authentication_service"`
+	AccountValidity struct {
+		Enabled bool `yaml:"enabled"`
+	} `yaml:"account_validity"`
+	Modules                []any `yaml:"modules"`
+	TrackAppserviceUserIPs bool  `yaml:"track_appservice_user_ips"`
+	TrackPuppetedUserIPs   bool  `yaml:"track_puppeted_user_ips"`
 
 	// Absent and empty mean different things: absent is matrix.org.
 	TrustedKeyServers *[]struct {
@@ -297,6 +330,13 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 	cfg.AllowDeviceNameLookup = r.AllowDeviceNameLookup != nil && *r.AllowDeviceNameLookup
 	cfg.PresenceEnabled = presenceEnabled(r)
+	cfg.ClientAuth = ClientAuth{
+		Delegated:              r.MatrixAuthenticationService.Enabled || msc3861(cfg.Experimental),
+		AccountValidity:        r.AccountValidity.Enabled,
+		Modules:                len(r.Modules),
+		TrackAppserviceUserIPs: r.TrackAppserviceUserIPs,
+		TrackPuppetedUserIPs:   r.TrackPuppetedUserIPs,
+	}
 
 	for _, d := range []struct {
 		v    any
@@ -785,6 +825,17 @@ func lastWins(n *yaml.Node) map[string]any {
 		}
 	}
 	return out
+}
+
+// msc3861 is experimental_features.msc3861.enabled, the experimental
+// spelling of delegated auth (config/experimental.py).
+func msc3861(experimental map[string]any) bool {
+	m, ok := experimental["msc3861"].(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, _ := m["enabled"].(bool)
+	return enabled
 }
 
 // EventsWriter is the event persister for a room: _get_instance
