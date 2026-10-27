@@ -46,6 +46,22 @@ func TestNoComponentOrModeSwitches(t *testing.T) {
 	}
 }
 
+// Each part's read pool is sized on its own, or by read when it is not;
+// configs written before the per-part keys keep their sizes.
+func TestReadPoolsPerPart(t *testing.T) {
+	c, err := Parse([]byte(minimal + "database: { pools: { read: 12, sender_read: 6 } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Database.Pools
+	if p.SyncRead != 12 || p.FederationReadsRead != 12 || p.SenderRead != 6 {
+		t.Errorf("sync %d, federation reads %d, sender %d; want 12, 12, 6", p.SyncRead, p.FederationReadsRead, p.SenderRead)
+	}
+	if _, err := Parse([]byte(minimal + "database: { pools: { sync_read: -1 } }\n")); err == nil {
+		t.Error("accepted a negative pool size")
+	}
+}
+
 func TestValidationRejects(t *testing.T) {
 	for _, bad := range []string{
 		strings.Replace(minimal, "instance_name: goworker-1", "", 1),

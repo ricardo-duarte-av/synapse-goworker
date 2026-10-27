@@ -62,6 +62,10 @@ Still per component, on purpose:
   rules. They agree as separate workers did: both write `destinations`, and
   inbound's originup publishes REMOTE_SERVER_UP, which the sender hears (it
   carries no instance name, so the sender's echo drop does not catch it).
+- **Database pools** (operator, 2026-10-27): one DSN, but a pool per part
+  and use, so one part cannot take another's connections (an initial sync
+  the sender's). Each read pool is sized on its own (`database.pools.
+  sync_read`, `federation_reads_read`, `sender_read`; unset takes `read`).
 
 ## Decisions that are easy to undo by accident
 

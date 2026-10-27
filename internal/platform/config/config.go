@@ -84,9 +84,16 @@ type Database struct {
 
 // Pools sizes each connection pool.
 type Pools struct {
-	// Read is each of sync's, the federation reads' and the sender's
-	// read pools.
+	// Read sizes each of sync's, the federation reads' and the sender's
+	// read pools, unless the part's own key below does.
 	Read int32 `yaml:"read"`
+	// SyncRead, FederationReadsRead and SenderRead size one part's read
+	// pool; unset takes Read. The pools are separate on purpose, not
+	// duplicates: an initial sync holding every connection of sync's pool
+	// cannot hold the sender's or the federation reads'.
+	SyncRead            int32 `yaml:"sync_read"`
+	FederationReadsRead int32 `yaml:"federation_reads_read"`
+	SenderRead          int32 `yaml:"sender_read"`
 	// ToDevice deletes acknowledged to-device messages.
 	ToDevice int32 `yaml:"to_device"`
 	// SlidingSync reads and writes the gosync schema.
@@ -99,6 +106,23 @@ type Pools struct {
 	InboundRead  int32 `yaml:"inbound_read"`
 	InboundPDU   int32 `yaml:"inbound_pdu"`
 	InboundWrite int32 `yaml:"inbound_write"`
+}
+
+// settle refuses a negative size and gives each part's read pool Read's
+// size unless it has its own.
+func (p *Pools) settle() error {
+	for _, n := range []int32{p.Read, p.SyncRead, p.FederationReadsRead, p.SenderRead, p.ToDevice,
+		p.SlidingSync, p.SenderWrite, p.SenderState, p.InboundRead, p.InboundPDU, p.InboundWrite} {
+		if n < 0 {
+			return fmt.Errorf("config: database.pools: sizes must not be negative")
+		}
+	}
+	for _, n := range []*int32{&p.SyncRead, &p.FederationReadsRead, &p.SenderRead} {
+		if *n == 0 {
+			*n = p.Read
+		}
+	}
+	return nil
 }
 
 // Memory bounds the process.
@@ -224,6 +248,9 @@ func (c *Config) validate() error {
 	}
 	if c.Memory.LimitMB < 0 || c.Memory.StateCacheMB < 0 || c.Memory.EventGroupCacheMB < 0 || c.Database.ConnectTimeoutSeconds < 0 {
 		return fmt.Errorf("config: memory.limit_mb, memory.state_cache_mb and database.connect_timeout_seconds must not be negative")
+	}
+	if err := c.Database.Pools.settle(); err != nil {
+		return err
 	}
 	if err := c.Log.validate(); err != nil {
 		return err

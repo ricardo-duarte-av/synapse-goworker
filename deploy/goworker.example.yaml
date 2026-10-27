@@ -30,7 +30,12 @@ database:
   # dsn: "host=matrix-pgcat port=6432 user=synapse dbname=synapse-db"
   connect_timeout_seconds: 10
   pools:                       # client connections; pgcat's pool_size is the real bound
-    read: 16                   # each of sync, federation reads, sender
+    read: 16                   # each of sync, federation reads, sender, unless sized below
+    # Separate pools on purpose: an initial sync holding all of sync's
+    # connections cannot take the sender's. Unset takes read.
+    # sync_read: 16
+    # federation_reads_read: 16
+    # sender_read: 16
     to_device: 4
     sliding_sync: 8
     sender_write: 8
