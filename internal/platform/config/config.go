@@ -66,50 +66,38 @@ type Metrics struct {
 	PProf bool   `yaml:"pprof"`
 }
 
-// Pool is one database connection pool.
-type Pool struct {
-	// DSN, when set, is used as is. Otherwise the pool connects with
-	// database.dsn as User, or with homeserver.yaml's own credentials when
-	// neither is set.
-	DSN      string `yaml:"dsn"`
-	User     string `yaml:"user"`
-	MaxConns int32  `yaml:"max_conns"`
-}
-
-// Database is how the worker reaches Synapse's PostgreSQL.
+// Database is how the worker reaches Synapse's PostgreSQL: by default exactly
+// as Synapse does, with homeserver.yaml's database block -- through pgcat
+// here. Every pool runs in pgx's Exec mode, the one that survives a
+// transaction pooler, and no query relies on session state.
 type Database struct {
-	// DSN is a libpq connection string without a user, reaching PostgreSQL
-	// directly: a transaction pooler such as pgcat only accepts the users in
-	// its own config. Empty takes homeserver.yaml's.
+	// DSN overrides homeserver.yaml's connection for every pool. Leave it
+	// empty to go through Synapse's own pooler with Synapse's credentials.
 	DSN                   string `yaml:"dsn"`
 	ConnectTimeoutSeconds int    `yaml:"connect_timeout_seconds"`
-	// ManageRoles creates or repairs the inbound roles at every start, with
-	// homeserver.yaml's credentials. Defaults to true.
-	ManageRoles *bool `yaml:"manage_roles"`
-
-	// Read is the SELECT-only role sync, the federation reads and the sender
-	// read through; each opens its own pool of this size.
-	Read Pool `yaml:"read"`
-	// ToDevice deletes acknowledged to-device messages (SELECT, DELETE on
-	// device_inbox alone).
-	ToDevice Pool `yaml:"to_device"`
-	// SlidingSync owns the gosync schema and has nothing in public.
-	SlidingSync Pool `yaml:"sliding_sync"`
-	// SenderWrite does a federation sender's bookkeeping in Synapse's tables;
-	// SenderState owns the gofederation schema.
-	SenderWrite Pool `yaml:"sender_write"`
-	SenderState Pool `yaml:"sender_state"`
-	// Inbound names the roles the /send path connects as. They are created
-	// with derived passwords, so only names and sizes are configured.
-	Inbound InboundRoles `yaml:"inbound"`
+	// Pools are the client-side pool sizes. Through pgcat these are client
+	// connections; the server connections are pgcat's pool_size, shared with
+	// Synapse.
+	Pools Pools `yaml:"pools"`
 }
 
-// InboundRoles are the /send path's roles.
-type InboundRoles struct {
-	ReadRole     string `yaml:"read_role"`
-	WriteRole    string `yaml:"write_role"`
-	ReadMaxConns int32  `yaml:"read_max_conns"`
-	PDUMaxConns  int32  `yaml:"pdu_max_conns"`
+// Pools sizes each connection pool.
+type Pools struct {
+	// Read is each of sync's, the federation reads' and the sender's
+	// read pools.
+	Read int32 `yaml:"read"`
+	// ToDevice deletes acknowledged to-device messages.
+	ToDevice int32 `yaml:"to_device"`
+	// SlidingSync reads and writes the gosync schema.
+	SlidingSync int32 `yaml:"sliding_sync"`
+	// SenderWrite does a federation sender's bookkeeping; SenderState
+	// reads and writes the gofederation schema.
+	SenderWrite int32 `yaml:"sender_write"`
+	SenderState int32 `yaml:"sender_state"`
+	// InboundRead, InboundPDU and InboundWrite are the /send path's.
+	InboundRead  int32 `yaml:"inbound_read"`
+	InboundPDU   int32 `yaml:"inbound_pdu"`
+	InboundWrite int32 `yaml:"inbound_write"`
 }
 
 // Memory bounds the process.
@@ -146,14 +134,9 @@ func Parse(data []byte) (*Config, error) {
 		Upstream: proxy.Config{TimeoutSeconds: 180},
 		Database: Database{
 			ConnectTimeoutSeconds: 10,
-			Read:                  Pool{MaxConns: 16},
-			ToDevice:              Pool{MaxConns: 4},
-			SlidingSync:           Pool{MaxConns: 8},
-			SenderWrite:           Pool{MaxConns: 8},
-			SenderState:           Pool{MaxConns: 4},
-			Inbound: InboundRoles{
-				ReadRole: "goinbound_ro", WriteRole: "goinbound_rw",
-				ReadMaxConns: 4, PDUMaxConns: 4,
+			Pools: Pools{
+				Read: 16, ToDevice: 4, SlidingSync: 8, SenderWrite: 8, SenderState: 4,
+				InboundRead: 4, InboundPDU: 4, InboundWrite: 4,
 			},
 		},
 		Log:     Log{Level: "info"},
@@ -246,21 +229,11 @@ func (d Database) ConnectTimeout() time.Duration {
 	return time.Duration(d.ConnectTimeoutSeconds) * time.Second
 }
 
-// ManagesRoles is ManageRoles with its default.
-func (d Database) ManagesRoles() bool { return d.ManageRoles == nil || *d.ManageRoles }
-
-// DSNFor resolves a pool's connection string: its own DSN, else base as its
-// user, else synapse (homeserver.yaml's own credentials). base is
-// database.dsn, or homeserver.yaml's when that is empty.
-func DSNFor(p Pool, base, synapse string) string {
-	switch {
-	case p.DSN != "":
-		return p.DSN
-	case p.User != "" && base != "":
-		return base + " user=" + p.User
-	case base != "":
-		return base
-	default:
-		return synapse
+// DSNOr is the connection every pool uses: database.dsn, or homeserver.yaml's
+// (synapse) when that is unset.
+func (d Database) DSNOr(synapse string) string {
+	if d.DSN != "" {
+		return d.DSN
 	}
+	return synapse
 }

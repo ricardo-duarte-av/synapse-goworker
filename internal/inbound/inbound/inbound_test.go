@@ -56,7 +56,7 @@ func testDB(t *testing.T, instance string) *DB {
 	conn.Close(ctx)
 	cfg, _ := pgx.ParseConfig(admin)
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=test dbname=%s", cfg.Host, cfg.Port, testRole, cfg.Database)
-	d, err := Open(ctx, dsn, instance)
+	d, err := Open(ctx, dsn, instance, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

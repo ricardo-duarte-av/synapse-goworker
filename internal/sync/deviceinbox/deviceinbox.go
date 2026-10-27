@@ -36,8 +36,8 @@ const deleteBatch = 1000
 
 // Config describes how to reach the database as the deleting role.
 type Config struct {
-	// DSN is a libpq connection string for a role granted SELECT and DELETE on
-	// device_inbox and nothing else. See deploy/roles/to-device.sql.
+	// DSN is a libpq connection string for a role that can SELECT and DELETE
+	// on device_inbox; through pgcat, Synapse's own user.
 	DSN string
 	// MaxConns bounds the pool. Deletion is one statement on the sync path, so
 	// this wants to be small. Zero means 4.
@@ -76,7 +76,7 @@ func Open(ctx context.Context, cfg Config) (*Deleter, error) {
 	} else {
 		pcfg.MaxConns = 4
 	}
-	pcfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	pcfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	if cfg.ConnectTimeout > 0 {
 		pcfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 	}

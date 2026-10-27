@@ -24,21 +24,20 @@ upstream:
   timeout_seconds: 180         # /state on the largest room takes ~82s on main
 
 database:
-  # Direct to PostgreSQL, no user: pgcat only knows the users in its config.
-  dsn: "host=/var/sockets dbname=synapse-db"
+  # Unset: every pool connects as homeserver.yaml's database block does --
+  # through pgcat, as Synapse's user. pgx runs in Exec mode throughout, and
+  # nothing relies on session state, so a transaction pooler is fine.
+  # dsn: "host=matrix-pgcat port=6432 user=synapse dbname=synapse-db"
   connect_timeout_seconds: 10
-  manage_roles: true           # create/repair the inbound roles at start
-  read:         { user: gopro_ro, max_conns: 16 }     # per component: sync, reads, sender
-  to_device:    { user: gosync_inbox, max_conns: 4 }
-  sliding_sync: { user: gosync_ss, max_conns: 8 }
-  # Empty: homeserver.yaml's own credentials (through pgcat), as today.
-  sender_write: { max_conns: 8 }
-  sender_state: { user: synapse, max_conns: 4 }
-  inbound:
-    read_role: goinbound_ro
-    write_role: goinbound_rw
-    read_max_conns: 4
-    pdu_max_conns: 4
+  pools:                       # client connections; pgcat's pool_size is the real bound
+    read: 16                   # each of sync, federation reads, sender
+    to_device: 4
+    sliding_sync: 8
+    sender_write: 8
+    sender_state: 4
+    inbound_read: 4
+    inbound_pdu: 4
+    inbound_write: 4
 
 memory:
   limit_mb: 3072               # GOMEMLIMIT; caches below must fit well inside it

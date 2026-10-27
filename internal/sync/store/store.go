@@ -84,11 +84,11 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		pcfg.MaxConns = cfg.MaxConns
 	}
 
-	// Synapse's database may sit behind pgcat in transaction pooling mode,
-	// where server-side prepared statements cannot be reused across
-	// transactions. Describing statements on each exec keeps us compatible
-	// with both a direct connection and a transaction-mode pooler.
-	pcfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	// Exec, not DescribeExec: behind pgcat in transaction pooling mode,
+	// DescribeExec's two round trips can land on different server
+	// connections ("unnamed prepared statement does not exist", 26000).
+	// Exec sends parse, bind and execute together.
+	pcfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 
 	if cfg.ConnectTimeout > 0 {
 		pcfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout

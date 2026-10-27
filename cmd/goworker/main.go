@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"syscall"
@@ -105,13 +106,14 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		return err
 	}
 
-	db, lim := cfg.Database, cfg.Limits
-	base := db.DSN
-	synapseDSN := hs.Database.DSN()
-	if base == "" {
-		base = synapseDSN
+	db, lim, pools := cfg.Database, cfg.Limits, cfg.Database.Pools
+	// Every pool connects as Synapse does: homeserver.yaml's database block,
+	// through its pooler (pgcat here), unless database.dsn overrides it.
+	dsn := db.DSNOr(hs.Database.DSN())
+	if dsn == "" {
+		return fmt.Errorf("no database: homeserver.yaml has no usable database block and database.dsn is unset")
 	}
-	dsn := func(p config.Pool) string { return config.DSNFor(p, base, synapseDSN) }
+	log.Info().Str("database", redactDSN(dsn)).Msg("connecting every pool as homeserver.yaml does")
 	redis := redisAddress(hs.Redis)
 
 	whoamiSocket, whoamiURL := "", ""
@@ -133,9 +135,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		HomeserverYAML: cfg.HomeserverYAML,
 		Flag:           hs.Flag,
 		Sync:           cfg.Sync,
-		Read:           syncapp.Pool{DSN: dsn(db.Read), MaxConns: db.Read.MaxConns},
-		Inbox:          syncapp.Pool{DSN: dsn(db.ToDevice), MaxConns: db.ToDevice.MaxConns},
-		Sliding:        syncapp.Pool{DSN: dsn(db.SlidingSync), MaxConns: db.SlidingSync.MaxConns},
+		Read:           syncapp.Pool{DSN: dsn, MaxConns: pools.Read},
+		Inbox:          syncapp.Pool{DSN: dsn, MaxConns: pools.ToDevice},
+		Sliding:        syncapp.Pool{DSN: dsn, MaxConns: pools.SlidingSync},
 		ConnectTimeout: db.ConnectTimeout(),
 		WhoamiSocket:   whoamiSocket,
 		WhoamiURL:      whoamiURL,
@@ -154,8 +156,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ServerName:        hs.ServerName,
 		TrustedKeyServers: hs.TrustedKeyServers,
 		FederationReads:   cfg.FederationReads,
-		DSN:               dsn(db.Read),
-		MaxConns:          db.Read.MaxConns,
+		DSN:               dsn,
+		MaxConns:          pools.Read,
 		ConnectTimeout:    db.ConnectTimeout(),
 		Redis:             fedreadapp.Redis{Enabled: hs.Redis.Enabled, Address: redis, Password: hs.Redis.Password, DB: hs.Redis.DBID},
 		Upstream:          upstream,
@@ -173,12 +175,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Synapse:        hs,
 		Inbound:        cfg.Inbound,
 		Upstream:       upstream,
-		DSN:            db.DSN,
-		ManageRoles:    db.ManagesRoles(),
-		ReadRole:       db.Inbound.ReadRole,
-		WriteRole:      db.Inbound.WriteRole,
-		ReadMaxConns:   db.Inbound.ReadMaxConns,
-		PDUMaxConns:    db.Inbound.PDUMaxConns,
+		DSN:            dsn,
+		ReadMaxConns:   pools.InboundRead,
+		PDUMaxConns:    pools.InboundPDU,
+		WriteMaxConns:  pools.InboundWrite,
 		ConnectTimeout: db.ConnectTimeout(),
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Log:            log.With().Str("component", "inbound").Logger(),
@@ -186,8 +186,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	var send http.Handler
 	if err != nil {
 		// Degraded, not down: /send then goes to main, as it did before
-		// goinbound. The usual cause is a homeserver whose one database user
-		// cannot create the inbound roles (database.manage_roles: false).
+		// goinbound.
 		degraded.WithLabelValues("inbound").Set(1)
 		log.Warn().Err(err).Msg("inbound /send unavailable; it is proxied to main")
 	} else {
@@ -199,9 +198,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		InstanceName:              cfg.InstanceName,
 		Synapse:                   shs,
 		Sender:                    cfg.Sender,
-		Read:                      senderapp.Pool{DSN: dsn(db.Read), MaxConns: db.Read.MaxConns},
-		Write:                     senderapp.Pool{DSN: dsn(db.SenderWrite), MaxConns: db.SenderWrite.MaxConns},
-		State:                     senderapp.Pool{DSN: dsn(db.SenderState), MaxConns: db.SenderState.MaxConns},
+		Read:                      senderapp.Pool{DSN: dsn, MaxConns: pools.Read},
+		Write:                     senderapp.Pool{DSN: dsn, MaxConns: pools.SenderWrite},
+		State:                     senderapp.Pool{DSN: dsn, MaxConns: pools.SenderState},
 		ConnectTimeout:            db.ConnectTimeout(),
 		MaxConcurrentDestinations: lim.SenderDestinations,
 		CatchUpConcurrency:        lim.SenderCatchUp,
@@ -294,6 +293,13 @@ func fallback(p *proxy.Proxy) http.Handler {
 		p.Forward(w, r, 0)
 	})
 }
+
+// redactDSN hides a DSN's password for the log.
+func redactDSN(dsn string) string {
+	return passwordRE.ReplaceAllString(dsn, "password=REDACTED")
+}
+
+var passwordRE = regexp.MustCompile(`password=('[^']*'|\S+)`)
 
 // redisAddress is homeserver.yaml's redis as a dial address: a unix socket
 // path, or host:port.

@@ -6,11 +6,9 @@
 // is not a read-only workload that needed one exception -- it cannot be made
 // read-only at all. Even READING the state writes (see Store.GetAndClear), and
 // the `pos` token a client carries is literally a sequence value from
-// sliding_sync_connection_positions. The containment is therefore the same
-// argument made a second time: a separate package, a separate pool, a separate
-// role that owns one schema and has nothing in `public`, and a startup check
-// that refuses a role which can see Synapse's tables at all. See
-// deploy/roles/sliding-sync.sql.
+// gosync.sliding_sync_connection_positions. The containment is therefore the same
+// argument made a second time: a separate package, a separate pool, and one
+// schema of its own, every table name qualified with it.
 //
 // A port of synapse/handlers/sliding_sync/store.py,
 // synapse/types/handlers/sliding_sync.py and
@@ -174,7 +172,7 @@ type RoomSyncConfig struct {
 //
 // The sort is what makes deduplication work. Two rooms asking for the same
 // state must produce the same bytes, or every room gets its own row in
-// sliding_sync_connection_required_state -- which on the live server is already
+// gosync.sliding_sync_connection_required_state -- which on the live server is already
 // the largest of the six tables by a wide margin even WITH deduplication.
 func EncodeRequiredState(required map[string]map[string]bool) (string, error) {
 	pairs := make([][2]string, 0, len(required))

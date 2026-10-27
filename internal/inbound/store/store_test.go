@@ -7,13 +7,10 @@ import (
 	"go/token"
 	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 )
 
 // TestEveryQueryIsASelect keeps this package read-only by construction.
@@ -158,10 +155,8 @@ func TestLiveServerKeys(t *testing.T) {
 	}
 }
 
-// TestQueriesReadOnlyListedTables keeps Tables -- what the read-only role is
-// granted -- in step with what the queries actually read. A table missing from
-// the list would make every start find the role "incomplete" and the first
-// query fail; a table in the list but unused is a grant nobody needs.
+// TestQueriesReadOnlyListedTables keeps Tables in step with what the queries
+// actually read, so the list stays an honest statement of the read surface.
 func TestQueriesReadOnlyListedTables(t *testing.T) {
 	listed := map[string]bool{}
 	for _, tbl := range Tables {
@@ -214,28 +209,4 @@ func TestQueriesReadOnlyListedTables(t *testing.T) {
 		}
 	}
 
-	// The hand-run SQL must grant exactly the same.
-	b, err := os.ReadFile("../../../deploy/roles/inbound-readonly.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	grant := regexp.MustCompile(`(?s)GRANT SELECT ON\s+(.*?)\s+TO goinbound_ro;`).FindSubmatch(b)
-	if grant == nil {
-		t.Fatal("deploy/readonly-role.sql has no GRANT SELECT ... TO goinbound_ro")
-	}
-	var inSQL []string
-	for _, f := range strings.Split(string(grant[1]), ",") {
-		inSQL = append(inSQL, strings.TrimSpace(f))
-	}
-	slices.Sort(inSQL)
-	want := slices.Clone(Tables)
-	for _, t := range pdustore.Tables {
-		if !slices.Contains(want, t) {
-			want = append(want, t)
-		}
-	}
-	slices.Sort(want)
-	if !slices.Equal(inSQL, want) {
-		t.Errorf("deploy/readonly-role.sql grants %v, store and pdustore read %v", inSQL, want)
-	}
 }

@@ -20,7 +20,7 @@ func TestMinimalConfigLoads(t *testing.T) {
 	if c.HomeserverYAML != "/etc/synapse/homeserver.yaml" || c.Upstream.TimeoutSeconds != 180 {
 		t.Errorf("defaults not applied: %+v", c)
 	}
-	if !c.Database.ManagesRoles() || c.Inbound.MissingEvents != "fetch" {
+	if c.Database.Pools.Read != 16 || c.Inbound.MissingEvents != "fetch" {
 		t.Error("production defaults not applied")
 	}
 }
@@ -34,6 +34,7 @@ func TestNoComponentOrModeSwitches(t *testing.T) {
 		"shadow: { enabled: false }",
 		"inbound: { modes: { edu: native } }",
 		"federation_reads: { endpoints: { event: native } }",
+		"database: { manage_roles: true }",
 	} {
 		if _, err := Parse([]byte(minimal + extra + "\n")); err == nil {
 			t.Errorf("accepted %q", extra)
@@ -53,22 +54,13 @@ func TestValidationRejects(t *testing.T) {
 	}
 }
 
-func TestDSNFor(t *testing.T) {
-	base, synapse := "host=/s dbname=d", "host=pgcat user=synapse"
-	for _, tc := range []struct {
-		p    Pool
-		want string
-	}{
-		{Pool{DSN: "host=x user=y"}, "host=x user=y"},
-		{Pool{User: "gopro_ro"}, "host=/s dbname=d user=gopro_ro"},
-		{Pool{}, base},
-	} {
-		if got := DSNFor(tc.p, base, synapse); got != tc.want {
-			t.Errorf("DSNFor(%+v) = %q, want %q", tc.p, got, tc.want)
-		}
+func TestDSNDefaultsToHomeserverYAML(t *testing.T) {
+	synapse := "host=matrix-pgcat port=6432 user=synapse dbname=synapse-db"
+	if got := (Database{}).DSNOr(synapse); got != synapse {
+		t.Errorf("unset dsn = %q, want homeserver.yaml's", got)
 	}
-	if got := DSNFor(Pool{}, "", synapse); got != synapse {
-		t.Errorf("no base: %q, want homeserver.yaml's", got)
+	if got := (Database{DSN: "host=/s"}).DSNOr(synapse); got != "host=/s" {
+		t.Errorf("set dsn = %q", got)
 	}
 }
 

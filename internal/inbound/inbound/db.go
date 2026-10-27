@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/dbrole"
@@ -55,14 +56,22 @@ type DB struct {
 	now      func() time.Time
 }
 
-// Open connects as the write role.
-func Open(ctx context.Context, dsn, instance string) (*DB, error) {
+// Open connects the pool write mode writes through. maxConns 0 is pgx's
+// default.
+func Open(ctx context.Context, dsn, instance string, maxConns int32) (*DB, error) {
 	if instance == "" {
 		return nil, fmt.Errorf("inbound: no instance name")
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("inbound: %w", err)
+	}
+	// Exec: the only mode that survives a transaction pooler such as pgcat,
+	// which does not keep a named prepared statement on one server
+	// connection between transactions.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

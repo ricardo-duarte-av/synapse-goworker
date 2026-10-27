@@ -123,8 +123,9 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 	metrics.RegisterCaches(s.db.DerivedCacheStats)
 	metrics.RegisterStreamCaches(s.db.StreamCacheStats)
 
-	// Reported rather than enforced: a writable role is a deployment that
-	// has not set up the read-only one yet.
+	// Reported, not enforced: through pgcat the role is Synapse's own, and
+	// that the read path only reads is held by the code and its tests
+	// (every store query is a SELECT), not by a grant.
 	readOnly, err := s.db.IsReadOnly(openCtx)
 	if err != nil {
 		s.Close()
@@ -134,13 +135,11 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		metrics.DatabaseReadOnly.Set(1)
 	} else {
 		metrics.DatabaseReadOnly.Set(0)
-		log.Warn().Msg("sync: database role is NOT read-only")
 	}
 
-	// The one writing connection of classic sync. It should hold a role
-	// granted SELECT and DELETE on device_inbox alone; a broader one is
-	// warned about, not refused. Unavailable, to-device messages are left
-	// for Synapse to deliver, which is lossless.
+	// The one writing connection of classic sync: it deletes acknowledged
+	// to-device messages, and nothing else (package deviceinbox).
+	// Unavailable, they are left for Synapse to deliver, which is lossless.
 	if cfg.Sync.ToDevice {
 		s.inbox, err = deviceinbox.Open(openCtx, deviceinbox.Config{
 			DSN:            cfg.Inbox.DSN,
@@ -150,9 +149,6 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		if err != nil {
 			log.Warn().Err(err).Msg("sync: to_device unavailable; messages are left for Synapse to deliver")
 		} else {
-			if why := s.inbox.Broad(); why != "" {
-				log.Warn().Str("reason", why).Msg("sync: to_device role is broader than needed")
-			}
 			log.Info().Msg("sync: to_device enabled; acknowledged messages are deleted")
 		}
 	}
@@ -415,9 +411,6 @@ func (s *Sync) openSliding(ctx, openCtx context.Context) error {
 	}
 	if s.sliding.Created() {
 		s.log.Info().Msg("sync: created the gosync schema's tables")
-	}
-	if why := s.sliding.Broad(); why != "" {
-		s.log.Warn().Str("reason", why).Msg("sync: sliding sync role is broader than needed")
 	}
 
 	// The materialised tables sliding sync reads are maintained by Synapse's

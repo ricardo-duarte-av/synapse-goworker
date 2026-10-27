@@ -53,9 +53,7 @@ Each component still has its own copy of these, which work but duplicate:
 - **Destination backoff**: inbound's `backoff` (write mode's outbound
   requests) and the sender's `retry`. They agree through Synapse's
   `destinations` table and REMOTE_SERVER_UP, as separate workers did.
-- **Read pools**: sync, fedread and the sender each open `database.read`.
-- **pgx exec mode**: sync and fedread use DescribeExec on direct sockets;
-  the sender and inbound use Exec. Only Exec is safe behind pgcat.
+- **Read pools**: sync, fedread and the sender each open a read pool.
 
 ## Decisions that are easy to undo by accident
 
@@ -92,8 +90,15 @@ Each component still has its own copy of these, which work but duplicate:
   from Synapse's. When unsure, defer to Synapse rather than approximate.
 - **Never re-encode stored event JSON.** Splice `event_json.json` with sjson.
   14,654 events here contain escaped NULs that `jsonb` cannot even cast.
-- **pgx must use `QueryExecModeExec`.** DescribeExec breaks behind pgcat in
-  transaction mode ("unnamed prepared statement does not exist", 26000).
+- **Everything goes through pgcat, as homeserver.yaml says** (operator,
+  2026-10-27): one DSN for every pool, Synapse's own user, no narrow roles.
+  So pgx must use `QueryExecModeExec` everywhere (DescribeExec breaks behind
+  a transaction pooler: "unnamed prepared statement does not exist",
+  26000), nothing may rely on session state (`SET LOCAL` inside a
+  transaction is fine; a startup `search_path` is not), and every gosync
+  table is schema-qualified, because Synapse has tables of the same names
+  in public (TestEveryTableIsQualified). That reads only read is held by
+  the code and its tests, not by a grant.
 - **Bound caches by size, never by count of things of unknown size.** A big
   room's state is 150k entries (31 MB as a Go map).
 - **Never name a metric label `instance` or `job`.**

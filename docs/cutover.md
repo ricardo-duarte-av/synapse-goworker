@@ -13,17 +13,16 @@ socket it serves nothing; until homeserver.yaml names it, it sends nothing.
    interleave stream IDs, and every Synapse process drops a token at or
    below the last it saw from an instance. Not `av-gofederation-worker`
    either: see step 4.
-2. **Roles.** The example config reuses today's: `gopro_ro` (read),
-   `gosync_inbox`, `gosync_ss`, `synapse` for the sender's state, and
-   homeserver.yaml's own credentials for the sender's writes. The inbound
-   roles (`goinbound_ro`, `goinbound_rw`) are created or repaired at start
-   when `database.manage_roles` is on, exactly as goinbound did.
+2. **Database.** Every pool connects as homeserver.yaml does: through pgcat
+   (`matrix-pgcat:6432`), as `synapse`. No role needs creating, and pgcat's
+   `pool_size` for `synapse` is the real bound on server connections,
+   shared with Synapse's own processes. The narrow roles the old workers
+   used (`gopro_ro`, `gosync_inbox`, `gosync_ss`, `goinbound_ro/rw`) are no
+   longer used and can be dropped once the old workers are gone.
 3. **Check it.** `goworker -config goworker.yaml -check` connects every
    pool, reads homeserver.yaml, and logs `sending_federation=false`. On
-   matrixbridg.es (one database user, no admin rights) set
-   `manage_roles: false`; the inbound write role then cannot be made and
-   PDU transactions would go to main -- which is fine there, since nginx
-   sends no /send to it.
+   matrixbridg.es the same config works with its own homeserver.yaml: its
+   database block names its own pgcat pool and user.
 
 Start it. With no nginx location pointing at it and its name absent from
 `federation_sender_instances`, it follows the replication stream and

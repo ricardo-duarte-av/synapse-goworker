@@ -52,17 +52,12 @@ type Settings struct {
 	// Upstream is Synapse's main process.
 	Upstream *proxy.Proxy
 
-	// DSN reaches PostgreSQL directly (not through pgcat, which only knows
-	// its own users); empty derives it from homeserver.yaml. The roles are
-	// connected as with derived passwords, and created or repaired with
-	// homeserver.yaml's credentials when ManageRoles is set.
-	DSN            string
-	ManageRoles    bool
-	ReadRole       string
-	WriteRole      string
-	ReadMaxConns   int32
-	PDUMaxConns    int32
-	ConnectTimeout time.Duration
+	// DSN is homeserver.yaml's database, normally through pgcat. The /send
+	// path reads (store, pdustore) and writes what Synapse's own inbound
+	// worker writes (inbound.DB) through three pools on it.
+	DSN                                      string
+	ReadMaxConns, PDUMaxConns, WriteMaxConns int32
+	ConnectTimeout                           time.Duration
 	// Transactions bounds /send transactions handled at once; past it they
 	// wait for a slot.
 	Transactions *limits.Gate
@@ -110,7 +105,14 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		return nil, err
 	}
 
-	db, dbCfg, err := openDatabase(ctx, cfg, hs, log)
+	openCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout+20*time.Second)
+	defer cancel()
+	db, err := store.Open(openCtx, store.Config{
+		DSN:            cfg.DSN,
+		MaxConns:       orDefault(cfg.ReadMaxConns, 4),
+		ConnectTimeout: cfg.ConnectTimeout,
+		QueryTimeout:   5 * time.Second,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -159,13 +161,13 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 
 	var handler atomic.Pointer[txn.Handler]
 	var limiter *backoff.Limiter
-	wdb, err := openWriteDatabase(ctx, cfg, hs, log)
+	wdb, err := inbound.Open(openCtx, cfg.DSN, cfg.InstanceName, orDefault(cfg.WriteMaxConns, 4))
 	if err != nil {
 		// Degraded, not down: EDUs are still ours, PDUs go to main.
 		log.Warn().Err(err).Msg("Inbound: write mode unavailable; transactions with PDUs go to Synapse")
 	} else {
 		out.closers = append(out.closers, wdb.Close)
-		stop, l, err := writeMode(ctx, cfg, dbCfg, wdb, repl, acls, &opts, &handler)
+		stop, l, err := writeMode(ctx, cfg, wdb, repl, acls, &opts, &handler)
 		if err != nil {
 			return fail(err)
 		}
@@ -196,15 +198,11 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 
 // writeMode builds the PDU path and puts it into opts. It returns what stops
 // it, and the destination backoff its outbound requests are under.
-func writeMode(ctx context.Context, cfg Settings, dbCfg store.Config, wdb *inbound.DB, repl *replication.Client,
+func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replication.Client,
 	acls *acl.Checker, opts *txn.Options, handler *atomic.Pointer[txn.Handler]) (func(), *backoff.Limiter, error) {
 	hs, log, ic := cfg.Synapse, cfg.Log, cfg.Inbound
 
-	maxConns := cfg.PDUMaxConns
-	if maxConns == 0 {
-		maxConns = 4
-	}
-	pst, err := pdustore.OpenAs(ctx, dbCfg.DSN, dbCfg.User, dbCfg.Password, maxConns)
+	pst, err := pdustore.OpenAs(ctx, cfg.DSN, "", "", orDefault(cfg.PDUMaxConns, 4))
 	if err != nil {
 		return nil, nil, fmt.Errorf("inbound: %w", err)
 	}
@@ -287,4 +285,11 @@ func writeMode(ctx context.Context, cfg Settings, dbCfg store.Config, wdb *inbou
 	log.Info().Str("instance", cfg.InstanceName).Bool("fetch_missing", ic.FetchesMissingEvents()).
 		Msg("Inbound: write mode on; PDUs are persisted here")
 	return func() { proc.Close(); pst.Close() }, limiter, nil
+}
+
+func orDefault(v, def int32) int32 {
+	if v > 0 {
+		return v
+	}
+	return def
 }

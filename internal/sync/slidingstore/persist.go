@@ -48,7 +48,7 @@ func (s *Store) Persist(
 
 	var position int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO sliding_sync_connection_positions (connection_key, created_ts)
+		INSERT INTO gosync.sliding_sync_connection_positions (connection_key, created_ts)
 		VALUES ($1, $2) RETURNING connection_position`,
 		connectionKey, now).Scan(&position); err != nil {
 		return 0, fmt.Errorf("slidingstore: new position: %w", err)
@@ -96,8 +96,8 @@ func (s *Store) connectionKey(
 		// requests are the normal case rather than the exceptional one.
 		err := tx.QueryRow(ctx, `
 			SELECT connection_key
-			  FROM sliding_sync_connection_positions
-			  JOIN sliding_sync_connections USING (connection_key)
+			  FROM gosync.sliding_sync_connection_positions
+			  JOIN gosync.sliding_sync_connections USING (connection_key)
 			 WHERE connection_position = $1
 			   AND user_id = $2 AND effective_device_id = $3 AND conn_id = $4
 			   FOR NO KEY UPDATE OF sliding_sync_connections`,
@@ -115,7 +115,7 @@ func (s *Store) connectionKey(
 	// all five dependent tables, which is the point: a client that keeps
 	// starting over must not leave a connection behind each time.
 	if _, err := tx.Exec(ctx, `
-		DELETE FROM sliding_sync_connections
+		DELETE FROM gosync.sliding_sync_connections
 		 WHERE user_id = $1 AND effective_device_id = $2 AND conn_id = $3`,
 		userID, deviceID, connID); err != nil {
 		return 0, fmt.Errorf("slidingstore: clear old connection: %w", err)
@@ -123,7 +123,7 @@ func (s *Store) connectionKey(
 
 	var key int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO sliding_sync_connections
+		INSERT INTO gosync.sliding_sync_connections
 		  (user_id, effective_device_id, conn_id, created_ts, last_used_ts)
 		VALUES ($1, $2, $3, $4, $4) RETURNING connection_key`,
 		userID, deviceID, connID, now).Scan(&key); err != nil {
@@ -145,7 +145,7 @@ func (s *Store) resolveRequiredState(
 	if previousPosition != 0 {
 		rows, err := tx.Query(ctx, `
 			SELECT required_state_id, required_state
-			  FROM sliding_sync_connection_required_state
+			  FROM gosync.sliding_sync_connection_required_state
 			 WHERE connection_key = $1`, connectionKey)
 		if err != nil {
 			return nil, fmt.Errorf("slidingstore: load required state: %w", err)
@@ -189,7 +189,7 @@ func (s *Store) resolveRequiredState(
 	for _, encoded := range encodings {
 		var id int64
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO sliding_sync_connection_required_state (connection_key, required_state)
+			INSERT INTO gosync.sliding_sync_connection_required_state (connection_key, required_state)
 			VALUES ($1, $2) RETURNING required_state_id`,
 			connectionKey, encoded).Scan(&id); err != nil {
 			return nil, fmt.Errorf("slidingstore: insert required state: %w", err)
@@ -218,18 +218,18 @@ func (s *Store) resolveRequiredState(
 // is written down here instead.
 func copyForward(ctx context.Context, tx pgx.Tx, position, previous int64) error {
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO sliding_sync_connection_streams
+		INSERT INTO gosync.sliding_sync_connection_streams
 		  (connection_position, stream, room_id, room_status, last_token)
 		SELECT $1, stream, room_id, room_status, last_token
-		  FROM sliding_sync_connection_streams WHERE connection_position = $2`,
+		  FROM gosync.sliding_sync_connection_streams WHERE connection_position = $2`,
 		position, previous); err != nil {
 		return fmt.Errorf("slidingstore: copy streams forward: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO sliding_sync_connection_room_configs
+		INSERT INTO gosync.sliding_sync_connection_room_configs
 		  (connection_position, room_id, timeline_limit, required_state_id)
 		SELECT $1, room_id, timeline_limit, required_state_id
-		  FROM sliding_sync_connection_room_configs WHERE connection_position = $2`,
+		  FROM gosync.sliding_sync_connection_room_configs WHERE connection_position = $2`,
 		position, previous); err != nil {
 		return fmt.Errorf("slidingstore: copy room configs forward: %w", err)
 	}
@@ -272,7 +272,7 @@ func upsertStreams(ctx context.Context, tx pgx.Tx, position int64, state *PerCon
 			token = &t
 		}
 		batch.Queue(`
-			INSERT INTO sliding_sync_connection_streams
+			INSERT INTO gosync.sliding_sync_connection_streams
 			  (connection_position, stream, room_id, room_status, last_token)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (connection_position, room_id, stream)
@@ -306,7 +306,7 @@ func upsertRoomConfigs(
 			return fmt.Errorf("slidingstore: no required_state id resolved for %s", roomID)
 		}
 		batch.Queue(`
-			INSERT INTO sliding_sync_connection_room_configs
+			INSERT INTO gosync.sliding_sync_connection_room_configs
 			  (connection_position, room_id, timeline_limit, required_state_id)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (connection_position, room_id)
@@ -363,13 +363,13 @@ func persistLazyMembers(
 		batch := &pgx.Batch{}
 		for _, p := range toUpsert {
 			batch.Queue(`
-				INSERT INTO sliding_sync_connection_lazy_members
+				INSERT INTO gosync.sliding_sync_connection_lazy_members
 				  (connection_key, connection_position, room_id, user_id, last_seen_ts)
 				VALUES ($1, $2, $3, $4, $5)
 				ON CONFLICT (connection_key, room_id, user_id)
 				DO UPDATE SET last_seen_ts = EXCLUDED.last_seen_ts
-				WHERE sliding_sync_connection_lazy_members.connection_position IS NULL
-				   OR sliding_sync_connection_lazy_members.connection_position = EXCLUDED.connection_position`,
+				WHERE gosync.sliding_sync_connection_lazy_members.connection_position IS NULL
+				   OR gosync.sliding_sync_connection_lazy_members.connection_position = EXCLUDED.connection_position`,
 				connectionKey, position, p.roomID, p.userID, now)
 		}
 		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
@@ -382,7 +382,7 @@ func persistLazyMembers(
 		batch := &pgx.Batch{}
 		for _, p := range toRemove {
 			batch.Queue(`
-				DELETE FROM sliding_sync_connection_lazy_members
+				DELETE FROM gosync.sliding_sync_connection_lazy_members
 				 WHERE connection_key = $1 AND room_id = $2 AND user_id = $3`,
 				connectionKey, p.roomID, p.userID)
 		}
@@ -404,7 +404,7 @@ func (s *Store) LazyMembersSent(
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT user_id, last_seen_ts
-		  FROM sliding_sync_connection_lazy_members
+		  FROM gosync.sliding_sync_connection_lazy_members
 		 WHERE connection_key = $1 AND room_id = $2 AND user_id = ANY($3)`,
 		connectionKey, roomID, userIDs)
 	if err != nil {
@@ -430,7 +430,7 @@ func (s *Store) LazyMembersSent(
 // bounded. Its cost to a returning client is one M_UNKNOWN_POS.
 func (s *Store) DeleteOldConnections(ctx context.Context) (int64, error) {
 	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM sliding_sync_connections
+		DELETE FROM gosync.sliding_sync_connections
 		 WHERE last_used_ts IS NOT NULL AND last_used_ts < $1`,
 		s.now()-ConnectionExpiryMS)
 	if err != nil {

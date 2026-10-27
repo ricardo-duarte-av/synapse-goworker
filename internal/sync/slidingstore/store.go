@@ -41,9 +41,8 @@ var ErrUnknownPosition = errors.New("slidingstore: unknown connection position")
 
 // Config describes how to reach the database as the sliding sync role.
 type Config struct {
-	// DSN is a libpq connection string for the role from
-	// deploy/roles/sliding-sync.sql: owner of the `gosync` schema, with no
-	// access to `public` at all.
+	// DSN is a libpq connection string. Through pgcat it is Synapse's own
+	// user; the store touches only the gosync schema, by qualified name.
 	DSN string
 	// MaxConns bounds the pool. Zero means 8.
 	MaxConns int32
@@ -68,10 +67,8 @@ var schemaSQL string
 
 // Open connects and verifies the role can write its own schema.
 //
-// It also checks that the role CANNOT read `public`, but reports a role that
-// can through Broad rather than refusing: some deployments have a single
-// database user and cannot create a narrow one. The narrow role from
-// deploy/roles/sliding-sync.sql remains the recommendation.
+// It also reports, through Broad, a role that can read `public`, which is
+// the normal case through pgcat with Synapse's own user.
 func Open(ctx context.Context, cfg Config) (*Store, error) {
 	pcfg, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {
@@ -82,16 +79,14 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	} else {
 		pcfg.MaxConns = 8
 	}
-	pcfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	pcfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	if cfg.ConnectTimeout > 0 {
 		pcfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 	}
-	// Pinned here rather than trusted to the role. Every query below names its
-	// tables unqualified, and Synapse has tables of the SAME NAMES in `public`.
-	// A role whose search_path reaches `public` -- any role but the one from
-	// sliding-sync-role.sql, e.g. a single shared database user -- would
-	// otherwise read and write Synapse's own connection state for real clients.
-	pcfg.ConnConfig.RuntimeParams["search_path"] = "gosync"
+	// Every query names its tables schema-qualified (gosync.), never through
+	// search_path: Synapse has tables of the SAME NAMES in public, and behind
+	// a transaction pooler such as pgcat a startup search_path does not
+	// reach the server connection. TestEveryTableIsQualified holds it.
 
 	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
 	if err != nil {
@@ -139,10 +134,8 @@ func (s *Store) Created() bool { return s.created }
 // ensureSchema creates the gosync schema and its tables if they are missing.
 //
 // Only when missing, and the schema separately from the tables: CREATE SCHEMA
-// needs CREATE on the database even with IF NOT EXISTS, which the narrow role
-// from deploy/roles/sliding-sync.sql does not hold -- that script creates the
-// schema for it, and this creates the tables inside it. A single shared
-// database user usually holds both.
+// needs CREATE on the database even with IF NOT EXISTS, which a narrow role
+// may not hold. Synapse's own user holds both.
 func (s *Store) ensureSchema(ctx context.Context) error {
 	var complete, schemaExists bool
 	// to_regclass returns NULL, not an error, when the schema itself is absent.
@@ -160,7 +153,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		if _, err := s.pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS gosync`,
 			pgx.QueryExecModeSimpleProtocol); err != nil {
 			return fmt.Errorf("slidingstore: create schema gosync (the role needs CREATE "+
-				"on the database; otherwise run deploy/roles/sliding-sync.sql): %w", err)
+				"on the database; otherwise create the gosync schema for this role): %w", err)
 		}
 	}
 	// Several statements in one simple-protocol message run as one implicit
@@ -200,7 +193,7 @@ func (s *Store) checkGrants(ctx context.Context) error {
 	}
 	if !canInsert {
 		return fmt.Errorf("slidingstore: role %q cannot INSERT into "+
-			"gosync.sliding_sync_connections; run deploy/roles/sliding-sync.sql", user)
+			"gosync.sliding_sync_connections", user)
 	}
 	if canReadPub {
 		s.broad = fmt.Sprintf("role %q can read public.events", user)
@@ -248,8 +241,8 @@ func (s *Store) GetAndClear(
 	var lastUsed *int64
 	err = tx.QueryRow(ctx, `
 		SELECT connection_key, last_used_ts
-		  FROM sliding_sync_connection_positions
-		  JOIN sliding_sync_connections USING (connection_key)
+		  FROM gosync.sliding_sync_connection_positions
+		  JOIN gosync.sliding_sync_connections USING (connection_key)
 		 WHERE connection_position = $1
 		   AND user_id = $2 AND effective_device_id = $3 AND conn_id = $4`,
 		position, userID, deviceID, connID).Scan(&connectionKey, &lastUsed)
@@ -263,14 +256,14 @@ func (s *Store) GetAndClear(
 	now := s.now()
 	if lastUsed == nil || now-*lastUsed > UpdateLastUsedIntervalMS {
 		if _, err := tx.Exec(ctx,
-			`UPDATE sliding_sync_connections SET last_used_ts = $1 WHERE connection_key = $2`,
+			`UPDATE gosync.sliding_sync_connections SET last_used_ts = $1 WHERE connection_key = $2`,
 			now, connectionKey); err != nil {
 			return nil, fmt.Errorf("slidingstore: bump last_used_ts: %w", err)
 		}
 	}
 
 	if _, err := tx.Exec(ctx, `
-		DELETE FROM sliding_sync_connection_positions
+		DELETE FROM gosync.sliding_sync_connection_positions
 		 WHERE connection_key = $1 AND connection_position != $2`,
 		connectionKey, position); err != nil {
 		return nil, fmt.Errorf("slidingstore: prune positions: %w", err)
@@ -280,7 +273,7 @@ func (s *Store) GetAndClear(
 	// one. Safe only because the line above just removed every fork it could
 	// have competed with, so this position is the connection's only history.
 	if _, err := tx.Exec(ctx, `
-		UPDATE sliding_sync_connection_lazy_members SET connection_position = NULL
+		UPDATE gosync.sliding_sync_connection_lazy_members SET connection_position = NULL
 		 WHERE connection_key = $1 AND connection_position = $2`,
 		connectionKey, position); err != nil {
 		return nil, fmt.Errorf("slidingstore: promote lazy members: %w", err)
@@ -306,7 +299,7 @@ func (s *Store) loadState(
 	requiredState := map[int64]map[string]map[string]bool{}
 	rows, err := tx.Query(ctx, `
 		SELECT required_state_id, required_state
-		  FROM sliding_sync_connection_required_state
+		  FROM gosync.sliding_sync_connection_required_state
 		 WHERE connection_key = $1`, connectionKey)
 	if err != nil {
 		return nil, fmt.Errorf("slidingstore: load required state: %w", err)
@@ -334,7 +327,7 @@ func (s *Store) loadState(
 	used := map[int64]bool{}
 	rows, err = tx.Query(ctx, `
 		SELECT room_id, timeline_limit, required_state_id
-		  FROM sliding_sync_connection_room_configs
+		  FROM gosync.sliding_sync_connection_room_configs
 		 WHERE connection_position = $1`, position)
 	if err != nil {
 		return nil, fmt.Errorf("slidingstore: load room configs: %w", err)
@@ -369,7 +362,7 @@ func (s *Store) loadState(
 	}
 	if len(unused) > 0 {
 		if _, err := tx.Exec(ctx, `
-			DELETE FROM sliding_sync_connection_required_state
+			DELETE FROM gosync.sliding_sync_connection_required_state
 			 WHERE connection_key = $1 AND required_state_id = ANY($2)`,
 			connectionKey, unused); err != nil {
 			return nil, fmt.Errorf("slidingstore: drop unused required state: %w", err)
@@ -381,7 +374,7 @@ func (s *Store) loadState(
 	accountData := map[string]HaveSent{}
 	rows, err = tx.Query(ctx, `
 		SELECT stream, room_id, room_status, last_token
-		  FROM sliding_sync_connection_streams
+		  FROM gosync.sliding_sync_connection_streams
 		 WHERE connection_position = $1`, position)
 	if err != nil {
 		return nil, fmt.Errorf("slidingstore: load streams: %w", err)
@@ -422,7 +415,7 @@ func (s *Store) loadState(
 	}, nil
 }
 
-// Stream names, as stored in sliding_sync_connection_streams.stream.
+// Stream names, as stored in gosync.sliding_sync_connection_streams.stream.
 const (
 	StreamRooms       = "rooms"
 	StreamReceipts    = "receipts"
@@ -445,12 +438,12 @@ type Counts struct {
 // one of those two is not happening, which nothing else makes visible.
 func (s *Store) Count(ctx context.Context) (Counts, error) {
 	const q = `
-		SELECT (SELECT count(*) FROM sliding_sync_connections),
-		       (SELECT count(*) FROM sliding_sync_connection_positions),
-		       (SELECT count(*) FROM sliding_sync_connection_required_state),
-		       (SELECT count(*) FROM sliding_sync_connection_room_configs),
-		       (SELECT count(*) FROM sliding_sync_connection_streams),
-		       (SELECT count(*) FROM sliding_sync_connection_lazy_members)`
+		SELECT (SELECT count(*) FROM gosync.sliding_sync_connections),
+		       (SELECT count(*) FROM gosync.sliding_sync_connection_positions),
+		       (SELECT count(*) FROM gosync.sliding_sync_connection_required_state),
+		       (SELECT count(*) FROM gosync.sliding_sync_connection_room_configs),
+		       (SELECT count(*) FROM gosync.sliding_sync_connection_streams),
+		       (SELECT count(*) FROM gosync.sliding_sync_connection_lazy_members)`
 	var conns, positions, required, configs, streams, lazy int64
 	if err := s.pool.QueryRow(ctx, q).Scan(
 		&conns, &positions, &required, &configs, &streams, &lazy); err != nil {

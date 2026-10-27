@@ -102,15 +102,6 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 	f := &FedRead{db: db, log: log, reads: cfg.Reads, streams: cfg.StateStreams}
 	metrics.RegisterCaches(db.CacheStats)
 
-	readOnly, err := db.IsReadOnly(connectCtx)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	if !readOnly {
-		log.Warn().Msg("federation reads: database role is NOT read-only")
-	}
-
 	// Caching is safe against deletions only while the cache-invalidation
 	// stream is followed; without it the caches do not run.
 	if cfg.Redis.Enabled {

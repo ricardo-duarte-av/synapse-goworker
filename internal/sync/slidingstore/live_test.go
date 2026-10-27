@@ -46,7 +46,7 @@ func conn(t *testing.T, s *Store, ctx context.Context) (user, device, connID str
 	user, device, connID = testUserPrefix, "DEV-"+t.Name(), "conn-"+t.Name()
 	t.Cleanup(func() {
 		_, _ = s.pool.Exec(context.Background(), `
-			DELETE FROM sliding_sync_connections
+			DELETE FROM gosync.sliding_sync_connections
 			 WHERE user_id = $1 AND effective_device_id = $2 AND conn_id = $3`,
 			user, device, connID)
 	})
@@ -372,8 +372,8 @@ func TestLiveRequiredStateIsDeduplicated(t *testing.T) {
 
 	var rows int
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM sliding_sync_connection_required_state
-		 WHERE connection_key = (SELECT connection_key FROM sliding_sync_connection_positions
+		SELECT count(*) FROM gosync.sliding_sync_connection_required_state
+		 WHERE connection_key = (SELECT connection_key FROM gosync.sliding_sync_connection_positions
 		                          WHERE connection_position = $1)`, pos).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestLiveRequiredStateIsDeduplicated(t *testing.T) {
 
 	var firstStateID int64
 	if err := s.pool.QueryRow(ctx, `
-		SELECT required_state_id FROM sliding_sync_connection_room_configs
+		SELECT required_state_id FROM gosync.sliding_sync_connection_room_configs
 		 WHERE connection_position = $1 AND room_id = '!a:e'`, pos).Scan(&firstStateID); err != nil {
 		t.Fatal(err)
 	}
@@ -421,8 +421,8 @@ func TestLiveRequiredStateIsDeduplicated(t *testing.T) {
 	}
 
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM sliding_sync_connection_required_state
-		 WHERE connection_key = (SELECT connection_key FROM sliding_sync_connection_positions
+		SELECT count(*) FROM gosync.sliding_sync_connection_required_state
+		 WHERE connection_key = (SELECT connection_key FROM gosync.sliding_sync_connection_positions
 		                          WHERE connection_position = $1)`, pos).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func TestLiveRequiredStateIsDeduplicated(t *testing.T) {
 	// row instead -- reuse means the id does not move.
 	var stateID int64
 	if err := s.pool.QueryRow(ctx, `
-		SELECT required_state_id FROM sliding_sync_connection_room_configs
+		SELECT required_state_id FROM gosync.sliding_sync_connection_room_configs
 		 WHERE connection_position = $1 AND room_id = '!a:e'`, pos).Scan(&stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -483,8 +483,8 @@ func TestLiveUnusedRequiredStateIsCollected(t *testing.T) {
 
 	var rows int
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM sliding_sync_connection_required_state
-		 WHERE connection_key = (SELECT connection_key FROM sliding_sync_connection_positions
+		SELECT count(*) FROM gosync.sliding_sync_connection_required_state
+		 WHERE connection_key = (SELECT connection_key FROM gosync.sliding_sync_connection_positions
 		                          WHERE connection_position = $1)`, pos).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +519,7 @@ func TestLiveRestartingAConnectionClearsTheOldOne(t *testing.T) {
 	}
 	var conns int
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM sliding_sync_connections
+		SELECT count(*) FROM gosync.sliding_sync_connections
 		 WHERE user_id = $1 AND effective_device_id = $2 AND conn_id = $3`,
 		user, device, connID).Scan(&conns); err != nil {
 		t.Fatal(err)
@@ -546,7 +546,7 @@ func TestLiveConnectionsOnOneDeviceAreIndependent(t *testing.T) {
 	ids := []string{"room-list", "notifications", ""}
 	t.Cleanup(func() {
 		_, _ = s.pool.Exec(context.Background(),
-			`DELETE FROM sliding_sync_connections WHERE user_id = $1 AND effective_device_id = $2`,
+			`DELETE FROM gosync.sliding_sync_connections WHERE user_id = $1 AND effective_device_id = $2`,
 			user, device)
 	})
 
@@ -595,7 +595,7 @@ func TestLiveLazyMembers(t *testing.T) {
 
 	var key int64
 	if err := s.pool.QueryRow(ctx,
-		`SELECT connection_key FROM sliding_sync_connection_positions WHERE connection_position = $1`,
+		`SELECT connection_key FROM gosync.sliding_sync_connection_positions WHERE connection_position = $1`,
 		pos).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestLiveReaperDropsOnlyStaleConnections(t *testing.T) {
 
 	// Age it past the cutoff.
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE sliding_sync_connections SET last_used_ts = $1
+		UPDATE gosync.sliding_sync_connections SET last_used_ts = $1
 		 WHERE user_id = $2 AND effective_device_id = $3 AND conn_id = $4`,
 		s.now()-ConnectionExpiryMS-1, user, device, connID); err != nil {
 		t.Fatal(err)
@@ -696,8 +696,8 @@ func (s *Store) countPositions(t *testing.T, ctx context.Context, user, device, 
 	t.Helper()
 	var n int
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM sliding_sync_connection_positions
-		  JOIN sliding_sync_connections USING (connection_key)
+		SELECT count(*) FROM gosync.sliding_sync_connection_positions
+		  JOIN gosync.sliding_sync_connections USING (connection_key)
 		 WHERE user_id = $1 AND effective_device_id = $2 AND conn_id = $3`,
 		user, device, connID).Scan(&n); err != nil {
 		t.Fatal(err)
