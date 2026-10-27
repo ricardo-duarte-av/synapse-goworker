@@ -342,6 +342,31 @@ func TestANormalBatchDoesNotEndTheSession(t *testing.T) {
 	}
 }
 
+// Synapse's presence timeout sweep sends one presence_federation batch of well
+// over maxPendingBatch rows every 25 minutes (2026-10-27: a resync at 09:57,
+// 10:22, 10:47). The stream is silent, so its rows are not held, and the batch
+// is not mistaken for a broken connection.
+func TestABigSilentBatchDoesNotEndTheSession(t *testing.T) {
+	s := newTestSub()
+
+	c := bus.New(bus.Config{}, zerolog.Nop()).Consumer("test", 0)
+	s.cfg.Bus = c
+
+	for i := 0; i <= 3*maxPendingBatch; i++ {
+		s.handle(`RDATA presence_federation p1 batch ["matrix.org","@u:e"]`)
+	}
+	if resynced(c) {
+		t.Fatal("ended the session on presence_federation's sweep batch")
+	}
+	if got := len(s.pending[StreamPresenceFederation]); got != 0 {
+		t.Errorf("%d silent rows held; nothing here reads them", got)
+	}
+	s.handle(`RDATA presence_federation p1 77 ["matrix.org","@v:e"]`)
+	if got := s.Position(StreamPresenceFederation); got != 77 {
+		t.Errorf("position = %d after the batch ended, want 77", got)
+	}
+}
+
 // orderListener records the subscriber's position at the moment it is called.
 type orderListener struct {
 	s    *Subscriber

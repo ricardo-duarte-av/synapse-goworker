@@ -430,10 +430,12 @@ type pendingRow struct {
 	detail RowDetail
 }
 
-// maxPendingBatch bounds the buffer. Synapse's batches are bounded by one
-// persistence transaction and are nowhere near this; exceeding it means the
-// row that ends the batch is never coming, which is a broken connection rather
-// than a large one. Treated as such, so the existing reconnect path recovers.
+// maxPendingBatch bounds the buffer. The batches whose rows are held are
+// bounded by one persistence transaction and are nowhere near this; exceeding
+// it means the row that ends the batch is never coming, which is a broken
+// connection rather than a large one. Treated as such, so the existing
+// reconnect path recovers. (Silent streams' rows are not held at all; one of
+// them, presence_federation, does send batches past this.)
 const maxPendingBatch = 10000
 
 func (s *Subscriber) handleRDATA(payload string) {
@@ -477,6 +479,15 @@ func (s *Subscriber) handleRDATA(payload string) {
 	// change record. Synapse buffers for the same reason:
 	// ReplicationCommandHandler._pending_batches in replication/tcp/handler.py.
 	if token == "batch" {
+		// A silent stream's rows feed nothing here but its position, which
+		// the row ending the batch carries; caches is the exception, whose
+		// rows are invalidations. Not holding them matters for
+		// presence_federation: Synapse's presence timeout sweep sends one
+		// batch of well over maxPendingBatch rows every 25 minutes, and
+		// buffering it reported a broken connection each time.
+		if silent && stream != StreamCaches {
+			return
+		}
 		s.mu.Lock()
 		s.pending[stream] = append(s.pending[stream], pendingRow{row: row, detail: detail})
 		overflow := len(s.pending[stream]) > maxPendingBatch
