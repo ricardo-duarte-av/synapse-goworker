@@ -24,6 +24,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,9 +121,8 @@ type Config struct {
 	Channel  string
 	Password string
 	DB       int
-	// InstanceName is ours, used to drop our own echo. We never publish, so
-	// nothing should ever match -- a row that does means somebody else is
-	// running under our name, which is worth saying out loud.
+	// InstanceName is ours, used to drop our own echo: rows this process's
+	// inbound path published under the same name.
 	InstanceName string
 }
 
@@ -239,6 +239,9 @@ func (s *Subscriber) Run(ctx context.Context) {
 	}
 }
 
+// errResubscribed ends a session that go-redis silently reconnected.
+var errResubscribed = errors.New("redis reconnected underneath the subscription; resyncing")
+
 func (s *Subscriber) session(ctx context.Context) (subscribed bool, err error) {
 	opts := &redis.Options{
 		Addr:     s.cfg.Address,
@@ -271,16 +274,29 @@ func (s *Subscriber) session(ctx context.Context) (subscribed bool, err error) {
 		s.onConnect()
 	}
 
-	ch := sub.Channel()
+	// ChannelWithSubscriptions rather than Channel: go-redis reconnects and
+	// resubscribes on its own, without this loop ever seeing it. Rows
+	// published while it was disconnected are then simply missing, with
+	// caches still armed and positions still trusted. A resubscribe ends the
+	// session instead, so Run goes through the same drop and reconnect as
+	// any other lost connection.
+	ch := sub.ChannelWithSubscriptions()
 	for {
 		select {
 		case <-ctx.Done():
 			return subscribed, ctx.Err()
-		case msg, ok := <-ch:
+		case ev, ok := <-ch:
 			if !ok {
 				return subscribed, nil
 			}
-			s.handleLine(msg.Payload)
+			switch v := ev.(type) {
+			case *redis.Subscription:
+				if v.Kind == "subscribe" {
+					return subscribed, errResubscribed
+				}
+			case *redis.Message:
+				s.handleLine(v.Payload)
+			}
 		}
 	}
 }
@@ -339,12 +355,10 @@ func (s *Subscriber) handleRDATA(rest string) {
 		return
 	}
 
-	// Synapse suppresses its own echo by instance name; so do we. We never
-	// publish, so a match means another worker is running under our name.
+	// Synapse suppresses its own echo by instance name; so do we. The sender
+	// never publishes, but the inbound path of this same process does
+	// (caches rows, as originup), under the same name.
 	if instance == s.cfg.InstanceName {
-		s.log.Warn().
-			Str("instance", instance).
-			Msg("saw a replication row from our own instance name; another worker is using it")
 		return
 	}
 

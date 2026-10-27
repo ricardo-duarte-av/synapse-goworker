@@ -145,8 +145,8 @@ func TestPOSITIONAdvancesTheStream(t *testing.T) {
 	}
 }
 
-// We never publish, so a row bearing our own instance name means another worker
-// is running under it -- which would double every decision we make.
+// A row bearing our own instance name is this process's own: the inbound path
+// publishes caches rows under it. It is never processed.
 func TestOurOwnInstanceNameIsIgnored(t *testing.T) {
 	s, rec := newTestSubscriber(t)
 	s.handleLine(`RDATA events av-gofederation-worker-1 5 ["ev",["$a","!r:x","m.room.message","",null,null,null,false,false]]`)
@@ -159,6 +159,8 @@ func TestOurOwnInstanceNameIsIgnored(t *testing.T) {
 	}
 }
 
+// REMOTE_SERVER_UP names no instance, so one published by this process's
+// inbound path reaches the sender like anyone else's.
 func TestRemoteServerUp(t *testing.T) {
 	s, rec := newTestSubscriber(t)
 	s.handleLine(`REMOTE_SERVER_UP matrix.org`)

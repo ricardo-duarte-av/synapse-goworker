@@ -15,7 +15,7 @@ package replication
 
 import (
 	"context"
-	"github.com/tidwall/gjson"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +23,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
+	"github.com/tidwall/gjson"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
 )
@@ -381,6 +382,9 @@ func (s *Subscriber) Run(ctx context.Context) {
 	}
 }
 
+// errResubscribed ends a session that go-redis silently reconnected.
+var errResubscribed = errors.New("redis reconnected underneath the subscription; resyncing")
+
 func (s *Subscriber) session(ctx context.Context) (subscribed bool, err error) {
 	// Own cancel, so a fault found while reading can end this session and let
 	// the Run loop build a fresh one.
@@ -415,16 +419,29 @@ func (s *Subscriber) session(ctx context.Context) (subscribed bool, err error) {
 	s.setLive(true)
 	s.log.Info().Str("channel", s.cfg.Channel).Msg("following the replication stream")
 
-	ch := pubsub.Channel()
+	// ChannelWithSubscriptions rather than Channel: go-redis reconnects and
+	// resubscribes on its own, without this loop ever seeing it. Rows
+	// published while it was disconnected are then simply missing, with
+	// caches still armed and positions still trusted. A resubscribe ends the
+	// session instead, so Run goes through the same drop and reconnect as
+	// any other lost connection.
+	ch := pubsub.ChannelWithSubscriptions()
 	for {
 		select {
 		case <-ctx.Done():
 			return subscribed, ctx.Err()
-		case msg, ok := <-ch:
+		case ev, ok := <-ch:
 			if !ok {
 				return subscribed, nil
 			}
-			s.handle(msg.Payload)
+			switch v := ev.(type) {
+			case *redis.Subscription:
+				if v.Kind == "subscribe" {
+					return subscribed, errResubscribed
+				}
+			case *redis.Message:
+				s.handle(v.Payload)
+			}
 		}
 	}
 }
