@@ -1,0 +1,66 @@
+# Route the work goworker does to its one socket.
+#
+# Each location below gives the worker one kind of work; leave one out, and
+# that work stays with Synapse's own workers. Anything that reaches goworker
+# and is not its to answer is proxied to `upstream` (main), so a location
+# broader than it needs to be costs a hop, not correctness.
+#
+# Place these BEFORE the generic /_matrix/federation/ and /_matrix/client/
+# blocks so they take precedence.
+
+upstream goworker {
+    server unix:/var/sockets/nginx/goworker.sock max_fails=0;
+    keepalive 32;
+}
+
+# In the server { } block:
+#
+#   # Federation: inbound transactions and the four read endpoints.
+#   location ~ ^/_matrix/federation/v1/(send|event|state|state_ids|get_missing_events)/ {
+#       include /data/nginx/custom/matrix-config.conf;
+#       proxy_pass http://goworker;
+#
+#       # Never let nginx rewrite the URI: the X-Matrix signature covers it,
+#       # and room and event IDs are percent-encoded in the path. proxy_pass
+#       # with no URI component passes it through unchanged.
+#       proxy_http_version 1.1;
+#       proxy_set_header Connection "";
+#
+#       # A transaction whose missing events must be fetched, and /state on
+#       # the largest room, take minutes; goworker waits up to
+#       # upstream.timeout_seconds for main when it falls back.
+#       proxy_read_timeout 200s;
+#       proxy_buffering off;
+#   }
+#
+#   # Client sync: /sync, sliding sync, and the legacy /events and
+#   # initialSync endpoints.
+#   location ~ ^/_matrix/client/(r0|v3|unstable|v2_alpha)/sync$ {
+#       include /data/nginx/custom/matrix-config.conf;
+#       proxy_pass http://goworker;
+#       proxy_http_version 1.1;
+#       proxy_set_header Connection "";
+#       # A long-poll is held for the client's timeout, up to minutes.
+#       proxy_read_timeout 600s;
+#       proxy_buffering off;
+#   }
+#   location ~ ^/_matrix/client/(unstable/org\.matrix\.simplified_msc3575|v4)/sync$ {
+#       include /data/nginx/custom/matrix-config.conf;
+#       proxy_pass http://goworker;
+#       proxy_http_version 1.1;
+#       proxy_set_header Connection "";
+#       proxy_read_timeout 600s;
+#       proxy_buffering off;
+#   }
+#   location ~ ^/_matrix/client/(api/v1|r0|v3|unstable)/(events|initialSync|rooms/[^/]+/initialSync)$ {
+#       include /data/nginx/custom/matrix-config.conf;
+#       proxy_pass http://goworker;
+#       proxy_http_version 1.1;
+#       proxy_set_header Connection "";
+#       proxy_read_timeout 600s;
+#   }
+#
+# The outbound federation sender has no location: it is made the sender by
+# naming instance_name in homeserver.yaml's federation_sender_instances.
+#
+# Rollback is pointing a location back at the Synapse workers it replaced.
