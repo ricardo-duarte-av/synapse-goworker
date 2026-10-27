@@ -11,7 +11,7 @@ import (
 )
 
 // TestLiveDeleterAgainstRealDatabase checks the one writing connection this
-// worker has: that the role is what deploy/device-inbox-role.sql describes, and
+// worker has: that the role is what deploy/roles/to-device.sql describes, and
 // that both statements of the deletion loop actually run.
 //
 // It deletes for a user id that cannot exist, so it exercises the SQL end to

@@ -42,7 +42,7 @@ var ErrUnknownPosition = errors.New("slidingstore: unknown connection position")
 // Config describes how to reach the database as the sliding sync role.
 type Config struct {
 	// DSN is a libpq connection string for the role from
-	// deploy/sliding-sync-role.sql: owner of the `gosync` schema, with no
+	// deploy/roles/sliding-sync.sql: owner of the `gosync` schema, with no
 	// access to `public` at all.
 	DSN string
 	// MaxConns bounds the pool. Zero means 8.
@@ -71,7 +71,7 @@ var schemaSQL string
 // It also checks that the role CANNOT read `public`, but reports a role that
 // can through Broad rather than refusing: some deployments have a single
 // database user and cannot create a narrow one. The narrow role from
-// deploy/sliding-sync-role.sql remains the recommendation.
+// deploy/roles/sliding-sync.sql remains the recommendation.
 func Open(ctx context.Context, cfg Config) (*Store, error) {
 	pcfg, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *Store) Created() bool { return s.created }
 //
 // Only when missing, and the schema separately from the tables: CREATE SCHEMA
 // needs CREATE on the database even with IF NOT EXISTS, which the narrow role
-// from deploy/sliding-sync-role.sql does not hold -- that script creates the
+// from deploy/roles/sliding-sync.sql does not hold -- that script creates the
 // schema for it, and this creates the tables inside it. A single shared
 // database user usually holds both.
 func (s *Store) ensureSchema(ctx context.Context) error {
@@ -160,7 +160,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		if _, err := s.pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS gosync`,
 			pgx.QueryExecModeSimpleProtocol); err != nil {
 			return fmt.Errorf("slidingstore: create schema gosync (the role needs CREATE "+
-				"on the database; otherwise run deploy/sliding-sync-role.sql): %w", err)
+				"on the database; otherwise run deploy/roles/sliding-sync.sql): %w", err)
 		}
 	}
 	// Several statements in one simple-protocol message run as one implicit
@@ -200,7 +200,7 @@ func (s *Store) checkGrants(ctx context.Context) error {
 	}
 	if !canInsert {
 		return fmt.Errorf("slidingstore: role %q cannot INSERT into "+
-			"gosync.sliding_sync_connections; run deploy/sliding-sync-role.sql", user)
+			"gosync.sliding_sync_connections; run deploy/roles/sliding-sync.sql", user)
 	}
 	if canReadPub {
 		s.broad = fmt.Sprintf("role %q can read public.events", user)

@@ -10,7 +10,7 @@
 // argument made a second time: a separate package, a separate pool, a separate
 // role that owns one schema and has nothing in `public`, and a startup check
 // that refuses a role which can see Synapse's tables at all. See
-// deploy/sliding-sync-role.sql.
+// deploy/roles/sliding-sync.sql.
 //
 // A port of synapse/handlers/sliding_sync/store.py,
 // synapse/types/handlers/sliding_sync.py and

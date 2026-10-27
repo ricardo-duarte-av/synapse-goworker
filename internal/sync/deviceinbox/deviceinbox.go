@@ -37,7 +37,7 @@ const deleteBatch = 1000
 // Config describes how to reach the database as the deleting role.
 type Config struct {
 	// DSN is a libpq connection string for a role granted SELECT and DELETE on
-	// device_inbox and nothing else. See deploy/device-inbox-role.sql.
+	// device_inbox and nothing else. See deploy/roles/to-device.sql.
 	DSN string
 	// MaxConns bounds the pool. Deletion is one statement on the sync path, so
 	// this wants to be small. Zero means 4.

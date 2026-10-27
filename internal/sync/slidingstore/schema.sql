@@ -1,5 +1,5 @@
 -- Sliding sync's per-connection state, created by slidingstore.Open when it is
--- missing. The role and the schema's ownership are deploy/sliding-sync-role.sql's
+-- missing. The role and the schema's ownership are deploy/roles/sliding-sync.sql's
 -- business; this file is only the tables, so that whichever role the worker
 -- connects as owns them.
 --
