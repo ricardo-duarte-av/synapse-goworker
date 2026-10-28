@@ -207,11 +207,8 @@ func roomInitialSync(r *http.Request, d Deps, verdict clientauth.Verdict, roomID
 		DeviceID: verdict.DeviceID,
 		IsGuest:  verdict.IsGuest,
 	}
-	// Only needed for events stored without a device_id, which are rare, so the
-	// lookup is done once per request rather than never.
-	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
-		requester.TokenID = tokenID
-	}
+	// Only needed for events stored without a device_id, which are rare.
+	requester.TokenID = verdict.TokenID
 
 	cfg := clientevent.Config{Format: clientevent.FormatV1, Requester: requester,
 		MSC4354Enabled: d.MSC4354Enabled}

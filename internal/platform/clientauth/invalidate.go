@@ -38,6 +38,7 @@ func (a *Authenticator) purge() {
 	a.tokens.Purge()
 	a.users.Purge()
 	a.devices.Purge()
+	a.ids.Purge()
 	a.whoami.purge()
 	invalidations.WithLabelValues("purge").Inc()
 }
@@ -64,12 +65,14 @@ func (a *Authenticator) handle(line string) {
 		invalidations.WithLabelValues(fn).Inc()
 		if keys.Type == gjson.Null {
 			a.tokens.Purge()
+			a.ids.Purge()
 			// The whoami cache cannot be searched by token.
 			a.whoami.purge()
 			return
 		}
 		token := keys.Get("0").String()
 		a.tokens.Remove(sha256.Sum256([]byte(token)))
+		a.ids.Remove(sha256.Sum256([]byte(token)))
 		// A guest's macaroon is never in access_tokens, but a token that
 		// /whoami answered for may be: drop its answers too.
 		a.whoami.purge()

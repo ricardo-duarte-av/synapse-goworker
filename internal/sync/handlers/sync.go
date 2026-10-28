@@ -160,9 +160,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 		DeviceID: verdict.DeviceID,
 		IsGuest:  verdict.IsGuest,
 	}
-	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
-		requester.TokenID = tokenID
-	}
+	requester.TokenID = verdict.TokenID
 	// /sync strips room_id: the room is already the key in the response.
 	cfg := clientevent.Config{
 		Format:         eventFormat(f, clientevent.FormatV2NoRoomID),

@@ -156,9 +156,7 @@ func eventStream(r *http.Request, d Deps, verdict clientauth.Verdict, ann *serve
 	if wants, err := d.Store.AdminWantsSoftFailedEvents(ctx, verdict.UserID); err == nil {
 		cfg.IncludeAdminMetadata = wants
 	}
-	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
-		cfg.Requester.TokenID = tokenID
-	}
+	cfg.Requester.TokenID = verdict.TokenID
 
 	req := eventStreamRequest{
 		userID: verdict.UserID, roomIDs: roomIDs, explicitRoom: roomID,

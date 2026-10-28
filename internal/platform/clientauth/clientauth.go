@@ -66,8 +66,8 @@ type Verdict struct {
 
 	// AppServiceID is set for an appservice's request.
 	AppServiceID string
-	// TokenID is access_tokens.id; zero for an appservice, a guest's
-	// macaroon, or a verdict from /whoami.
+	// TokenID is access_tokens.id; zero for an appservice or a guest's
+	// macaroon, as Synapse's requester has None.
 	TokenID int64
 
 	// Rejection is Synapse's refusal, when Valid is false.
@@ -145,6 +145,7 @@ type Authenticator struct {
 	tokens  *cache.LRU[[sha256.Size]byte, timed[*tokenRow]]
 	users   *cache.LRU[string, timed[userRow]]
 	devices *cache.LRU[[2]string, timed[bool]]
+	ids     *cache.LRU[[sha256.Size]byte, timed[int64]]
 	ips     *userIPs
 	repl    *bus.Consumer
 	log     zerolog.Logger
@@ -204,6 +205,8 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 			func(timed[userRow]) int64 { return 128 }),
 		devices: cache.NewLRU[[2]string, timed[bool]]("client_auth_devices", bytes/4,
 			func(timed[bool]) int64 { return 160 }),
+		ids: cache.NewLRU[[sha256.Size]byte, timed[int64]]("client_auth_token_ids", bytes/4,
+			func(timed[int64]) int64 { return 96 }),
 		repl: cfg.Replication,
 		log:  cfg.Log,
 	}
@@ -224,9 +227,16 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 			a.reason = err.Error()
 		}
 	}
-	if a.reason == "" {
+	// Under MAS there are no access_tokens rows. Otherwise the pool is
+	// wanted even when /whoami answers: it gives /whoami's yes its token's
+	// ID, which decides whose transaction_id an event shows.
+	if !cfg.Synapse.Delegated {
 		if a.pool, err = openPool(ctx, cfg); err != nil {
-			a.reason = err.Error()
+			if a.reason == "" {
+				a.reason = err.Error()
+			} else {
+				cfg.Log.Warn().Err(err).Msg("client auth: no pool; events will not show their sender's transaction_id")
+			}
 		}
 	}
 	a.native = a.reason == ""
@@ -310,7 +320,15 @@ func (a *Authenticator) authenticate(ctx context.Context, r *http.Request) (Verd
 		return Verdict{Rejection: rej, Source: SourceNative}, nil
 	}
 	if !a.native {
-		return a.whoami.authenticate(ctx, r, token)
+		v, err := a.whoami.authenticate(ctx, r, token)
+		if err == nil && v.Valid && a.pool != nil {
+			// Synapse's requester carries the token's ID; /whoami does not
+			// say it.
+			if v.TokenID, err = a.tokenID(ctx, token); err != nil {
+				return Verdict{}, err
+			}
+		}
+		return v, err
 	}
 	q := r.URL.Query()
 	ip := ClientIP(r)
@@ -521,6 +539,25 @@ func (a *Authenticator) tokenRow(ctx context.Context, token string) (*tokenRow, 
 	}
 	a.tokens.Add(key, timed[*tokenRow]{&row, time.Now()})
 	return &row, nil
+}
+
+// tokenID is access_tokens.id for a token /whoami accepted; zero for one
+// with no row (an appservice's, a guest's macaroon), as Synapse's
+// requester has None.
+func (a *Authenticator) tokenID(ctx context.Context, token string) (int64, error) {
+	key := sha256.Sum256([]byte(token))
+	if t, ok := a.ids.Get(key); ok && a.fresh(t.at) {
+		return t.v, nil
+	}
+	var id int64
+	start := time.Now()
+	err := a.pool.QueryRow(ctx, `SELECT id FROM access_tokens WHERE token = $1`, token).Scan(&id)
+	queries.WithLabelValues("token_id").Observe(time.Since(start).Seconds())
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("clientauth: token ID lookup: %w", err)
+	}
+	a.ids.Add(key, timed[int64]{id, time.Now()})
+	return id, nil
 }
 
 // markUsed is mark_access_token_as_used: the first use of a token retires

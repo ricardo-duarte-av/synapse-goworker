@@ -215,35 +215,3 @@ func scanPresence(rows pgx.Rows) ([]PresenceState, error) {
 	}
 	return out, nil
 }
-
-// AccessTokenID resolves an access token to its `access_tokens.id`.
-//
-// Used only to decide whether `unsigned.transaction_id` is revealed, for events
-// stored without a device_id. This is NOT authentication -- see docs/auth.md
-// for why that is done by asking Synapse -- and a token absent from the table
-// (delegated auth, appservice) is not an error here, just an unknown id.
-// Cached without invalidation: a token's row id is assigned once and never
-// changes. A logout deletes the row, and this cache would then keep answering
-// -- which is harmless, because the id is used only to stamp
-// `unsigned.transaction_id` on the caller's own events. It is not an
-// authorisation decision; that is internal/auth's cache, with its own TTL.
-func (s *Store) AccessTokenID(ctx context.Context, token string) (int64, error) {
-	if id, ok := s.derived.accessToken.Get(token); ok {
-		return id, nil
-	}
-	id, err := s.accessTokenID(ctx, token)
-	if err != nil {
-		return 0, err
-	}
-	s.derived.accessToken.Add(token, id)
-	return id, nil
-}
-
-func (s *Store) accessTokenID(ctx context.Context, token string) (int64, error) {
-	const q = `SELECT id FROM access_tokens WHERE token = $1`
-	var id int64
-	if err := s.queryRow(ctx, "AccessTokenID", q, token).Scan(&id); err != nil {
-		return 0, nil
-	}
-	return id, nil
-}

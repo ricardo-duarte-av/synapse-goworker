@@ -74,9 +74,8 @@ const (
 
 type derivedCaches struct {
 	// Immutable: no invalidation needed, only purging.
-	userFilter  *lru.Cache[string, []byte]
-	roomInfo    *lru.Cache[string, RoomInfo]
-	accessToken *lru.Cache[string, int64]
+	userFilter *lru.Cache[string, []byte]
+	roomInfo   *lru.Cache[string, RoomInfo]
 
 	// Invalidated over replication, and guarded by the horizon.
 	roomSummary  *lru.Cache[string, MemberSummary]
@@ -107,7 +106,6 @@ func newDerivedCaches(cfg Config) *derivedCaches {
 	return &derivedCaches{
 		userFilter:   lru.New[string, []byte](size(cfg.UserFilterCacheEntries, 5000)),
 		roomInfo:     lru.New[string, RoomInfo](size(cfg.RoomInfoCacheEntries, 20000)),
-		accessToken:  lru.New[string, int64](size(cfg.AccessTokenCacheEntries, 20000)),
 		roomSummary:  lru.New[string, MemberSummary](size(cfg.RoomSummaryCacheEntries, 20000)),
 		historyVis:   lru.New[string, string](size(cfg.HistoryVisibilityCacheEntries, 20000)),
 		ignoredUsers: lru.New[string, map[string]bool](size(cfg.IgnoredUsersCacheEntries, 5000)),
@@ -211,7 +209,6 @@ func (s *Store) DisarmDerivedCaches() {
 func (d *derivedCaches) setArmed(armed bool) {
 	d.userFilter.SetArmed(armed)
 	d.roomInfo.SetArmed(armed)
-	d.accessToken.SetArmed(armed)
 	d.roomSummary.SetArmed(armed)
 	d.historyVis.SetArmed(armed)
 	d.ignoredUsers.SetArmed(armed)
@@ -263,7 +260,6 @@ func (s *Store) PurgeDerivedCaches() {
 	}
 	d.userFilter.Purge()
 	d.roomInfo.Purge()
-	d.accessToken.Purge()
 	d.roomSummary.Purge()
 	d.historyVis.Purge()
 	d.ignoredUsers.Purge()
@@ -279,7 +275,6 @@ func (s *Store) DerivedCacheStats() map[string]lru.Stats {
 	return map[string]lru.Stats{
 		"user_filter":        d.userFilter.Stats(),
 		"room_info":          d.roomInfo.Stats(),
-		"access_token":       d.accessToken.Stats(),
 		"room_summary":       d.roomSummary.Stats(),
 		"history_visibility": d.historyVis.Stats(),
 		"ignored_users":      d.ignoredUsers.Stats(),

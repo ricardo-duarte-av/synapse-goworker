@@ -66,7 +66,6 @@ type Caches struct {
 	// cache without disabling the rest.
 	UserFilterCacheSize        int `yaml:"user_filter_cache_size"`
 	RoomInfoCacheSize          int `yaml:"room_info_cache_size"`
-	AccessTokenCacheSize       int `yaml:"access_token_cache_size"`
 	RoomSummaryCacheSize       int `yaml:"room_summary_cache_size"`
 	HistoryVisibilityCacheSize int `yaml:"history_visibility_cache_size"`
 	IgnoredUsersCacheSize      int `yaml:"ignored_users_cache_size"`

@@ -69,7 +69,6 @@ type Config struct {
 	// split into immutable and replication-invalidated.
 	UserFilterCacheEntries        int
 	RoomInfoCacheEntries          int
-	AccessTokenCacheEntries       int
 	RoomSummaryCacheEntries       int
 	HistoryVisibilityCacheEntries int
 	IgnoredUsersCacheEntries      int

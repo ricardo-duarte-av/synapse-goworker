@@ -267,7 +267,8 @@ func throwaway(t *testing.T) (dsn string, conn *pgx.Conn) {
 			(2, '@alice:example.org', 'OLD', 'expired_tok', 1000, NULL, true),
 			(3, '@locked:example.org', 'L', 'locked_tok', NULL, NULL, true),
 			(4, '@admin:example.org', NULL, 'puppet_tok', NULL, '@alice:example.org', true),
-			(5, '@alice:example.org', 'LATER', 'future_tok', 99999999999999, NULL, false)`,
+			(5, '@alice:example.org', 'LATER', 'future_tok', 99999999999999, NULL, false),
+			(6, '@alice:example.org', 'W', 'whoami_tok', NULL, NULL, true)`,
 		`INSERT INTO devices (user_id, device_id, hidden) VALUES
 			('@bridge_1:example.org', 'BRIDGEDEV', false), ('@bridge_1:example.org', 'HIDDEN', true)`,
 	} {
@@ -296,8 +297,12 @@ func newFixture(t *testing.T, ca synapsecfg.ClientAuth) fixture {
 	calls := 0
 	synapse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Header.Get("Authorization") == "Bearer guest_macaroon" {
+		switch r.Header.Get("Authorization") {
+		case "Bearer guest_macaroon":
 			_, _ = w.Write([]byte(`{"user_id":"@guest:example.org","device_id":"guest_device","is_guest":true}`))
+			return
+		case "Bearer whoami_tok":
+			_, _ = w.Write([]byte(`{"user_id":"@alice:example.org","device_id":"W"}`))
 			return
 		}
 		w.WriteHeader(401)
@@ -319,8 +324,8 @@ func newFixture(t *testing.T, ca synapsecfg.ClientAuth) fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.Close)
-	if ok, why := a.Native(); !ok {
-		t.Fatalf("not native: %s", why)
+	if ok, why := a.Native(); ok == (ca != synapsecfg.ClientAuth{}) {
+		t.Fatalf("native %v (%s) for %+v", ok, why, ca)
 	}
 	return fixture{a: a, conn: conn, pub: pub, whoami: &calls}
 }
@@ -488,5 +493,22 @@ func TestNotNativeWhenSynapseDefersElsewhere(t *testing.T) {
 			t.Errorf("%+v: native", ca)
 		}
 		a.Close()
+	}
+}
+
+// Not native, /whoami decides; the token's ID still comes from
+// access_tokens, as Synapse's requester has it.
+func TestWhoamiVerdictsCarryTheTokenID(t *testing.T) {
+	f := newFixture(t, synapsecfg.ClientAuth{AccountValidity: true})
+	v := f.auth(t, "/sync", "whoami_tok")
+	if !v.Valid || v.Source != SourceWhoami || v.TokenID != 6 {
+		t.Fatalf("%+v", v)
+	}
+	// A macaroon has no row: None, as in Synapse.
+	if v := f.auth(t, "/sync", "guest_macaroon"); !v.Valid || v.TokenID != 0 {
+		t.Fatalf("%+v", v)
+	}
+	if *f.whoami != 2 {
+		t.Fatalf("/whoami asked %d times", *f.whoami)
 	}
 }

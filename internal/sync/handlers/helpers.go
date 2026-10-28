@@ -289,17 +289,3 @@ func applyUnreadCounts(entry map[string]any, notifs store.RoomNotifCounts,
 		entry["org.matrix.msc3773.unread_thread_notifications"] = threads
 	}
 }
-
-// accessTokenID is the requester's access_token_id, which decides whose
-// transaction_id an event carries. A native verdict has it; one from /whoami
-// is looked up.
-func accessTokenID(ctx context.Context, d Deps, r *http.Request, verdict clientauth.Verdict) (int64, error) {
-	if verdict.TokenID != 0 || verdict.Source == clientauth.SourceNative {
-		return verdict.TokenID, nil
-	}
-	token, rej := clientauth.TokenFromRequest(r)
-	if rej != nil {
-		return 0, nil
-	}
-	return d.Store.AccessTokenID(ctx, token)
-}

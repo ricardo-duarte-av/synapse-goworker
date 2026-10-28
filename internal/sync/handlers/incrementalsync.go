@@ -94,9 +94,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 	requester := clientevent.Requester{
 		UserID: verdict.UserID, DeviceID: verdict.DeviceID, IsGuest: verdict.IsGuest,
 	}
-	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
-		requester.TokenID = tokenID
-	}
+	requester.TokenID = verdict.TokenID
 	cfg := clientevent.Config{
 		Format:         eventFormat(f, clientevent.FormatV2NoRoomID),
 		Requester:      requester,

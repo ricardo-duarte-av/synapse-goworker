@@ -97,9 +97,7 @@ func initialSync(r *http.Request, d Deps, verdict clientauth.Verdict) ([]byte, i
 		DeviceID: verdict.DeviceID,
 		IsGuest:  verdict.IsGuest,
 	}
-	if tokenID, err := accessTokenID(ctx, d, r, verdict); err == nil {
-		requester.TokenID = tokenID
-	}
+	requester.TokenID = verdict.TokenID
 
 	accountDataByRoom, err := d.Store.AllRoomAccountData(ctx, verdict.UserID, d.MSC3391Enabled)
 	if err != nil {

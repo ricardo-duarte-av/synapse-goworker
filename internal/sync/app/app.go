@@ -97,7 +97,6 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 
 		UserFilterCacheEntries:        c.UserFilterCacheSize,
 		RoomInfoCacheEntries:          c.RoomInfoCacheSize,
-		AccessTokenCacheEntries:       c.AccessTokenCacheSize,
 		RoomSummaryCacheEntries:       c.RoomSummaryCacheSize,
 		HistoryVisibilityCacheEntries: c.HistoryVisibilityCacheSize,
 		IgnoredUsersCacheEntries:      c.IgnoredUsersCacheSize,

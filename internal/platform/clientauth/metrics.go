@@ -17,7 +17,7 @@ var (
 	}, []string{"verdict", "source"})
 	queries = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "goworker_client_auth_query_seconds",
-		Help:    "Database round trips made to authenticate, by query (token, user, device, mark_used).",
+		Help:    "Database round trips made to authenticate, by query (token, user, device, mark_used, and token_id for /whoami's yes when not native).",
 		Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, 1},
 	}, []string{"query"})
 	invalidations = promauto.NewCounterVec(prometheus.CounterOpts{
