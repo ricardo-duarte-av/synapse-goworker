@@ -195,6 +195,9 @@ type Options struct {
 	ProfileWriterInstance string
 	MSC4069               bool
 	SyncPropagation       bool
+	// IncludeProfileUpdatesInSync is homeserver.yaml's: without it a null
+	// profile field is refused (v1.164).
+	IncludeProfileUpdatesInSync bool
 	// Delayed is delayed events' settings.
 	Delayed synapsecfg.Delayed
 	// Policy asks rooms' policy servers to sign events (MSC4284); nil
@@ -430,15 +433,23 @@ func (c *Creator) serve(w http.ResponseWriter, r *http.Request, req route.Reques
 	return out
 }
 
-// parseDelay is _parse_request_for_delayed_event_delay.
-func parseDelay(q map[string][]string, in *input) *stop {
+// parseDelay is _parse_request_for_delayed_event_delay: any integer, then
+// refused when delayed events are off (msc4140_enabled), then when not
+// positive.
+func parseDelay(q map[string][]string, in *input, enabled bool) *stop {
 	v, ok := q[DelayParam]
 	if !ok || len(v) == 0 {
 		return nil
 	}
-	n, st := parseIntegerParam(DelayParam, v[0])
-	if st != nil {
+	n, st := parseSignedIntegerParam(DelayParam, v[0])
+	switch {
+	case st != nil:
 		return st
+	case !enabled:
+		// _raise_delayed_events_unsupported.
+		return forbidden("delayed_disabled", "Sending delayed events is disabled on this homeserver").stop()
+	case n <= 0:
+		return badRequest("bad_param", "Query parameter "+DelayParam+" must be an integer greater than zero.", "M_INVALID_PARAM").stop()
 	}
 	in.delayMS = &n
 	return nil
@@ -502,10 +513,13 @@ func (c *Creator) parse(ctx context.Context, req route.Request, rq *requester, b
 				if s != nil {
 					return nil, s
 				}
+				if n == 0 {
+					return nil, badRequest("bad_param", StickyParam+" must be strictly positive", "M_INVALID_PARAM").stop()
+				}
 				in.sticky = &n
 			}
 		}
-		if st := parseDelay(q, in); st != nil {
+		if st := parseDelay(q, in, c.o.Delayed.Enabled()); st != nil {
 			return nil, st
 		}
 		if req.Action == "m.room.member" && in.delayMS == nil {
@@ -520,7 +534,7 @@ func (c *Creator) parse(ctx context.Context, req route.Request, rq *requester, b
 		}
 		sk := req.StateKey
 		in.stateKey, in.txn = &sk, ""
-		if st := parseDelay(q, in); st != nil {
+		if st := parseDelay(q, in, c.o.Delayed.Enabled()); st != nil {
 			return nil, st
 		}
 	case route.Redact:
@@ -822,49 +836,9 @@ func (c *Creator) prepare(ctx context.Context, req route.Request, rq *requester,
 		}
 	}
 
-	depths, err := c.o.Store.Depths(ctx, prevs)
-	if err != nil || len(depths) != len(prevs) {
-		return nil, "", fb("db_error")
-	}
-	prevDepths := make([]int64, len(prevs))
-	for i, id := range prevs {
-		prevDepths[i] = depths[id]
-	}
-	proto := &pdu.Event{Type: in.typ, Sender: rq.UserID, RoomID: req.Room, StateKey: in.stateKey, Content: content, Room: rv}
-	authIDs, err := pdu.ComputeAuthEvents(rv, proto, before)
-	if err != nil {
-		return nil, "", fb("auth_events")
-	}
-	ts := c.o.Now().UnixMilli()
-	originTS := ts
-	if in.originTS != nil {
-		originTS = *in.originTS
-	}
-	bp := build.Proto{
-		RoomVersion:      id.RoomVersion(rvID),
-		RoomID:           req.Room,
-		Sender:           rq.UserID,
-		Type:             in.typ,
-		StateKey:         in.stateKey,
-		Content:          jsontext.Value(in.content),
-		Redacts:          in.redacts,
-		PrevEvents:       prevs,
-		AuthEvents:       authIDs,
-		Depth:            build.Depth(prevDepths),
-		OriginServerTS:   originTS,
-		StickyDurationMS: in.sticky,
-	}
-	if rv.EventFormat == pdu.FormatV1V2 {
-		// builder.py: the origin picks the event ID, and each prev and auth
-		// event is listed with its reference hash (add_event_hashes).
-		bp.EventID = build.NewV1EventID(ts, c.o.Key.ServerName)
-		if bp.RefHashes, err = c.refHashes(ctx, rv, prevs, authIDs); err != nil {
-			return nil, "", fb("ref_hashes")
-		}
-	}
-	built, err := build.Build(bp, c.o.Key)
-	if err != nil {
-		return nil, "", fb("build")
+	built, ts, st := c.buildEvent(ctx, rv, rvID, req.Room, rq, in, content, prevs, before)
+	if st != nil {
+		return nil, "", st
 	}
 
 	// calculate_context_info: a state event replacing another says so.
@@ -935,6 +909,57 @@ func (c *Creator) prepare(ctx context.Context, req route.Request, rq *requester,
 
 	return &prepared{req: req, in: in, rq: rq, rv: rv, ev: ev, built: built, ts: ts, group: sb.group,
 		sb: sb, before: before, replaces: replaces, maxStream: maxStream, push: rows}, "", nil
+}
+
+// buildEvent is create_new_client_event's build: depth, auth events and
+// prev events at the state before, signed. ts is the time it was built at.
+func (c *Creator) buildEvent(ctx context.Context, rv *pdu.RoomVersion, rvID, room string, rq *requester, in *input,
+	content gjson.Result, prevs []string, before pdu.StateMap) (*build.Event, int64, *stop) {
+	depths, err := c.o.Store.Depths(ctx, prevs)
+	if err != nil || len(depths) != len(prevs) {
+		return nil, 0, fb("db_error")
+	}
+	prevDepths := make([]int64, len(prevs))
+	for i, id := range prevs {
+		prevDepths[i] = depths[id]
+	}
+	proto := &pdu.Event{Type: in.typ, Sender: rq.UserID, RoomID: room, StateKey: in.stateKey, Content: content, Room: rv}
+	authIDs, err := pdu.ComputeAuthEvents(rv, proto, before)
+	if err != nil {
+		return nil, 0, fb("auth_events")
+	}
+	ts := c.o.Now().UnixMilli()
+	originTS := ts
+	if in.originTS != nil {
+		originTS = *in.originTS
+	}
+	bp := build.Proto{
+		RoomVersion:      id.RoomVersion(rvID),
+		RoomID:           room,
+		Sender:           rq.UserID,
+		Type:             in.typ,
+		StateKey:         in.stateKey,
+		Content:          jsontext.Value(in.content),
+		Redacts:          in.redacts,
+		PrevEvents:       prevs,
+		AuthEvents:       authIDs,
+		Depth:            build.Depth(prevDepths),
+		OriginServerTS:   originTS,
+		StickyDurationMS: in.sticky,
+	}
+	if rv.EventFormat == pdu.FormatV1V2 {
+		// builder.py: the origin picks the event ID, and each prev and auth
+		// event is listed with its reference hash (add_event_hashes).
+		bp.EventID = build.NewV1EventID(ts, c.o.Key.ServerName)
+		if bp.RefHashes, err = c.refHashes(ctx, rv, prevs, authIDs); err != nil {
+			return nil, 0, fb("ref_hashes")
+		}
+	}
+	built, err := build.Build(bp, c.o.Key)
+	if err != nil {
+		return nil, 0, fb("build")
+	}
+	return built, ts, nil
 }
 
 // tooLarge is EventSizeError: 413 M_TOO_LARGE.

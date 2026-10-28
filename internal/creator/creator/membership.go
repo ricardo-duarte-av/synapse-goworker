@@ -140,7 +140,7 @@ func (c *Creator) serveMembership(w http.ResponseWriter, r *http.Request, req ro
 			return c.end(w, st)
 		}
 		ts = probe.originTS
-		if st := parseDelay(q, probe); st != nil {
+		if st := parseDelay(q, probe, c.o.Delayed.Enabled()); st != nil {
 			return c.end(w, st)
 		}
 		if probe.delayMS != nil {

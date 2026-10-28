@@ -90,6 +90,15 @@ func parseJSONObject(body []byte, allowEmpty bool) ([]byte, *stop) {
 // parseIntegerParam is parse_integer for an optional, non-negative query
 // parameter, given as present.
 func parseIntegerParam(name, value string) (int64, *stop) {
+	n, st := parseSignedIntegerParam(name, value)
+	if st == nil && n < 0 {
+		return 0, badRequest("bad_param", "Query parameter "+name+" must be a positive integer.", "M_INVALID_PARAM").stop()
+	}
+	return n, st
+}
+
+// parseSignedIntegerParam is parse_integer with negative=True.
+func parseSignedIntegerParam(name, value string) (int64, *stop) {
 	n, ok, exact := pyIntBytes(value)
 	switch {
 	case !ok:
@@ -97,8 +106,6 @@ func parseIntegerParam(name, value string) (int64, *stop) {
 	case !exact:
 		// Beyond int64.
 		return 0, fb("bad_param")
-	case n < 0:
-		return 0, badRequest("bad_param", "Query parameter "+name+" must be a positive integer.", "M_INVALID_PARAM").stop()
 	}
 	return n, nil
 }

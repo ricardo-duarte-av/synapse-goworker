@@ -80,15 +80,15 @@ func TestDelayedSettings(t *testing.T) {
 }
 
 func TestProfileWriterAndRedactionPeriod(t *testing.T) {
-	cfg := mustParse(t, "server_name: example.org\nredaction_allowed_period: 7d\nstream_writers:\n  events: [p1, p2]\ninstance_map:\n  p1: {host: a, port: 1}\n  p2: {host: b, port: 2}\n")
+	cfg := mustParse(t, "server_name: example.org\nredaction_allowed_period: 7d\ninclude_profile_updates_in_sync: true\nstream_writers:\n  events: [p1, p2]\ninstance_map:\n  p1: {host: a, port: 1}\n  p2: {host: b, port: 2}\n")
 	if got := cfg.Writers.ProfileWriter(); got != "p1" {
 		t.Errorf("profile writer %q, want the first events writer", got)
 	}
-	if !cfg.RedactionAllowedPeriod {
-		t.Error("redaction_allowed_period is set")
+	if !cfg.RedactionAllowedPeriod || !cfg.IncludeProfileUpdatesInSync {
+		t.Error("redaction_allowed_period and include_profile_updates_in_sync are set")
 	}
 	cfg = mustParse(t, "server_name: example.org\n")
-	if got := cfg.Writers.ProfileWriter(); got != MainProcessInstanceName || cfg.RedactionAllowedPeriod {
-		t.Errorf("defaults: %q, %v", got, cfg.RedactionAllowedPeriod)
+	if got := cfg.Writers.ProfileWriter(); got != MainProcessInstanceName || cfg.RedactionAllowedPeriod || cfg.IncludeProfileUpdatesInSync {
+		t.Errorf("defaults: %q, %v, %v", got, cfg.RedactionAllowedPeriod, cfg.IncludeProfileUpdatesInSync)
 	}
 }

@@ -848,7 +848,7 @@ func ConfigFor(hs *synapsecfg.Config) (Config, error) {
 			MSC3664:              hs.Flag("msc3664_enabled", false),
 			MSC4028EncryptedPush: hs.Flag("msc4028_push_encrypted_events", false),
 			MSC4075:              hs.Flag("msc4075_enabled", false),
-			MSC4210:              hs.Flag("msc4210_enabled", false),
+			MSC4210:              hs.Flag("msc4210_enabled", true),
 			MSC4306:              hs.Flag("msc4306_enabled", false),
 		},
 	}, nil

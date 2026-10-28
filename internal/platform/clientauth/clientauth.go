@@ -31,6 +31,7 @@
 package clientauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -92,8 +93,12 @@ func reject(status int, errcode, msg string, extra map[string]any) *Rejection {
 	for k, v := range extra {
 		m[k] = v
 	}
-	b, _ := json.Marshal(m)
-	return &Rejection{Status: status, ErrCode: errcode, Body: b}
+	// As Synapse's json encoder writes it: "<", ">" and "&" unescaped.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(m)
+	return &Rejection{Status: status, ErrCode: errcode, Body: bytes.TrimSuffix(buf.Bytes(), []byte("\n"))}
 }
 
 // Synapse's refusals, word for word (api/errors.py, api/auth/).

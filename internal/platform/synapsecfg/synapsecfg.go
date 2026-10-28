@@ -141,6 +141,10 @@ type Config struct {
 	// _check_redaction_allowed_period).
 	RedactionAllowedPeriod bool
 
+	// IncludeProfileUpdatesInSync is include_profile_updates_in_sync
+	// (default false): a profile field may then be set to null.
+	IncludeProfileUpdatesInSync bool
+
 	// Membership is what update_membership reads.
 	Membership Membership
 
@@ -188,7 +192,8 @@ type raw struct {
 	SigningKey     string `yaml:"signing_key"`
 	SigningKeyPath string `yaml:"signing_key_path"`
 
-	RedactionAllowedPeriod any `yaml:"redaction_allowed_period"`
+	RedactionAllowedPeriod      any  `yaml:"redaction_allowed_period"`
+	IncludeProfileUpdatesInSync bool `yaml:"include_profile_updates_in_sync"`
 
 	InstanceMap map[string]struct {
 		Path string `yaml:"path"`
@@ -296,7 +301,7 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 
 	cfg := &Config{Path: path, ServerName: r.ServerName, signingKey: r.SigningKey, signingKeyPath: r.SigningKeyPath,
-		RedactionAllowedPeriod: r.RedactionAllowedPeriod != nil}
+		RedactionAllowedPeriod: r.RedactionAllowedPeriod != nil, IncludeProfileUpdatesInSync: r.IncludeProfileUpdatesInSync}
 
 	var err error
 	if cfg.InstanceMap, err = instanceMap(r); err != nil {

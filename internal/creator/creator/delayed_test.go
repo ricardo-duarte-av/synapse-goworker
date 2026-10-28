@@ -58,7 +58,14 @@ func TestDelayedRefusals(t *testing.T) {
 		"too long": {"/state/m.room.topic/", "?org.matrix.msc4140.delay=86400001", `{"topic":"x"}`, stateReq,
 			`400 {"errcode":"ORG.MATRIX.MSC4140_DELAY_TOO_LARGE","error":"The requested delay (86400001ms) exceeds the allowed maximum (86400000ms)"}`},
 		"negative": {"/state/m.room.topic/", "?org.matrix.msc4140.delay=-1", `{"topic":"x"}`, stateReq,
-			`400 {"errcode":"M_INVALID_PARAM","error":"Query parameter org.matrix.msc4140.delay must be a positive integer."}`},
+			`400 {"errcode":"M_INVALID_PARAM","error":"Query parameter org.matrix.msc4140.delay must be an integer greater than zero."}`},
+		"zero": {"/state/m.room.topic/", "?org.matrix.msc4140.delay=0", `{"topic":"x"}`, stateReq,
+			`400 {"errcode":"M_INVALID_PARAM","error":"Query parameter org.matrix.msc4140.delay must be an integer greater than zero."}`},
+		"not an integer": {"/state/m.room.topic/", "?org.matrix.msc4140.delay=x", `{"topic":"x"}`, stateReq,
+			`400 {"errcode":"M_INVALID_PARAM","error":"Query parameter org.matrix.msc4140.delay must be an integer"}`},
+		"sticky zero": {"/send/m.room.message/s0", "?org.matrix.msc4354.sticky_duration_ms=0", `{"body":"x"}`,
+			route.Request{Endpoint: route.Send, Write: true, Room: room, Action: "m.room.message", TxnID: "s0"},
+			`400 {"errcode":"M_INVALID_PARAM","error":"org.matrix.msc4354.sticky_duration_ms must be strictly positive"}`},
 		"bad topic": {"/state/m.room.topic/", "?org.matrix.msc4140.delay=1", `{"topic":1}`, stateReq,
 			`400 {"errcode":"M_UNKNOWN","error":"'topic' not a string type"}`},
 		"member without membership": {"/state/m.room.member/" + user, "?org.matrix.msc4140.delay=1", `{"displayname":"x"}`, memberReq,
@@ -89,5 +96,61 @@ func TestDelayedRefusals(t *testing.T) {
 	}
 	if row := h.w.delayed[0]; *row.StateKey != user || row.Content != `{"membership":"leave"}` {
 		t.Errorf("%+v", row)
+	}
+}
+
+// Delayed events off (msc4140_enabled false): the parameter is refused
+// before anything else of the event is looked at; without it, nothing
+// changes.
+func TestDelayedDisabled(t *testing.T) {
+	h := newHarness(t)
+	h.c.o.Delayed.MaxDelayMS = 0
+	stateReq := route.Request{Endpoint: route.State, Write: true, Room: room, Action: "m.room.topic"}
+	rec, out := h.delayed(t, "/state/m.room.topic/", "?org.matrix.msc4140.delay=-1", "", `{"topic":1}`, stateReq)
+	if got := itoaStatus(rec.Code) + " " + rec.Body.String(); out.Refused != "delayed_disabled" ||
+		got != `403 {"errcode":"M_FORBIDDEN","error":"Sending delayed events is disabled on this homeserver"}` {
+		t.Errorf("%+v %s", out, got)
+	}
+	if _, out := h.delayed(t, "/state/m.room.topic/", "", "", `{"topic":"x"}`, stateReq); out.Result != "created" {
+		t.Errorf("without delay: %+v", out)
+	}
+}
+
+// v1.164: a delayed event that could not be sent now is refused, in the
+// auth rules' words, and nothing is stored. A change to one's own
+// membership is not judged until it is sent.
+func TestDelayedMustBeSendableNow(t *testing.T) {
+	h := newHarness(t)
+	h.f.addState(t, "m.room.power_levels", "", `{"users":{"`+other+`":100},"state_default":50}`)
+	stateReq := route.Request{Endpoint: route.State, Write: true, Room: room, Action: "m.room.topic"}
+	rec, out := h.delayed(t, "/state/m.room.topic/", "?org.matrix.msc4140.delay=1000", "", `{"topic":"x"}`, stateReq)
+	if out.Result != "refused" || rec.Code != 403 ||
+		rec.Body.String() != `{"errcode":"M_FORBIDDEN","error":"You don't have permission to post that to the room. user_level (0) < send_level (50)"}` {
+		t.Errorf("%+v %d %s", out, rec.Code, rec.Body)
+	}
+	if len(h.w.delayed) != 0 || len(h.main.delayed) != 0 {
+		t.Errorf("stored %v, main told %v", h.w.delayed, h.main.delayed)
+	}
+
+	memberReq := route.Request{Endpoint: route.State, Write: true, Room: room, Action: "m.room.member", StateKey: user}
+	if _, out := h.delayed(t, "/state/m.room.member/"+user, "?org.matrix.msc4140.delay=1000", "", `{"membership":"leave"}`, memberReq); out.Result != "delayed" {
+		t.Errorf("own leave: %+v", out)
+	}
+
+	// A message is still allowed (events_default is 0).
+	sendReq := route.Request{Endpoint: route.Send, Write: true, Room: room, Action: "m.room.message", TxnID: "ok1"}
+	if _, out := h.delayed(t, "/send/m.room.message/ok1", "?org.matrix.msc4140.delay=1000", "", `{"msgtype":"m.text","body":"x"}`, sendReq); out.Result != "delayed" {
+		t.Errorf("message: %+v", out)
+	}
+}
+
+// create_event's refusal of a suspended requester, which add now reaches.
+func TestDelayedSuspended(t *testing.T) {
+	h := newHarness(t)
+	h.f.token.Suspended = true
+	sendReq := route.Request{Endpoint: route.Send, Write: true, Room: room, Action: "m.room.message", TxnID: "su1"}
+	rec, out := h.delayed(t, "/send/m.room.message/su1", "?org.matrix.msc4140.delay=1000", "", `{"msgtype":"m.text","body":"x"}`, sendReq)
+	if out.Result != "refused" || rec.Code != 403 || !strings.Contains(rec.Body.String(), "Sending messages while account is suspended is not allowed.") {
+		t.Errorf("%+v %d %s", out, rec.Code, rec.Body)
 	}
 }

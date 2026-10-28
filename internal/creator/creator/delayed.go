@@ -16,12 +16,14 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/writer"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // Delayed events (MSC4140): DelayedEventsHandler.add (handlers/
-// delayed_events.py, v1.163.0) on a worker. The row is written here; main,
+// delayed_events.py, v1.164.1) on a worker. The row is written here; main,
 // which schedules delayed events, is told the next send time and sends the
-// event when it is due.
+// event when it is due. Since v1.164 an event that could not be sent now is
+// refused rather than stored (sendableNow).
 
 // addDelayed is add, answered with {"delay_id"}.
 func (c *Creator) addDelayed(ctx context.Context, w http.ResponseWriter, rq *requester, in *input, delayMS int64, txnKey string) Outcome {
@@ -30,15 +32,19 @@ func (c *Creator) addDelayed(ctx context.Context, w http.ResponseWriter, rq *req
 		return out
 	}
 	d := c.o.Delayed
-	if !d.Enabled() {
-		return c.refuse(w, forbidden("delayed_disabled", "Sending delayed events has been disallowed"))
-	}
 	if delayMS > d.MaxDelayMS {
 		return c.refuse(w, badRequest("delay_too_large", fmt.Sprintf(
 			"The requested delay (%dms) exceeds the allowed maximum (%dms)", delayMS, d.MaxDelayMS), "ORG.MATRIX.MSC4140_DELAY_TOO_LARGE"))
 	}
 	if st := validateBuilder(in, gjson.ParseBytes(in.content), in.room); st != nil {
 		return c.end(w, st)
+	}
+	// A change to one's own membership (a delayed leave) is left to the
+	// auth rules when it is sent.
+	if !(in.typ == "m.room.member" && in.stateKey != nil && *in.stateKey == rq.UserID) {
+		if st := c.sendableNow(ctx, rq, in); st != nil {
+			return c.end(w, st)
+		}
 	}
 	var content stdbytes.Buffer
 	if err := json.Compact(&content, in.content); err != nil {
@@ -158,4 +164,102 @@ func writeJSON(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// sendableNow is what add asks of a delayed event since v1.164: create_event
+// (handlers/message.py), then check_auth_rules_from_context, against the room
+// as it is now. Nothing is stored; the event is built only to be judged.
+func (c *Creator) sendableNow(ctx context.Context, rq *requester, in *input) *stop {
+	content := gjson.ParseBytes(in.content)
+	// create_event: a suspended requester.
+	if rq.Suspended {
+		switch in.typ {
+		case "m.room.redaction":
+			// event_dict["content"]["redacts"]: a KeyError when absent.
+			target, ok := pdu.Field(content, "redacts")
+			switch {
+			case !ok:
+				return internalError("suspended").stop()
+			case target.Type != gjson.String:
+				return fb("suspended")
+			}
+			if st := c.suspendedRedaction(ctx, rq, target.Str); st != nil {
+				return st
+			}
+		case "m.room.member":
+			m, ok := pdu.Field(content, "membership")
+			if !ok {
+				return internalError("suspended").stop()
+			}
+			if m.Type != gjson.String || m.Str != "leave" {
+				return userSuspended("Changing membership while account is suspended is not allowed.").stop()
+			}
+		default:
+			return userSuspended("Sending messages while account is suspended is not allowed.").stop()
+		}
+	}
+	switch {
+	case in.typ == "m.room.redaction" && c.o.RedactionAllowedPeriod:
+		// _check_redaction_allowed_period.
+		return fb("redaction_period")
+	case in.typ == "m.room.aliases":
+		// require_membership_for_aliases, not reproduced.
+		return fb("aliases")
+	}
+	rvID, err := c.o.Store.RoomVersion(ctx, in.room)
+	if err != nil {
+		return fb("unknown_room")
+	}
+	rv, ok := pdu.LookupRoomVersion(rvID)
+	if !ok {
+		return fb("room_version")
+	}
+	if partial, err := c.o.Store.PartialState(ctx, in.room); err != nil {
+		return fb("db_error")
+	} else if partial {
+		return fb("partial_state")
+	}
+
+	// create_new_client_event.
+	prevs, err := c.o.Store.PrevEventsForRoom(ctx, in.room)
+	if err != nil {
+		return fb("db_error")
+	}
+	if len(prevs) == 0 {
+		return fb("prev_events_0")
+	}
+	if in.typ == "m.room.create" {
+		if in.stateKey != nil {
+			return badRequest("type_create", "Cannot resend m.room.create event", "M_INVALID_PARAM").stop()
+		}
+		return fb("type_create")
+	}
+	sb, st := c.resolveStateBefore(ctx, in.room, rv, prevs)
+	if st != nil {
+		return st
+	}
+	built, _, st := c.buildEvent(ctx, rv, rvID, in.room, rq, in, content, prevs, sb.state)
+	if st != nil {
+		return st
+	}
+	if in.typ == "m.call.invite" {
+		if public, err := c.publicRoom(ctx, sb.state); err != nil {
+			return fb("db_error")
+		} else if public {
+			return forbidden("call_invite_public", "Call invites are not allowed in public rooms.").stop()
+		}
+	}
+	// create_event: validate_new.
+	if st := c.validateNew(in, in.content, content); st != nil {
+		return st
+	}
+
+	ev, err := pdu.ParseEvent(built.JSON, built.ID, rv, false)
+	if err != nil {
+		return fb("build")
+	}
+	if err := c.checkAuth(ctx, ev); err != nil {
+		return c.authRefusal(err)
+	}
+	return nil
 }

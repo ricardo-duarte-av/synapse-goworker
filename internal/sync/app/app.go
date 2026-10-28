@@ -198,7 +198,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 			MSC3381PollsEnabled:        flag("msc3381_polls_enabled", false),
 			MSC3664Enabled:             flag("msc3664_enabled", false),
 			MSC4028PushEncryptedEvents: flag("msc4028_push_encrypted_events", false),
-			MSC4210Enabled:             flag("msc4210_enabled", false),
+			MSC4210Enabled:             flag("msc4210_enabled", true), // Synapse 1.164: on unless set off
 			MSC4306Enabled:             flag("msc4306_enabled", false),
 		},
 	}

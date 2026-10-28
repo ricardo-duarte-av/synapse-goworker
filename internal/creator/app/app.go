@@ -163,6 +163,8 @@ func New(ctx context.Context, s Settings) (*App, error) {
 		ProfileWriter:         repl,
 		ProfileWriterInstance: hs.Writers.ProfileWriter(),
 		MSC4069:               hs.Flag("msc4069_profile_inhibit_propagation", false),
+
+		IncludeProfileUpdatesInSync: hs.IncludeProfileUpdatesInSync,
 	}
 	// Our own table, which profile propagations survive restarts in. Without
 	// it, profile writes are main's.

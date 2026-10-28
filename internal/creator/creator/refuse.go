@@ -1,6 +1,7 @@
 package creator
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -61,7 +62,7 @@ func (c *Creator) refuse(w http.ResponseWriter, f *refusal) Outcome {
 		for k, v := range f.extra {
 			body[k] = v
 		}
-		b, _ = json.Marshal(body)
+		b = synapseJSON(body)
 	}
 	for k, v := range f.headers {
 		w.Header().Set(k, v)
@@ -89,6 +90,18 @@ func authRefusal(rej *clientauth.Rejection) *refusal {
 		reason = "auth_" + strings.ToLower(rej.ErrCode)
 	}
 	return &refusal{reason: reason, status: rej.Status, errcode: rej.ErrCode, raw: rej.Body}
+}
+
+// synapseJSON encodes a response body as Synapse's json encoder does:
+// "<", ">" and "&" as they are. encoding/json would write "\u003c", so a
+// refusal holding "user_level (0) < send_level (50)" differed from
+// Synapse's byte for byte.
+func synapseJSON(v any) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 }
 
 // The refusals get_user_by_req makes (api/errors.py, api/auth/internal.py).

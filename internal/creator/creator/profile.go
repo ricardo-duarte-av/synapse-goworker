@@ -148,6 +148,10 @@ func (c *Creator) serveProfile(w http.ResponseWriter, r *http.Request, req route
 		if !v.Exists() {
 			return c.refuse(w, badRequest("missing_key", "Missing key '"+field+"'", "M_MISSING_PARAM"))
 		}
+		if v.Type == gjson.Null && !c.o.IncludeProfileUpdatesInSync {
+			// "Servers MAY reject null values."
+			return c.refuse(w, badRequest("null_value", "'"+field+"' cannot be `null`.", "M_INVALID_PARAM"))
+		}
 		value = json.RawMessage(v.Raw)
 	}
 	propagate, st := c.readPropagate(r)

@@ -185,6 +185,7 @@ func TestProfileRefusals(t *testing.T) {
 		"long field":  {"PUT", profilePath + strings.Repeat("a", 256), `{}`, 400, "M_KEY_TOO_LARGE", "Field name too long"},
 		"grammar":     {"PUT", profilePath + "Tz", `{}`, 400, "M_INVALID_PARAM", "Field name does not follow Common Namespaced Identifier Grammar"},
 		"missing key": {"PUT", profilePath + "displayname", `{"avatar_url":"x"}`, 400, "M_MISSING_PARAM", "Missing key 'displayname'"},
+		"null value":  {"PUT", profilePath + "m.status", `{"m.status":null}`, 400, "M_INVALID_PARAM", "'m.status' cannot be `null`."},
 		"not json":    {"PUT", profilePath + "displayname", `nope`, 400, "M_NOT_JSON", "Content not JSON."},
 		"bad boolean": {"PUT", profilePath + "displayname?org.matrix.msc4069.propagate=yes", `{"displayname":"x"}`, 400, "M_INVALID_PARAM", "Boolean query parameter 'org.matrix.msc4069.propagate' must be one of ['true', 'false']"},
 	} {
@@ -199,8 +200,15 @@ func TestProfileRefusals(t *testing.T) {
 		}
 	}
 
-	// Suspended: after everything else.
+	// With include_profile_updates_in_sync a null goes to the writer.
 	h, p := profileHarness(t)
+	h.c.o.IncludeProfileUpdatesInSync = true
+	if _, out := h.profile(t, "PUT", profilePath+"m.status", `{"m.status":null}`); out.Refused != "" || len(p.calls) != 1 {
+		t.Errorf("null with profile updates in sync: %+v %v", out, p.calls)
+	}
+
+	// Suspended: after everything else.
+	h, p = profileHarness(t)
 	h.f.token.Suspended = true
 	rec, _ := h.profile(t, "PUT", profilePath+"displayname", `{"displayname":"x"}`)
 	if rec.Code != 403 || gjson.Get(rec.Body.String(), "errcode").Str != "M_USER_SUSPENDED" || len(p.calls) != 0 {
