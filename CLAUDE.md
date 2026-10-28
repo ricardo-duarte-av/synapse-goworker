@@ -1,7 +1,7 @@
 # Working on synapse-goworker
 
-The merge of gosync, goinbound, gofederation and gopro into one process.
-README.md says what it is. This file is for what is not derivable from the
+The merge of gosync, goinbound, gofederation, gopro and goevent-creator into
+one process. README.md says what it is. This file is for what is not derivable from the
 code.
 
 The approved plan is in
@@ -10,32 +10,38 @@ The approved plan is in
 ## Where things are
 
 - Synapse source: `/home/daedric/synapse`. Port against the deployed tag
-  (`git show v1.164.0:<path>`), not the checkout, which runs ahead. On
-  2026-10-27 matrixbridg.es ran 1.164.0 and aguiarvieira.pt 1.163.2; check
+  (`git show v1.164.1:<path>`), not the checkout, which runs ahead. On
+  2026-10-28 aguiarvieira.pt ran 1.164.1 and matrixbridg.es 1.164.0; the
+  creator is ported against v1.164.1 (sync is not yet: MSC4222's stable
+  `use_state_after` and the `state_after` fixes, TODO.md); check
   with `docker exec <synapse container> python -c 'import synapse;
   print(synapse.__version__)'` and diff the tags for what you port.
-- The four workers being merged, and their working notes, which hold the traps
+- The five workers merged, and their working notes, which hold the traps
   and measurements behind nearly every rule. Read the relevant one before
   porting from it:
   - `/home/daedric/synapse-gosync-worker` (CLAUDE.md, docs/)
   - `/home/daedric/synapse-goinbound-worker` (CLAUDE.md)
   - `/home/daedric/synapse-gofederation-worker` (CLAUDE.md, docs/)
   - `/home/daedric/synapse-gopro-worker` (CLAUDE.md, 2,000 lines; §4–§9)
-- Later: `/home/daedric/synapse-goevent-creator`.
+  - `/home/daedric/synapse-goevent-creator` (its notes are carried over in
+    `docs/creator.md`; the fake policy server stays there)
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
+| `cmd/goworker` | main: one config, five components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
 | `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go` so far), which hand back to main what they do not reproduce (`Deps.Fallback`) |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
 | `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |
+| `internal/creator` | goevent-creator, as `app.New` + `Handler` + `Run`; its writes matched on the escaped path ahead of the client mux (`app.Match`); `docs/creator.md` holds its notes |
+| `cmd/goevent-e2e` | the creator's live suite, in its test rooms only |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
 | `grafana/goworker.json` | the dashboard: every metric has a panel; edit in Grafana, export over the file; `grafana/dashboard_test.go` checks it |
 | `docs/cutover.md` | moving a homeserver over |
+| `docs/creator.md` | the event creator's facts, traps and suite, from goevent-creator |
 
 ## Shared, and deliberately not shared
 
@@ -46,7 +52,12 @@ replication consumer), and other servers' published keys (`platform/fedauth`
 `Keys`, which /send and the federation reads verify with; it reads
 server_keys_json through whichever component's pool offers first). Before the
 keys were shared, fedread's copy of fedauth lacked inbound's 2026-10-17 fixes
-and refused requests Synapse accepted.
+and refused requests Synapse accepted. Since phase 7 also the event code
+inbound and the creator had each copied (`pdu`, `pdustore`, `stateres`,
+`push`, `acl`, `appservice`, `fedclient`, `replication`): the copies had
+diverged both ways (the creator's exact auth error texts, inbound's
+canonical escapes and key fixes), and two `pdustore`s registered the same
+metrics.
 
 Still per component, on purpose:
 
@@ -68,7 +79,14 @@ Still per component, on purpose:
 - **Database pools** (operator, 2026-10-27): one DSN, but a pool per part
   and use, so one part cannot take another's connections (an initial sync
   the sender's). Each read pool is sized on its own (`database.pools.
-  sync_read`, `federation_reads_read`, `sender_read`; unset takes `read`).
+  sync_read`, `federation_reads_read`, `sender_read`, `creator_read`; unset
+  takes `read`).
+- **Push evaluation**: inbound's `pduverify` checks persisted events against
+  a snapshot, the creator's `pushcalc` computes rows for an event it builds.
+  Same algorithm, different framing; not merged yet (TODO.md). A change to
+  `bulk_push_rule_evaluator` goes into both.
+- **clientauth's registration parser**: its own, with the RE2 quirks
+  (`quoteSafe`); `platform/appservice` is the creator's and inbound's.
 
 ## Decisions that are easy to undo by accident
 
@@ -91,6 +109,15 @@ Still per component, on purpose:
   stop the worker starting.
 - **No shadow, canary or compare modes.** Every endpoint is native. Proxying to
   main exists only as the fallback for what we do not reproduce.
+- **The event creator serves every room and every endpoint** (phase 7,
+  operator, 2026-10-28). goevent-creator's room allowlist, per-endpoint
+  modes and shadow mode existed only for its testing and were not ported;
+  its live config was already `rooms: all`, every mode native. It writes as
+  Synapse's user through pgcat, not as its old `goevent_creator` role. Its
+  one table, `goevent_profile_propagations`, is created at start; a
+  propagation it holds is resumed by whichever process starts with the
+  creator, so goevent-creator and goworker's creator must never run side by
+  side (docs/cutover.md). See docs/creator.md before changing it.
 - **mautrix-go first** (operator, 2026-10-26). Use it wherever it matches
   Synapse. Our own code stays only where Synapse and the spec diverge, with
   the divergence written down next to it (goinbound's `event_auth.py` port,
@@ -101,7 +128,7 @@ Still per component, on purpose:
 - **Main is the last resort.** It is single-threaded and busy; the fallback
   share should shrink, never grow.
 - **Metric names keep their component prefixes** (gosync_, goinbound_,
-  gofed_, gopro_), so Prometheus history and alerts continue across the
+  gofed_, gopro_, goevent_), so Prometheus history and alerts continue across the
   cutover; only whole-process metrics are goworker_. grafana/README.md has
   what changed.
 - **instance_name is new, not an old worker's.** Two processes publishing

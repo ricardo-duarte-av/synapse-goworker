@@ -1,6 +1,6 @@
 # synapse-goworker
 
-One Go process for the Synapse work that four separate Go workers did:
+One Go process for the Synapse work that five separate Go workers did:
 
 | Work | Was | Endpoints |
 |---|---|---|
@@ -8,6 +8,7 @@ One Go process for the Synapse work that four separate Go workers did:
 | Inbound federation | [synapse-goinbound-worker](https://github.com/ricardo-duarte-av/synapse-goinbound-worker) | `PUT /_matrix/federation/v1/send/{txnId}` |
 | Federation reads | [synapse-gopro-worker](https://github.com/ricardo-duarte-av/synapse-gopro-worker) | `/_matrix/federation/v1/{event,state,state_ids,get_missing_events}` |
 | Outbound federation | [synapse-gofederation-worker](https://github.com/ricardo-duarte-av/synapse-gofederation-worker) | none; sends transactions |
+| Event creation | [synapse-goevent-creator](https://github.com/ricardo-duarte-av/synapse-goevent-creator) | `rooms/{id}/send`, `/state`, `/redact`, the membership verbs, `join/`, `knock/`, `profile/` (writes) |
 
 The old repositories are the archive: their history, their docs and the
 measurements behind each decision stay there.
@@ -25,10 +26,10 @@ There is no setting that turns parts of the worker on or off.
 
 ## Status
 
-All four are ported and served by one process from one config file
-(`deploy/goworker.example.yaml`). Each component still has its own Redis
-subscriber, caches and homeserver.yaml reader; sharing those is the next
-step.
+All five are ported and served by one process from one config file
+(`deploy/goworker.example.yaml`), sharing one Redis subscription, one
+homeserver.yaml reader, one access-token check and one state cache. The
+event creator's notes are in [docs/creator.md](docs/creator.md).
 
 ## Running
 

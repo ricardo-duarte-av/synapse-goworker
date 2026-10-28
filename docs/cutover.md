@@ -1,6 +1,6 @@
 # Moving a homeserver onto goworker
 
-goworker can start next to the four old workers and take their work one
+goworker can start next to the old workers and take their work one
 piece at a time, because what it does is decided by nginx and
 homeserver.yaml, not by its own config. Until a location points at its
 socket it serves nothing; until homeserver.yaml names it, it sends nothing.
@@ -64,6 +64,34 @@ Each step is independent and reversible by undoing it.
 
    To move it back, reverse the list in homeserver.yaml, restart main, and
    start gofederation.
+
+5. **Event creation** (phase 7, aguiarvieira.pt first). goworker's creator
+   is the goevent-creator that ran there, every endpoint native, every room.
+   In one step:
+   - **stop `av-goevent-creator-1`** before (or as) goworker with the
+     creator starts: both would resume the same unfinished profile
+     propagations from `goevent_profile_propagations` at start;
+   - deploy goworker, and check `goworker_degraded{capability="creator"}`
+     is 0 and its log has no "event creator unavailable";
+   - point the seven event-creation locations in `proxy_host/2.conf`
+     (`rooms/.*/redact`, `send`, `state/`, the membership verbs, `join/`,
+     `knock/`, `profile/`) at goworker's upstream, and drop the
+     `$av_room_state_upstream` map from `http_top.conf`: GET and PUT under
+     `/state/` both go to goworker now. Check with
+     `docker exec npm-npm-1 nginx -t`, then reload.
+
+   Watch "Event creator" on the dashboard: `goevent_native_verify_total`
+   mismatches at 0, fallbacks by reason against goevent-creator's last day,
+   and run `cmd/goevent-e2e` in the test rooms. Then remove the
+   `av-goevent-creator` upstream (before the container: see "Afterwards")
+   and the container. The `goevent_creator` database role is unused and can
+   be dropped with the old workers' roles; `goevent_profile_propagations`
+   stays.
+
+   On matrixbridg.es nothing changes until its nginx sends those paths.
+
+   To move it back, point the locations at main (or start goevent-creator
+   again and point them at it).
 
 ## Afterwards
 

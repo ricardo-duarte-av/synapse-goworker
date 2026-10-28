@@ -60,21 +60,29 @@ upstream goworker {
 #       proxy_read_timeout 600s;
 #   }
 #
-#   # Room state: GET /rooms/{id}/state and /rooms/{id}/state/{type}/{key}.
-#   # GET only: a PUT is an event to create, and goes where it went (main,
-#   # or the event creator), so the upstream is chosen by method. This map
-#   # belongs in the http block:
-#   #
-#   #   map $request_method $room_state_upstream {
-#   #       GET     goworker;
-#   #       HEAD    goworker;
-#   #       default main;             # or the event creator's upstream
-#   #   }
-#   location ~ ^/_matrix/client/(api/v1|r0|v3|unstable)/rooms/[^/]+/state(/|$) {
+#   # Event creation: send, state, redact, the membership verbs, join/,
+#   # knock/ and profile/ (the seven patterns Synapse's event_creator
+#   # worker took). goworker matches the writes against Synapse's own
+#   # servlet patterns and forwards anything else, reads included, to main
+#   # or its own client routes. A remote join it hands to main can take
+#   # minutes: upstream.timeout_seconds (300) bounds it.
+#   location ~ ^/_matrix/client/(api/v1|r0|v3|unstable)/(rooms/[^/]+/(send|redact|join|invite|leave|ban|unban|kick)|join/|knock/|profile/) {
 #       include /data/nginx/custom/matrix-config.conf;
-#       proxy_pass http://$room_state_upstream;
+#       proxy_pass http://goworker;
 #       proxy_http_version 1.1;
 #       proxy_set_header Connection "";
+#       proxy_read_timeout 330s;
+#   }
+#
+#   # Room state: a PUT is an event to create, a GET is
+#   # GET /rooms/{id}/state[/{type}/{key}] (sync's roomstate); goworker
+#   # answers both, so no map by method is needed any more.
+#   location ~ ^/_matrix/client/(api/v1|r0|v3|unstable)/rooms/[^/]+/state(/|$) {
+#       include /data/nginx/custom/matrix-config.conf;
+#       proxy_pass http://goworker;
+#       proxy_http_version 1.1;
+#       proxy_set_header Connection "";
+#       proxy_read_timeout 330s;
 #   }
 #
 # The outbound federation sender has no location: it is made the sender by

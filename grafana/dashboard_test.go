@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-var metricName = regexp.MustCompile(`\b((?:gosync|goinbound|gofed|gopro|goworker)_[a-z0-9_]+)`)
+var metricName = regexp.MustCompile(`\b((?:gosync|goinbound|gofed|gopro|goevent|goworker)_[a-z0-9_]+)`)
 
 type panel struct {
 	ID         int             `json:"id"`
@@ -91,10 +91,10 @@ func base(m string) string {
 // plus Name; and a quoted prefix joined to desc("suffix", ...) calls.
 func registered(t *testing.T) map[string]bool {
 	t.Helper()
-	quoted := regexp.MustCompile(`"((?:gosync|goinbound|gofed|gopro|goworker)_[a-z0-9_]*[a-z0-9])"`)
+	quoted := regexp.MustCompile(`"((?:gosync|goinbound|gofed|gopro|goevent|goworker)_[a-z0-9_]*[a-z0-9])"`)
 	namespace := regexp.MustCompile(`Namespace:\s*"gopro"`)
 	name := regexp.MustCompile(`Name:\s*"([a-z0-9_]+)"`)
-	prefix := regexp.MustCompile(`"((?:gosync|goinbound|gofed|gopro|goworker)_[a-z0-9_]*_)"\s*\+`)
+	prefix := regexp.MustCompile(`"((?:gosync|goinbound|gofed|gopro|goevent|goworker)_[a-z0-9_]*_)"\s*\+`)
 	desc := regexp.MustCompile(`desc\("([a-z0-9_]+)"`)
 	names := map[string]bool{}
 	for _, dir := range []string{"../internal", "../cmd"} {
@@ -128,7 +128,17 @@ func registered(t *testing.T) map[string]bool {
 			t.Fatal(err)
 		}
 	}
+	for n := range notMetrics {
+		delete(names, n)
+	}
 	return names
+}
+
+// notMetrics are quoted names with a metric's prefix that are something
+// else.
+var notMetrics = map[string]bool{
+	// The event creator's own table in Synapse's database.
+	"goevent_profile_propagations": true,
 }
 
 // TestEveryQueriedMetricExists: a renamed or removed metric leaves its panel

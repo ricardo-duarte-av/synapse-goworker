@@ -2,9 +2,9 @@
 
 Import `goworker.json` into Grafana with a Prometheus data source. That is all.
 
-It has every panel of the four dashboards it replaces (gosync, goinbound,
-gofederation, gopro), less the shadow, canary and mode panels whose metrics
-are gone, plus the process-wide rows and a panel for each metric none of them
+It has every panel of the dashboards it replaces (gosync, goinbound,
+gofederation, gopro, goevent-creator), less the shadow, canary and mode
+panels whose metrics are gone, plus the process-wide rows and a panel for each metric none of them
 showed. A part of the worker that nginx or homeserver.yaml gives no work
 shows empty panels; nothing is hidden or switched off.
 
@@ -34,13 +34,14 @@ traffic per part, share answered here vs. by main, replication, limits),
 Memory & limits, Replication bus, and Process & Go runtime. Then each part's
 rows from its old dashboard, titled by part ("Client sync: Traffic",
 "Inbound federation: Write mode", "Federation reads: Caches", "Outbound
-federation: Queues and delivery", ...), each ending in an "other metrics" row
-for what its old dashboard did not show.
+federation: Queues and delivery", "Event creator: Native", ...), each ending
+in an "other metrics" row for what its old dashboard did not show (the event
+creator's three rows hold all of its metrics).
 
 ## Metric names
 
 Each part keeps the prefix it had as a separate worker (`gosync_`,
-`goinbound_`, `gofed_`, `gopro_`), so Prometheus history continues across
+`goinbound_`, `gofed_`, `gopro_`, `goevent_`), so Prometheus history continues across
 the cutover and existing alerts keep working. Only what is about the whole
 process is new: `goworker_build_info`, `goworker_memory_limit_bytes`,
 `goworker_limit_*{limit}`, `goworker_bus_*` (the one replication
@@ -58,6 +59,9 @@ Changed in the merge:
 | `gofed_shadow_*` | gone |
 | `goinbound_edus_total{path,...}`, `goinbound_receipt_rooms_removed_by_acl_total{path}` | the same without `path`, which was always `native` once shadow went |
 | `gopro_state_prev_content_emitted_total` | gone: it measured a blind spot of the shadow's /state digest, which is no longer computed |
+| `goevent_shadow_*`, `goevent_mode_info` | gone with shadow mode and modes (phase 7) |
+| `goevent_user_ip_total` | gone: USER_IP is clientauth's now, for every part |
+| `goevent_requests_total{room}` | every room ID is `allowlisted`, as it was under goevent-creator's `rooms: all`; there is no allowlist |
 
 The process collectors (`go_*`, `process_*`) carry no label of ours, so every
 panel using them joins on `goworker_build_info`; a host runs many exporters
