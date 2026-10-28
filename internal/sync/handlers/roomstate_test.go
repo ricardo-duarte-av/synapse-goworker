@@ -123,13 +123,21 @@ func newStateFixture(t *testing.T) *stateFixture {
 	ev(r, "$carol", "m.room.member", "@carol:example.org", "@alice:example.org", `{"membership":"invite"}`)
 	ev(r, "$davejoin", "m.room.member", "@dave:example.org", "@dave:example.org", `{"membership":"join"}`)
 	ev(r, "$daveleave", "m.room.member", "@dave:example.org", "@dave:example.org", `{"membership":"leave"}`)
-	exec(`INSERT INTO redactions (event_id, redacts) VALUES ('$redact', '$name')`)
+	ev(r, "$redact2", "m.room.redaction", "-", "@alice:example.org", `{"redacts":"$name"}`)
+	// Two redactions of $name: Synapse takes the first row its unordered
+	// SELECT returns -- the one inserted first -- not the earliest event.
+	exec(`INSERT INTO redactions (event_id, redacts, recheck) VALUES ('$redact2', '$name', false), ('$redact', '$name', false)`)
+	// MSC4293: mallory's ban redacts what mallory sent.
+	ev(r, "$malstate", "x.mallory", "", "@mallory:example.org", `{"spam":true}`)
+	ev(r, "$malban", "m.room.member", "@mallory:example.org", "@alice:example.org", `{"membership":"ban","reason":"spam"}`)
+	exec(`INSERT INTO room_ban_redactions (room_id, user_id, redacting_event_id) VALUES ($1, '@mallory:example.org', '$malban')`, r)
 
 	current := map[[2]string]string{
 		{"m.room.create", ""}: "$create", {"m.room.member", "@alice:example.org"}: "$alice",
 		{"m.room.history_visibility", ""}: "$hv", {"m.room.member", "@bob:example.org"}: "$bobleave",
 		{"m.room.topic", ""}: "$topic2", {"m.room.name", ""}: "$name",
 		{"m.room.member", "@carol:example.org"}: "$carol", {"m.room.member", "@dave:example.org"}: "$daveleave",
+		{"x.mallory", ""}: "$malstate", {"m.room.member", "@mallory:example.org"}: "$malban",
 	}
 	for k, id := range current {
 		exec(`INSERT INTO current_state_events (event_id, room_id, type, state_key) VALUES ($1, $2, $3, $4)`,
@@ -246,7 +254,8 @@ func TestRoomState(t *testing.T) {
 		code, body := f.get(t, "alice", base)
 		got := ids(t, body)
 		sort.Strings(got)
-		want := sorted("$create", "$alice", "$hv", "$bobleave", "$topic2", "$name", "$carol", "$daveleave")
+		want := sorted("$create", "$alice", "$hv", "$bobleave", "$topic2", "$name", "$carol", "$daveleave",
+			"$malstate", "$malban")
 		if code != 200 || fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Fatalf("%d %v; want %v", code, got, want)
 		}
@@ -273,6 +282,26 @@ func TestRoomState(t *testing.T) {
 		code, body := f.get(t, "alice", base+"/m.room.name")
 		if code != 200 || string(body) != `{}` {
 			t.Fatalf("%d %s", code, body)
+		}
+		_, body = f.get(t, "alice", base+"/m.room.name?format=event")
+		var e struct {
+			Unsigned struct {
+				RedactedBy string `json:"redacted_by"`
+			} `json:"unsigned"`
+		}
+		_ = json.Unmarshal(body, &e)
+		if e.Unsigned.RedactedBy != "$redact2" {
+			t.Fatalf("redacted by %q, want $redact2, the first row: %s", e.Unsigned.RedactedBy, body)
+		}
+	})
+	t.Run("MSC4293: redacted by a ban", func(t *testing.T) {
+		code, body := f.get(t, "alice", base+"/x.mallory")
+		if code != 200 || string(body) != `{}` {
+			t.Fatalf("%d %s", code, body)
+		}
+		_, body = f.get(t, "alice", base+"/x.mallory?format=event")
+		if !strings.Contains(string(body), `"redacted_by":"$malban"`) {
+			t.Fatalf("%s", body)
 		}
 	})
 	t.Run("left: the state at the leave", func(t *testing.T) {

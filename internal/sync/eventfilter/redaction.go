@@ -24,6 +24,12 @@ func AttachRedaction(stored *clientevent.Stored, redactions map[string]store.Red
 		return nil
 	}
 	eventID, roomID, eventType, body, meta := r.RedactionEvent()
+	stored.RedactedBy = r.EventID
+	if len(body) == 0 {
+		// Redacted, by an event the serialiser could not load: no
+		// redacted_because, as Synapse has none to give.
+		return nil
+	}
 	because, err := clientevent.Serialize(clientevent.Stored{
 		EventID: eventID, RoomID: roomID, Type: eventType,
 		JSON: body, InternalMetadata: meta, RoomVersion: stored.RoomVersion,

@@ -212,3 +212,11 @@ ALTER TABLE ONLY public.partial_state_rooms
     ADD CONSTRAINT partial_state_rooms_join_event_id_fkey FOREIGN KEY (join_event_id) REFERENCES public.events(event_id);
 ALTER TABLE ONLY public.partial_state_rooms
     ADD CONSTRAINT partial_state_rooms_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(room_id);
+CREATE TABLE public.room_ban_redactions (
+    room_id text NOT NULL,
+    user_id text NOT NULL,
+    redacting_event_id text NOT NULL,
+    redact_end_ordering bigint
+);
+ALTER TABLE ONLY public.room_ban_redactions
+    ADD CONSTRAINT room_ban_redaction_uniqueness UNIQUE (room_id, user_id);
