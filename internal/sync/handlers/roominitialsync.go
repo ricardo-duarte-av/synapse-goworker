@@ -76,6 +76,9 @@ type Deps struct {
 	ServerName string
 	// ExcludedRooms are rooms configured never to appear in a sync.
 	ExcludedRooms map[string]bool
+	// Fallback is Synapse's main process, for a request a handler finds it
+	// does not reproduce.
+	Fallback http.Handler
 }
 
 // defaultPaginationLimit is Synapse's PaginationConfig default for the legacy

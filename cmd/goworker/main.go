@@ -196,6 +196,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Sliding:        syncapp.Pool{DSN: dsn, MaxConns: pools.SlidingSync},
 		ConnectTimeout: db.ConnectTimeout(),
 		Auth:           clientAuth,
+		Fallback:       fallback(upstream),
 		Replication:    consumer("sync"),
 		States:         states,
 		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),

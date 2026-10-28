@@ -50,6 +50,9 @@ type Settings struct {
 
 	// Auth authenticates every request (platform/clientauth).
 	Auth *clientauth.Authenticator
+	// Fallback is Synapse's main process, for a request a handler hands
+	// back.
+	Fallback http.Handler
 
 	// States is the worker's one state cache; sync uses its event -> state
 	// group entries.
@@ -177,6 +180,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		MSC4308Enabled:      flag("msc4308_enabled", false),
 		ServerName:          cfg.Synapse.Current().ServerName,
 		Auth:                cfg.Auth,
+		Fallback:            cfg.Fallback,
 		Log:                 log,
 		MSC4354Enabled:      flag("msc4354_enabled", false),
 		MSC3391Enabled:      flag("msc3391_enabled", false),
@@ -203,6 +207,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		InitialSync:     handlers.InitialSync(deps),
 		Events:          handlers.Events(deps),
 		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
+		RoomState:       handlers.RoomState(deps),
 	}
 	if s.sliding != nil {
 		s.routes.SlidingSync = handlers.SlidingSync(deps)

@@ -29,7 +29,7 @@ The approved plan is in
 |---|---|
 | `cmd/goworker` | main: one config, four components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
 | `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits` |
-| `internal/sync` | gosync, as `app.New` + `Register` |
+| `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go` so far), which hand back to main what they do not reproduce (`Deps.Fallback`) |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
 | `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |

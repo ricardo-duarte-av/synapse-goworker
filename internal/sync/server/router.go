@@ -32,6 +32,10 @@ type Routes struct {
 	// makes it 404 as M_UNRECOGNIZED -- exactly what a client probing for it
 	// should see when it is not configured.
 	SlidingSync http.Handler
+	// RoomState serves /rooms/{roomId}/state and
+	// /rooms/{roomId}/state/{eventType}[/{stateKey}], GET only: a PUT is
+	// Synapse's.
+	RoomState http.Handler
 }
 
 // slidingSyncPaths are the two paths MSC4186 defines.
@@ -82,6 +86,14 @@ func Register(mux *http.ServeMux, routes Routes, wrap func(http.Handler) http.Ha
 	if routes.Sync != nil {
 		for _, v := range modernVersions {
 			handle("GET", "/_matrix/client/"+v+"/sync", routes.Sync)
+		}
+	}
+	if routes.RoomState != nil {
+		for _, v := range legacyVersions {
+			// The handler matches the raw path as Synapse does; a path it
+			// does not match it hands back.
+			handle("GET", "/_matrix/client/"+v+"/rooms/{roomId}/state", routes.RoomState)
+			handle("GET", "/_matrix/client/"+v+"/rooms/{roomId}/state/{rest...}", routes.RoomState)
 		}
 	}
 	if routes.SlidingSync != nil {
