@@ -4,7 +4,7 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 func sk(t, k string) pdu.StateKey { return pdu.StateKey{Type: t, StateKey: k} }

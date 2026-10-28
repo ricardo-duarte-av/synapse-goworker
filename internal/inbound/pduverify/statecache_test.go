@@ -3,7 +3,7 @@ package pduverify
 import (
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 func TestDiffAfterOverlay(t *testing.T) {

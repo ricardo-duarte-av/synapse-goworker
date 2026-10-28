@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // State groups, as the inbound worker stores them

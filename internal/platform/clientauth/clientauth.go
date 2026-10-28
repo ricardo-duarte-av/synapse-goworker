@@ -66,6 +66,10 @@ type Verdict struct {
 
 	// AppServiceID is set for an appservice's request.
 	AppServiceID string
+	// Entity is Synapse's authenticated_entity: the token's own user,
+	// UserID's puppeteer for a puppet token. Empty in /whoami's verdicts,
+	// which do not say.
+	Entity string
 	// TokenID is access_tokens.id; zero for an appservice or a guest's
 	// macaroon, as Synapse's requester has None.
 	TokenID int64
@@ -375,6 +379,7 @@ func (a *Authenticator) authenticate(ctx context.Context, r *http.Request) (Verd
 		DeviceID: row.deviceID,
 		IsGuest:  row.isGuest,
 		TokenID:  row.tokenID,
+		Entity:   row.tokenOwner,
 		Source:   SourceNative,
 	}
 	a.record(r, token, ip, v, row.tokenOwner)
@@ -458,7 +463,7 @@ func (a *Authenticator) appServiceUser(ctx context.Context, as *appService, q ur
 					deviceID, userID), nil)}, nil
 		}
 	}
-	return Verdict{Valid: true, UserID: userID, DeviceID: deviceID, AppServiceID: as.id, Source: SourceNative}, nil
+	return Verdict{Valid: true, UserID: userID, DeviceID: deviceID, AppServiceID: as.id, Entity: userID, Source: SourceNative}, nil
 }
 
 // record is _record_request: USER_IP for the entity that authenticated, and

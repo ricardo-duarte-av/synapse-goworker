@@ -23,7 +23,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // Answer is a SynapseError as the federation resource sends it.

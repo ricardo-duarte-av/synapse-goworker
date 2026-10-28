@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/stateres"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
 )
 
 // Outcomes, in increasing order of interest.

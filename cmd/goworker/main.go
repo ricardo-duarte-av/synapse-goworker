@@ -1,7 +1,8 @@
 // Command goworker is one Go process for the Synapse work that
-// gosync-worker, goinbound-worker, gofederation-worker and gopro-worker did
-// separately: client /sync, inbound federation /send, the federation read
-// endpoints, and the outbound federation sender.
+// gosync-worker, goinbound-worker, gofederation-worker, gopro-worker and
+// goevent-creator did separately: client /sync, inbound federation /send,
+// the federation read endpoints, the outbound federation sender, and the
+// client endpoints that create room events.
 //
 // It has no switches for which of those it does. It serves whatever nginx
 // routes to it, proxying anything else to Synapse's main process, and it
@@ -26,6 +27,7 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 
+	creatorapp "github.com/ricardo-duarte-av/synapse-goworker/internal/creator/app"
 	fedreadapp "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
@@ -256,6 +258,26 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		send = inbound.Handler()
 	}
 
+	creator, err := creatorapp.New(ctx, creatorapp.Settings{
+		Synapse:        hs,
+		Upstream:       upstream,
+		Auth:           clientAuth,
+		DSN:            dsn,
+		ReadMaxConns:   pools.CreatorRead,
+		WriteMaxConns:  pools.CreatorWrite,
+		ConnectTimeout: db.ConnectTimeout(),
+		Log:            componentLogger(log, cfg.Log, "creator"),
+	})
+	var createEvents http.Handler
+	if err != nil {
+		// Degraded, not down: the event-creation paths then go to main.
+		degraded.WithLabelValues("creator").Set(1)
+		log.Warn().Err(err).Msg("event creator unavailable; its paths are proxied to main")
+	} else {
+		closers = append(closers, creator.Close)
+		createEvents = creator.Handler()
+	}
+
 	sender, err := senderapp.New(ctx, senderapp.Settings{
 		InstanceName:              cfg.InstanceName,
 		Synapse:                   hs,
@@ -285,11 +307,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	client := http.NewServeMux()
 	clientSync.Register(client)
 	router := &httpserve.Router{
-		Send:       send,
-		Reads:      reads.Handler(),
-		ReadsMatch: func(p string) bool { _, ok := fedapi.Match(p); return ok },
-		Client:     client,
-		Fallback:   fallback(upstream),
+		Send:         send,
+		Reads:        reads.Handler(),
+		ReadsMatch:   func(p string) bool { _, ok := fedapi.Match(p); return ok },
+		Creator:      createEvents,
+		CreatorMatch: creatorapp.Match,
+		Client:       client,
+		Fallback:     fallback(upstream),
 	}
 
 	mode, _ := cfg.Listen.ParsedSocketMode() // validated at load
@@ -316,6 +340,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	g.Go(func() error { return clientSync.Run(gctx) })
 	g.Go(func() error { return reads.Run(gctx) })
 	g.Go(func() error { return sender.Run(gctx) })
+	if creator != nil {
+		g.Go(func() error { return creator.Run(gctx) })
+	}
 	g.Go(func() error {
 		watchHomeserver(gctx, src, sender, log)
 		return gctx.Err()

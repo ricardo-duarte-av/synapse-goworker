@@ -11,8 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/acl"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/edutype"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/acl"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/edutype"
 )
 
 // EDU is one EDU of a transaction. Content is always a JSON object: the

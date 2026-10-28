@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 

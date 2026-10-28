@@ -15,7 +15,7 @@ import (
 
 	"maunium.net/go/mautrix/crypto/canonicaljson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // keyResponse is a /_matrix/key/v2/server body for server, signed by priv.

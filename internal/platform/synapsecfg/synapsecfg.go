@@ -136,6 +136,20 @@ type Config struct {
 	// access token.
 	ClientAuth ClientAuth
 
+	// RedactionAllowedPeriod is redaction_allowed_period being set: local
+	// users may then not redact old messages (handlers/message.py,
+	// _check_redaction_allowed_period).
+	RedactionAllowedPeriod bool
+
+	// Membership is what update_membership reads.
+	Membership Membership
+
+	// FederationIPRanges is where outbound federation may not connect.
+	FederationIPRanges IPRanges
+
+	// Delayed is delayed events' settings.
+	Delayed Delayed
+
 	signingKey, signingKeyPath string
 }
 
@@ -173,6 +187,8 @@ type raw struct {
 
 	SigningKey     string `yaml:"signing_key"`
 	SigningKeyPath string `yaml:"signing_key_path"`
+
+	RedactionAllowedPeriod any `yaml:"redaction_allowed_period"`
 
 	InstanceMap map[string]struct {
 		Path string `yaml:"path"`
@@ -279,7 +295,8 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, fmt.Errorf("synapsecfg: %s has no server_name", path)
 	}
 
-	cfg := &Config{Path: path, ServerName: r.ServerName, signingKey: r.SigningKey, signingKeyPath: r.SigningKeyPath}
+	cfg := &Config{Path: path, ServerName: r.ServerName, signingKey: r.SigningKey, signingKeyPath: r.SigningKeyPath,
+		RedactionAllowedPeriod: r.RedactionAllowedPeriod != nil}
 
 	var err error
 	if cfg.InstanceMap, err = instanceMap(r); err != nil {
@@ -301,6 +318,15 @@ func parse(b []byte, path string) (*Config, error) {
 
 	cfg.TrackPresence = trackPresence(r)
 	cfg.Experimental = lastWins(&r.ExperimentalFeatures)
+	if cfg.Membership, err = membership(b, r.ServerName); err != nil {
+		return nil, err
+	}
+	if cfg.FederationIPRanges, err = federationIPRanges(b); err != nil {
+		return nil, err
+	}
+	if cfg.Delayed, err = delayedSettings(b, cfg.Experimental); err != nil {
+		return nil, err
+	}
 
 	for _, f := range r.AppServiceConfigFiles {
 		dir := filepath.Dir(path)
@@ -836,6 +862,15 @@ func msc3861(experimental map[string]any) bool {
 	}
 	enabled, _ := m["enabled"].(bool)
 	return enabled
+}
+
+// ProfileWriter is the profile updates writer: the first events writer
+// (handlers/profile.py, writers.events[0]), "master" when there are none.
+func (w Writers) ProfileWriter() string {
+	if len(w.Events) == 0 {
+		return MainProcessInstanceName
+	}
+	return w.Events[0]
 }
 
 // EventsWriter is the event persister for a room: _get_instance

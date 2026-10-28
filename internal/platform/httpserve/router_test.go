@@ -14,7 +14,12 @@ func named(name string) http.Handler {
 func testRouter() *Router {
 	client := http.NewServeMux()
 	client.Handle("GET /_matrix/client/v3/sync", named("sync"))
+	client.Handle("GET /_matrix/client/v3/rooms/{roomId}/state/{rest...}", named("state"))
 	return &Router{
+		Creator: named("creator"),
+		CreatorMatch: func(method, p string) bool {
+			return method == "PUT" && strings.Contains(p, "/state/")
+		},
 		Send:  named("send"),
 		Reads: named("reads"),
 		ReadsMatch: func(p string) bool {
@@ -38,6 +43,11 @@ func TestRouting(t *testing.T) {
 		{"POST", "/_matrix/client/v3/sync", "main"},
 		{"GET", "/_matrix/client/v3/rooms/!r:x/messages", "main"},
 		{"GET", "/_matrix/media/v3/config", "main"},
+		// Writes are the creator's, on the escaped path; reads under the
+		// same prefix go on to the client routes.
+		{"PUT", "/_matrix/client/v3/rooms/!r:x/state/m.room.topic/", "creator"},
+		{"PUT", "/_matrix/client/v3/rooms/%21a%2F%2Fb:x/state/t/", "creator"},
+		{"GET", "/_matrix/client/v3/rooms/!r:x/state/m.room.topic/", "state"},
 		{"GET", "/health", "OK"},
 	} {
 		rec := httptest.NewRecorder()

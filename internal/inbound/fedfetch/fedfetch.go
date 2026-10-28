@@ -23,11 +23,11 @@ import (
 	"maunium.net/go/mautrix/federation"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/keyring"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 )
 
 // ErrUncertain is a pull whose outcome Synapse would decide in a way we do

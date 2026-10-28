@@ -15,8 +15,8 @@ import (
 
 	"maunium.net/go/mautrix/federation"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 type rewriteTo struct{ to *url.URL }

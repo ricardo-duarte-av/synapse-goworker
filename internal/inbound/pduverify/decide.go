@@ -12,10 +12,10 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pyset"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/stateres"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyset"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
 )
 
 // Write mode's decisions: on_receive_pdu (handlers/federation_event.py:193)

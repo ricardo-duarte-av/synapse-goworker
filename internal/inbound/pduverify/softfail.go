@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 )
 
 // SoftFail reproduces FederationEventHandler._check_for_soft_fail

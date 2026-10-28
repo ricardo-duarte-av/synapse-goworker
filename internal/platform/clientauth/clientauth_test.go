@@ -385,7 +385,7 @@ func TestUserTokens(t *testing.T) {
 	// An admin puppeting alice: alice is the user, the admin the entity
 	// recorded (track_puppeted_user_ips is off).
 	v = f.auth(t, "/sync", "puppet_tok")
-	if !v.Valid || v.UserID != "@alice:example.org" || v.TokenID != 4 {
+	if !v.Valid || v.UserID != "@alice:example.org" || v.TokenID != 4 || v.Entity != "@admin:example.org" {
 		t.Fatalf("%+v", v)
 	}
 	lines = f.pub.wait(t, 3)

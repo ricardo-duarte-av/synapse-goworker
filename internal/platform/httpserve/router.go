@@ -19,6 +19,12 @@ type Router struct {
 	// Reads serves the federation paths ReadsMatch accepts.
 	Reads      http.Handler
 	ReadsMatch func(escapedPath string) bool
+	// Creator serves the client writes CreatorMatch accepts (send, state,
+	// redact, membership, join, knock, profile), matched on the escaped
+	// path and the method: a GET under the same prefix is a read, and goes
+	// on to Client.
+	Creator      http.Handler
+	CreatorMatch func(method, escapedPath string) bool
 	// Client holds the client API routes. A request it has no pattern for is
 	// not answered by it.
 	Client *http.ServeMux
@@ -40,6 +46,8 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.Reads.ServeHTTP(w, r)
 	case strings.HasPrefix(p, "/_matrix/federation/"), strings.HasPrefix(p, "/_matrix/key/"):
 		rt.Fallback.ServeHTTP(w, r)
+	case rt.Creator != nil && rt.CreatorMatch != nil && rt.CreatorMatch(r.Method, p):
+		rt.Creator.ServeHTTP(w, r)
 	default:
 		if rt.Client != nil {
 			if h, pattern := rt.Client.Handler(r); pattern != "" {

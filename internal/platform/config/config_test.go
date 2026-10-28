@@ -19,7 +19,7 @@ func TestMinimalConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.HomeserverYAML != "/etc/synapse/homeserver.yaml" || c.Upstream.TimeoutSeconds != 180 {
+	if c.HomeserverYAML != "/etc/synapse/homeserver.yaml" || c.Upstream.TimeoutSeconds != 300 {
 		t.Errorf("defaults not applied: %+v", c)
 	}
 	if c.Database.Pools.Read != 16 || c.Inbound.MissingEvents != "fetch" {
@@ -54,8 +54,9 @@ func TestReadPoolsPerPart(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := c.Database.Pools
-	if p.SyncRead != 12 || p.FederationReadsRead != 12 || p.SenderRead != 6 {
-		t.Errorf("sync %d, federation reads %d, sender %d; want 12, 12, 6", p.SyncRead, p.FederationReadsRead, p.SenderRead)
+	if p.SyncRead != 12 || p.FederationReadsRead != 12 || p.SenderRead != 6 || p.CreatorRead != 12 || p.CreatorWrite != 4 {
+		t.Errorf("sync %d, federation reads %d, sender %d, creator %d/%d; want 12, 12, 6, 12/4",
+			p.SyncRead, p.FederationReadsRead, p.SenderRead, p.CreatorRead, p.CreatorWrite)
 	}
 	if _, err := Parse([]byte(minimal + "database: { pools: { sync_read: -1 } }\n")); err == nil {
 		t.Error("accepted a negative pool size")

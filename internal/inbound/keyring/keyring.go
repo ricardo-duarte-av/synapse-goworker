@@ -27,8 +27,8 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // DBKeys reads the keys Synapse holds (StoreKeyFetcher).

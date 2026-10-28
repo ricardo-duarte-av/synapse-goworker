@@ -87,13 +87,14 @@ type Pools struct {
 	// Read sizes each of sync's, the federation reads' and the sender's
 	// read pools, unless the part's own key below does.
 	Read int32 `yaml:"read"`
-	// SyncRead, FederationReadsRead and SenderRead size one part's read
-	// pool; unset takes Read. The pools are separate on purpose, not
-	// duplicates: an initial sync holding every connection of sync's pool
-	// cannot hold the sender's or the federation reads'.
+	// SyncRead, FederationReadsRead, SenderRead and CreatorRead size one
+	// part's read pool; unset takes Read. The pools are separate on
+	// purpose, not duplicates: an initial sync holding every connection of
+	// sync's pool cannot hold the sender's or the federation reads'.
 	SyncRead            int32 `yaml:"sync_read"`
 	FederationReadsRead int32 `yaml:"federation_reads_read"`
 	SenderRead          int32 `yaml:"sender_read"`
+	CreatorRead         int32 `yaml:"creator_read"`
 	// ToDevice deletes acknowledged to-device messages.
 	ToDevice int32 `yaml:"to_device"`
 	// SlidingSync reads and writes the gosync schema.
@@ -108,18 +109,22 @@ type Pools struct {
 	InboundWrite int32 `yaml:"inbound_write"`
 	// ClientAuth looks up access tokens and marks them used.
 	ClientAuth int32 `yaml:"client_auth"`
+	// CreatorWrite writes what Synapse's event creator writes itself:
+	// push actions staging, room participation, state groups.
+	CreatorWrite int32 `yaml:"creator_write"`
 }
 
 // settle refuses a negative size and gives each part's read pool Read's
 // size unless it has its own.
 func (p *Pools) settle() error {
-	for _, n := range []int32{p.Read, p.SyncRead, p.FederationReadsRead, p.SenderRead, p.ToDevice,
-		p.SlidingSync, p.SenderWrite, p.SenderState, p.InboundRead, p.InboundPDU, p.InboundWrite, p.ClientAuth} {
+	for _, n := range []int32{p.Read, p.SyncRead, p.FederationReadsRead, p.SenderRead, p.CreatorRead, p.ToDevice,
+		p.SlidingSync, p.SenderWrite, p.SenderState, p.InboundRead, p.InboundPDU, p.InboundWrite, p.ClientAuth,
+		p.CreatorWrite} {
 		if n < 0 {
 			return fmt.Errorf("config: database.pools: sizes must not be negative")
 		}
 	}
-	for _, n := range []*int32{&p.SyncRead, &p.FederationReadsRead, &p.SenderRead} {
+	for _, n := range []*int32{&p.SyncRead, &p.FederationReadsRead, &p.SenderRead, &p.CreatorRead} {
 		if *n == 0 {
 			*n = p.Read
 		}
@@ -206,12 +211,13 @@ func Parse(data []byte) (*Config, error) {
 			SocketMode: "0660",
 			Metrics:    Metrics{Addr: ":9200", PProf: true},
 		},
-		Upstream: proxy.Config{TimeoutSeconds: 180},
+		// A remote join the event creator hands to main can take minutes.
+		Upstream: proxy.Config{TimeoutSeconds: 300},
 		Database: Database{
 			ConnectTimeoutSeconds: 10,
 			Pools: Pools{
 				Read: 16, ToDevice: 4, SlidingSync: 8, SenderWrite: 8, SenderState: 4, ClientAuth: 4,
-				InboundRead: 4, InboundPDU: 4, InboundWrite: 4,
+				InboundRead: 4, InboundPDU: 4, InboundWrite: 4, CreatorWrite: 4,
 			},
 		},
 		Memory:  Memory{StateCacheMB: 768, EventGroupCacheMB: 32},

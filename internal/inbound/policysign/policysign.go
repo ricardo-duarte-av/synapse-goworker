@@ -20,7 +20,7 @@ import (
 	"maunium.net/go/mautrix/federation"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 )
 
 // Timeout is Synapse's (room_policy.py: timeout=30000): one attempt, no

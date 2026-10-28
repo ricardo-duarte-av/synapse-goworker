@@ -18,7 +18,7 @@ import (
 	"maunium.net/go/mautrix/federation/signutil"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 )
 
 // rewrite sends every request to the test server, keeping its path.

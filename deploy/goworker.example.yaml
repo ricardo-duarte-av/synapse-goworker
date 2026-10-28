@@ -21,7 +21,7 @@ listen:
 upstream:
   # Synapse's main process: the fallback for everything not answered here.
   sockets: [/var/sockets/nginx/av-synapse-main.sock]
-  timeout_seconds: 180         # /state on the largest room takes ~82s on main
+  timeout_seconds: 300         # a remote join the event creator hands to main can take minutes
 
 database:
   # Unset: every pool connects as homeserver.yaml's database block does --
@@ -36,6 +36,7 @@ database:
     # sync_read: 16
     # federation_reads_read: 16
     # sender_read: 16
+    # creator_read: 16
     to_device: 4
     sliding_sync: 8
     sender_write: 8
@@ -44,6 +45,7 @@ database:
     inbound_pdu: 4
     inbound_write: 4
     client_auth: 4             # access token lookups, and marking a token used
+    creator_write: 4           # the event creator's own writes (push staging, state groups)
 
 memory:
   limit_mb: 3072               # GOMEMLIMIT; caches below must fit well inside it
@@ -56,7 +58,7 @@ memory:
 log:
   level: info                  # trace, debug, info, warn, error, disabled
   # Per part, overriding level; the name is the "component" its lines carry.
-  # Parts: sync, federation_reads, inbound, sender, bus, proxy.
+  # Parts: sync, federation_reads, inbound, sender, creator, client_auth, bus, proxy.
   #components:
   #  sender: error              # its warnings are mostly remote servers failing
   #  sync: info

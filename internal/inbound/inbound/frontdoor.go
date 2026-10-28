@@ -10,11 +10,11 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/acl"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/keyring"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/acl"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 )
 
 // The /send side of write mode: FederationServer._handle_pdus_in_txn

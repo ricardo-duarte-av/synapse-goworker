@@ -20,14 +20,14 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/acl"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedfetch"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/stateres"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/acl"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
 )
 
 // An end-to-end run of write mode over a small real room on the throwaway

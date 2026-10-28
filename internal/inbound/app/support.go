@@ -11,8 +11,8 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/originup"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 

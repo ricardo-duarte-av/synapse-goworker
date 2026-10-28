@@ -10,10 +10,10 @@ import (
 	"sync"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedfetch"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/replication"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 )
 
 // The missing prev events path of on_receive_pdu

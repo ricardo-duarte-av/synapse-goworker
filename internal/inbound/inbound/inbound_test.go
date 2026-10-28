@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/dbrole"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // Tests that write run against a throwaway PostgreSQL holding Synapse's

@@ -3,10 +3,10 @@ package pduverify
 import (
 	"context"
 	"fmt"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pyset"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyset"
 	"slices"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // The state groups an event's context points at, as Synapse 1.162 chooses

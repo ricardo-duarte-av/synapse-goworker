@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // Built from the pieces Synapse 1.162 joins: FederationError's str,

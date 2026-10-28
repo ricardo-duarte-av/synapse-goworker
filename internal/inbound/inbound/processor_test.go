@@ -12,9 +12,9 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/replication"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 )
 
 // fakeDecide decides by the staged event's "test" field.

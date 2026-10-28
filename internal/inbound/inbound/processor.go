@@ -13,9 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/replication"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 )
 
 // Deciding is what the processor needs from the PDU checker.

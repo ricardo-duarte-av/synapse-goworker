@@ -26,10 +26,10 @@ import (
 	"maunium.net/go/mautrix/federation"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/edu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 )
 

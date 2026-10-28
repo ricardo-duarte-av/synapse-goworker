@@ -22,28 +22,28 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/acl"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/edu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/fedfetch"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/keyring"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/originup"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/pduverify"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/policysign"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/replication"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/stateres"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/synapseauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/acl"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
@@ -145,7 +145,7 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 	})
 
 	router := edu.NewRouter(hs.Writers)
-	repl := replication.NewClient(hs)
+	repl := replication.NewClient(hs, replication.Inbound)
 	if err := router.Validate(repl.Has); err != nil {
 		return fail(err)
 	}
