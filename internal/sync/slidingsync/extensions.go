@@ -12,6 +12,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/eventfilter"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/filter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/pushrules"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/slidingstore"
@@ -480,6 +481,14 @@ func deviceListUpdates(ctx context.Context, d Deps, userID string,
 		}
 	}
 
+	// A remote user with a non-compliant ID is dropped (#20338).
+	for _, m := range []map[string]bool{set, leftUsers} {
+		for u := range m {
+			if !filter.SyncableUserID(u, d.ServerName) {
+				delete(m, u)
+			}
+		}
+	}
 	return &deviceListsJSON{Changed: sortedKeys(set), Left: sortedKeys(leftUsers)}, nil
 }
 

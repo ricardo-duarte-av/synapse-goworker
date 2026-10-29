@@ -84,3 +84,36 @@ func allDigits(s string) bool {
 	}
 	return true
 }
+
+// CompliantUserID is is_compliant_user_id (types/__init__.py, v1.164.1): the
+// localpart is not empty and every character is between U+0021 and U+007E.
+// Never fails on a malformed ID; one without the sigil is not compliant.
+func CompliantUserID(s string) bool {
+	if !strings.HasPrefix(s, "@") {
+		return false
+	}
+	localpart, _, _ := strings.Cut(s[1:], ":")
+	if localpart == "" {
+		return false
+	}
+	for _, r := range localpart {
+		if r < 0x21 || r > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// IsMineID is HomeServer.is_mine_id: what follows the first colon is this
+// server's name.
+func IsMineID(s, serverName string) bool {
+	_, host, ok := strings.Cut(s, ":")
+	return ok && host == serverName
+}
+
+// SyncableUserID is the filter Synapse v1.164 puts on the users a sync
+// reports in device_lists and in presence for newly visible users (#20338):
+// local users, and remote ones whose ID is compliant.
+func SyncableUserID(s, serverName string) bool {
+	return IsMineID(s, serverName) || CompliantUserID(s)
+}

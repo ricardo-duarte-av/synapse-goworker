@@ -467,7 +467,8 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		seenExtra := map[string]bool{}
 		extra := make([]string, 0, len(extraUsers))
 		for _, m := range extraUsers {
-			if m == verdict.UserID || seenExtra[m] {
+			// A remote user with a non-compliant ID is dropped (#20338).
+			if m == verdict.UserID || seenExtra[m] || !filter.SyncableUserID(m, d.ServerName) {
 				continue
 			}
 			seenExtra[m] = true
@@ -540,7 +541,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		for _, u := range leftUsers {
 			// Still in another room with us, so not left from our point of
 			// view: telling the client otherwise makes it drop keys it needs.
-			if !sharing[u] {
+			if !sharing[u] && filter.SyncableUserID(u, d.ServerName) {
 				left = append(left, u)
 			}
 		}
@@ -551,7 +552,8 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		seen := map[string]bool{}
 		list := make([]string, 0, len(changed))
 		for _, u := range changed {
-			if seen[u] {
+			// A remote user with a non-compliant ID is dropped (#20338).
+			if seen[u] || !filter.SyncableUserID(u, d.ServerName) {
 				continue
 			}
 			seen[u] = true

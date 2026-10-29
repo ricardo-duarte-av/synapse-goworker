@@ -93,7 +93,7 @@ func TestRoomStateDeltasByEventPosition(t *testing.T) {
 		exec(`INSERT INTO events VALUES ($1, 'master', $2)`, id, so)
 	}
 	for _, r := range []struct {
-		stream       int64
+		stream        int64
 		key, ev, prev any
 	}{
 		{2, "old", "$old", nil},
@@ -148,5 +148,57 @@ func TestLazyCurrentStateIDs(t *testing.T) {
 	if len(got) != len(want) || got[StateKey{Type: "m.room.name"}] != "$name" ||
 		got[StateKey{Type: "m.room.member", StateKey: "@a:x"}] != "$a" {
 		t.Errorf("%v, want %v", got, want)
+	}
+}
+
+// get_sliding_sync_membership_changes, v1.164.1 (#20339): a display name
+// change is no membership change, an out-of-band invite always is, and a
+// state reset out of a room is a leave.
+func TestSlidingMembershipChanges(t *testing.T) {
+	st, exec := throwawayStore(t, `
+		CREATE TABLE instance_map (instance_id INTEGER PRIMARY KEY, instance_name TEXT NOT NULL);
+		CREATE TABLE rooms (room_id TEXT PRIMARY KEY, room_version TEXT);
+		CREATE TABLE events (event_id TEXT PRIMARY KEY, sender TEXT, outlier BOOLEAN NOT NULL,
+			instance_name TEXT, stream_ordering BIGINT);
+		CREATE TABLE room_memberships (event_id TEXT NOT NULL, membership TEXT NOT NULL);
+		CREATE TABLE current_state_delta_stream (stream_id BIGINT NOT NULL, room_id TEXT NOT NULL,
+			type TEXT NOT NULL, state_key TEXT NOT NULL, event_id TEXT, prev_event_id TEXT, instance_name TEXT);
+		CREATE TABLE sliding_sync_membership_snapshots (room_id TEXT NOT NULL, user_id TEXT NOT NULL,
+			sender TEXT NOT NULL, membership_event_id TEXT NOT NULL, membership TEXT NOT NULL,
+			event_stream_ordering BIGINT NOT NULL, event_instance_name TEXT NOT NULL);
+	`)
+	const u = "@u:x"
+	exec(`INSERT INTO instance_map VALUES (1, 'master')`)
+	exec(`INSERT INTO rooms VALUES ('!rename:x', '10'), ('!invite:x', '10'), ('!reset:x', '10'), ('!join:x', '10')`)
+	exec(`INSERT INTO events VALUES
+		('$j1', $1, false, 'master', 2), ('$j2', $1, false, 'master', 12),
+		('$inv', '@them:y', true, 'master', 13), ('$r1', $1, false, 'master', 3),
+		('$new', $1, false, 'master', 15)`, u)
+	exec(`INSERT INTO room_memberships VALUES ('$j1', 'join'), ('$j2', 'join'), ('$r1', 'join'),
+		('$inv', 'invite'), ('$new', 'join')`)
+	exec(`INSERT INTO current_state_delta_stream VALUES
+		(12, '!rename:x', 'm.room.member', $1, '$j2', '$j1', 'master'),
+		(14, '!reset:x', 'm.room.member', $1, NULL, '$r1', 'master'),
+		(15, '!join:x', 'm.room.member', $1, '$new', NULL, 'master')`, u)
+	// Snapshots hold every current membership; only the outlier's counts.
+	exec(`INSERT INTO sliding_sync_membership_snapshots VALUES
+		('!rename:x', $1, $1, '$j2', 'join', 12, 'master'),
+		('!invite:x', $1, '@them:y', '$inv', 'invite', 13, 'master'),
+		('!join:x', $1, $1, '$new', 'join', 15, 'master')`, u)
+
+	got, err := st.SlidingMembershipChanges(context.Background(), u, roomKey(10), roomKey(20), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["!rename:x"]; ok {
+		t.Error("a display name change reported as a membership change")
+	}
+	for room, want := range map[string]string{"!invite:x": "invite", "!reset:x": "leave", "!join:x": "join"} {
+		if c, ok := got[room]; !ok || c.Membership != want {
+			t.Errorf("%s: %+v, want %s", room, c, want)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("%d changes: %+v", len(got), got)
 	}
 }

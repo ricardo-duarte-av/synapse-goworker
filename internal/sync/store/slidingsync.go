@@ -436,12 +436,14 @@ type SlidingMembershipChange struct {
 // SlidingMembershipChanges returns the meaningful membership changes for a user
 // in (from, to].
 //
-// Two sources unioned, and the second is not redundant:
-// sliding_sync_membership_snapshots holds a row per current membership, so it
-// misses a user who was **state reset** out of a room -- there is no membership
-// left to hold. current_state_delta_stream still records the removal.
-//
-// Ported from get_sliding_sync_membership_changes.
+// Two sources unioned (get_sliding_sync_membership_changes, v1.164.1):
+// current_state_delta_stream for nearly every change, state resets included,
+// and sliding_sync_membership_snapshots only for out-of-band (outlier)
+// memberships -- a federated invite or its rejection -- which have no delta.
+// Their previous membership is unknown, so they always count as a change.
+// Until v1.164 the snapshots were read for every membership, with the
+// previous one through event_edges, and a display name change looked like a
+// newly joined room (#20339).
 func (s *Store) SlidingMembershipChanges(
 	ctx context.Context, userID string,
 	from, to streamtoken.RoomKey, excluded map[string]bool,
@@ -463,11 +465,10 @@ func (s *Store) SlidingMembershipChanges(
 		  FROM (
 			SELECT s.room_id, s.membership_event_id, s.event_instance_name,
 			       s.event_stream_ordering, s.membership, s.sender,
-			       m_prev.membership AS prev_membership
+			       NULL AS prev_membership
 			  FROM sliding_sync_membership_snapshots AS s
-			  LEFT JOIN event_edges AS e ON e.event_id = s.membership_event_id
-			  LEFT JOIN room_memberships AS m_prev ON m_prev.event_id = e.prev_event_id
-			 WHERE s.user_id = $1
+			  JOIN events AS e ON e.event_id = s.membership_event_id
+			 WHERE s.user_id = $1 AND e.outlier
 			UNION ALL
 			SELECT s.room_id, e.event_id, s.instance_name, s.stream_id,
 			       m.membership, e.sender, m_prev.membership AS prev_membership
@@ -524,9 +525,6 @@ func (s *Store) SlidingMembershipChanges(
 			// would tell the client it left a room it has already been told it
 			// left.
 			if prev == "leave" {
-				continue
-			}
-			if _, already := out[c.RoomID]; already {
 				continue
 			}
 			// A NULL event_id only happens when the server left the room or a
