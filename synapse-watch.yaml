@@ -1,0 +1,159 @@
+# What goworker mirrors of Synapse, for the nightly watch
+# (.github/workflows/synapse-watch.yml, cmd/synapsewatch).
+#
+# Every night the newest Synapse release or rc tag is compared with
+# `reviewed`; a change to any path below opens (or updates) one issue
+# labelled synapse-watch. Port or dismiss what it lists, then set
+# `reviewed` to the tag you checked against: the issue closes itself on
+# the next run.
+#
+# Paths are files or directories in element-hq/synapse. Seeded on
+# 2026-10-28 from the Synapse files our code cites; when you port from a
+# file not listed here, add it.
+
+reviewed: v1.164.1
+
+components:
+  # Shared by every part: tables we read and write.
+  schema:
+    code: internal
+    synapse:
+      - synapse/storage/schema/
+
+  platform:
+    code: internal/platform
+    synapse:
+      - synapse/api/auth/base.py
+      - synapse/api/auth/internal.py
+      - synapse/api/constants.py
+      - synapse/api/errors.py
+      - synapse/api/room_versions.py
+      - synapse/appservice/__init__.py
+      - synapse/config/
+      - synapse/crypto/event_signing.py
+      - synapse/crypto/keyring.py
+      - synapse/event_auth.py
+      - synapse/events/__init__.py
+      - synapse/federation/federation_base.py
+      - synapse/handlers/event_auth.py
+      - synapse/http/matrixfederationclient.py
+      - synapse/http/site.py
+      - synapse/push/bulk_push_rule_evaluator.py
+      - synapse/replication/http/_base.py
+      - synapse/replication/http/send_events.py
+      - synapse/replication/tcp/client.py
+      - synapse/replication/tcp/redis.py
+      - synapse/state/__init__.py
+      - synapse/state/v1.py
+      - synapse/state/v2.py
+      - synapse/storage/controllers/state.py
+      - synapse/storage/databases/main/client_ips.py
+      - synapse/storage/databases/main/event_federation.py
+      - synapse/storage/databases/main/event_push_actions.py
+      - synapse/storage/databases/main/events_worker.py
+      - synapse/storage/databases/main/registration.py
+      - synapse/types/__init__.py
+      - synapse/util/stringutils.py
+      - rust/src/events/
+      - rust/src/push/
+      - rust/src/room_versions.rs
+
+  sync:
+    code: internal/sync
+    synapse:
+      - synapse/api/filtering.py
+      - synapse/handlers/initial_sync.py
+      - synapse/handlers/sliding_sync/
+      - synapse/handlers/sync.py
+      - synapse/notifier.py
+      - synapse/replication/tcp/handler.py
+      - synapse/replication/tcp/streams/
+      - synapse/rest/client/initial_sync.py
+      - synapse/rest/client/room.py
+      - synapse/rest/client/sync.py
+      - synapse/storage/databases/main/cache.py
+      - synapse/storage/databases/main/deviceinbox.py
+      - synapse/storage/databases/main/events.py
+      - synapse/storage/databases/main/receipts.py
+      - synapse/storage/databases/main/sliding_sync.py
+      - synapse/types/handlers/sliding_sync.py
+      - synapse/types/rest/client/__init__.py
+      - synapse/types/state.py
+      - synapse/util/caches/stream_change_cache.py
+      - synapse/visibility.py
+
+  inbound:
+    code: internal/inbound
+    synapse:
+      - synapse/federation/federation_client.py
+      - synapse/federation/federation_server.py
+      - synapse/federation/transport/server/
+      - synapse/federation/units.py
+      - synapse/handlers/device.py
+      - synapse/handlers/devicemessage.py
+      - synapse/handlers/e2e_keys.py
+      - synapse/handlers/federation_event.py
+      - synapse/handlers/presence.py
+      - synapse/handlers/receipts.py
+      - synapse/handlers/room_policy.py
+      - synapse/handlers/typing.py
+      - synapse/handlers/worker_lock.py
+      - synapse/replication/http/federation.py
+      - synapse/replication/tcp/commands.py
+      - synapse/replication/tcp/resource.py
+      - synapse/storage/databases/main/lock.py
+      - synapse/storage/databases/state/
+      - synapse/storage/invite_rule.py
+      - synapse/util/retryutils.py
+
+  fedread:
+    code: internal/fedread
+    synapse:
+      - synapse/events/utils.py
+      - synapse/federation/federation_server.py
+      - synapse/federation/transport/server/federation.py
+
+  sender:
+    code: internal/sender
+    synapse:
+      - synapse/api/urls.py
+      - synapse/federation/sender/
+      - synapse/federation/transport/client.py
+      - synapse/federation/units.py
+      - synapse/handlers/typing.py
+      - synapse/http/federation/well_known_resolver.py
+      - synapse/replication/tcp/commands.py
+      - synapse/storage/databases/main/deviceinbox.py
+      - synapse/storage/databases/main/devices.py
+      - synapse/storage/databases/main/presence.py
+      - synapse/storage/databases/main/room.py
+      - synapse/storage/databases/main/stream.py
+      - synapse/storage/databases/main/transactions.py
+      - synapse/storage/util/id_generators.py
+      - synapse/util/retryutils.py
+
+  creator:
+    code: internal/creator
+    synapse:
+      - synapse/api/ratelimiting.py
+      - synapse/events/builder.py
+      - synapse/events/snapshot.py
+      - synapse/events/validator.py
+      - synapse/handlers/delayed_events.py
+      - synapse/handlers/message.py
+      - synapse/handlers/profile.py
+      - synapse/handlers/relations.py
+      - synapse/handlers/room_member.py
+      - synapse/handlers/room_policy.py
+      - synapse/http/client.py
+      - synapse/http/servlet.py
+      - synapse/replication/http/delayed_events.py
+      - synapse/replication/http/membership.py
+      - synapse/replication/http/profile.py
+      - synapse/rest/client/knock.py
+      - synapse/rest/client/profile.py
+      - synapse/rest/client/room.py
+      - synapse/rest/client/transactions.py
+      - synapse/storage/databases/main/delayed_events.py
+      - synapse/storage/databases/main/roommember.py
+      - rust/src/types/mod.rs
