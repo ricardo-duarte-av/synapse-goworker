@@ -45,7 +45,7 @@ The approved plan is in
 | `internal/creator` | goevent-creator, as `app.New` + `Handler` + `Run`; its writes matched on the escaped path ahead of the client mux (`app.Match`); `docs/creator.md` holds its notes |
 | `cmd/goevent-e2e` | the creator's live suite, in its test rooms only |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
-| `synapse-watch.yaml`, `cmd/synapsewatch`, `.github/workflows/synapse-watch.yml` | nightly: Synapse release/rc commits since `reviewed` that touch what we mirror, as one issue labelled synapse-watch |
+| `synapse-watch.yaml`, `cmd/synapsewatch`, `.github/workflows/synapse-watch.yml` | nightly: Synapse release commits (not rcs) since `reviewed` that touch what we mirror, as one issue labelled synapse-watch |
 | `grafana/goworker.json` | the dashboard: every metric has a panel; edit in Grafana, export over the file; `grafana/dashboard_test.go` checks it |
 | `docs/cutover.md` | moving a homeserver over |
 | `docs/creator.md` | the event creator's facts, traps and suite, from goevent-creator |

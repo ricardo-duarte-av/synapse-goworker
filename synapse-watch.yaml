@@ -1,9 +1,9 @@
 # What goworker mirrors of Synapse, for the nightly watch
 # (.github/workflows/synapse-watch.yml, cmd/synapsewatch).
 #
-# Every night the newest Synapse release or rc tag is compared with each
-# component's reviewed tag (its own, or the one below); a change to any of
-# its paths, unless its PR is in `handled`, is listed in one issue labelled
+# Every night the newest Synapse release tag (rcs are skipped) is compared
+# with each component's reviewed tag (its own, or the one below); a change
+# to any of its paths, unless its PR is in `handled`, is listed in one issue labelled
 # synapse-watch. Port or dismiss each, and add its PR number to `handled`;
 # once a component is clear, set its `reviewed` to the newest tag and drop
 # the numbers that covers. The issue closes itself when nothing is left.

@@ -2,8 +2,9 @@
 // last reviewed, in the code goworker mirrors (synapse-watch.yaml).
 //
 // It reads a clone of element-hq/synapse with its tags, finds the newest
-// release or rc tag, and for each component lists the commits and files
-// between its reviewed tag (its own, or the manifest's) and that tag under the
+// release tag (never an rc: we port against the release we deploy, and an
+// rc's changes reach the release anyway), and for each component lists the
+// commits and files between its reviewed tag (its own, or the manifest's) and that tag under the
 // component's paths, less the Synapse PRs listed as handled. The report is
 // Markdown, for the nightly workflow to put in an issue; it judges nothing.
 //
@@ -131,14 +132,12 @@ func loadManifest(path string) (*Manifest, error) {
 	return &m, nil
 }
 
-// version is a Synapse release tag: vX.Y.Z, or vX.Y.ZrcN.
-type version struct {
-	major, minor, patch int
-	// rc is 0 for a release, which sorts after its rcs.
-	rc int
-}
+// version is a Synapse release tag, vX.Y.Z. Release candidates (vX.Y.ZrcN)
+// do not match: porting from one would put goworker ahead of the Synapse it
+// runs beside.
+type version struct{ major, minor, patch int }
 
-var tagRE = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)(?:rc(\d+))?$`)
+var tagRE = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
 
 func parseVersion(tag string) (version, bool) {
 	m := tagRE.FindStringSubmatch(tag)
@@ -146,7 +145,7 @@ func parseVersion(tag string) (version, bool) {
 		return version{}, false
 	}
 	n := func(s string) int { v, _ := strconv.Atoi(s); return v }
-	return version{n(m[1]), n(m[2]), n(m[3]), n(m[4])}, true
+	return version{n(m[1]), n(m[2]), n(m[3])}, true
 }
 
 func (v version) compare(w version) int {
@@ -155,19 +154,10 @@ func (v version) compare(w version) int {
 			return d
 		}
 	}
-	// A release (rc 0) is after every rc of itself.
-	switch {
-	case v.rc == w.rc:
-		return 0
-	case v.rc == 0:
-		return 1
-	case w.rc == 0:
-		return -1
-	}
-	return v.rc - w.rc
+	return 0
 }
 
-// newestTag is the newest release or rc tag.
+// newestTag is the newest release tag.
 func newestTag(tags []string) (string, bool) {
 	best, bestV, found := "", version{}, false
 	for _, t := range tags {

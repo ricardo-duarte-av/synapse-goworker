@@ -1,6 +1,6 @@
 name: Synapse watch
 
-# Every night: has a Synapse release or rc changed code goworker mirrors
+# Every night: has a Synapse release (not an rc) changed code goworker mirrors
 # since each component's reviewed tag, other than the PRs handled
 # (synapse-watch.yaml)? If so, one issue labelled synapse-watch lists the
 # commits, by component. It is rebuilt when the list changes, and closed

@@ -14,10 +14,10 @@ func TestNewestTag(t *testing.T) {
 		want string
 	}{
 		{[]string{"v1.164.0", "v1.164.1", "v1.164.0rc3"}, "v1.164.1"},
-		{[]string{"v1.164.1", "v1.165.0rc1"}, "v1.165.0rc1"},
 		{[]string{"v1.165.0rc2", "v1.165.0", "v1.165.0rc10"}, "v1.165.0"},
-		{[]string{"v1.165.0rc2", "v1.165.0rc10"}, "v1.165.0rc10"},
 		{[]string{"v1.99.9", "v1.100.0"}, "v1.100.0"},
+		// An rc is never the newest: we port against releases.
+		{[]string{"v1.164.1", "v1.165.0rc1"}, "v1.164.1"},
 		// Not release tags.
 		{[]string{"v1.164.1", "v2-test", "dinsic_2019-01-01", "v1.170.0-beta"}, "v1.164.1"},
 	} {
@@ -76,7 +76,11 @@ func TestWatch(t *testing.T) {
 	git("commit", "-qam", "Change something we do not mirror")
 	git("rm", "-q", "synapse/gone.py")
 	git("commit", "-qm", "Remove gone")
-	git("tag", "v1.1.0rc1")
+	git("tag", "v1.1.0")
+	// An rc past the release: neither the newest tag nor its change listed.
+	write("synapse/handlers/message.py", "c\n")
+	git("commit", "-qam", "Change message again (#43)")
+	git("tag", "v1.2.0rc1")
 
 	m := &Manifest{Reviewed: "v1.0.0", Components: map[string]Component{
 		"creator": {Code: "internal/creator", Synapse: []string{"synapse/handlers/message.py", "synapse/gone.py"}},
@@ -86,7 +90,7 @@ func TestWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Newest != "v1.1.0rc1" || !r.Changed() {
+	if r.Newest != "v1.1.0" || !r.Changed() {
 		t.Fatalf("newest %s, changed %v", r.Newest, r.Changed())
 	}
 	c := r.Components["creator"]
@@ -101,7 +105,7 @@ func TestWatch(t *testing.T) {
 	}
 	md := r.markdown(m)
 	for _, want := range []string{"## creator (`internal/creator`)", "element-hq/synapse#42", "`synapse/gone.py` no longer exists",
-		"compare/v1.0.0...v1.1.0rc1", "`reviewed:` to v1.1.0rc1", "since v1.0.0"} {
+		"compare/v1.0.0...v1.1.0", "`reviewed:` to v1.1.0", "since v1.0.0"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("report lacks %q:\n%s", want, md)
 		}
@@ -117,15 +121,15 @@ func TestWatch(t *testing.T) {
 	}
 	m.Handled = nil
 	// (Without gone.py, which is in neither tag.)
-	comp := Component{Code: "internal/creator", Reviewed: "v1.1.0rc1", Synapse: []string{"synapse/handlers/message.py"}}
+	comp := Component{Code: "internal/creator", Reviewed: "v1.1.0", Synapse: []string{"synapse/handlers/message.py"}}
 	m.Components["creator"] = comp
 	if r, err := watch(gitRepo(dir), m); err != nil || len(r.Components["creator"].Commits) != 0 ||
-		r.Components["creator"].Reviewed != "v1.1.0rc1" {
+		r.Components["creator"].Reviewed != "v1.1.0" {
 		t.Errorf("own reviewed tag: %+v %v", r.Components["creator"], err)
 	}
 
 	// Reviewed caught up: nothing to report.
-	m.Reviewed = "v1.1.0rc1"
+	m.Reviewed = "v1.1.0"
 	m.Components["creator"] = Component{Code: "internal/creator", Synapse: []string{"synapse/handlers/message.py"}}
 	if r, err := watch(gitRepo(dir), m); err != nil || r.Changed() {
 		t.Errorf("caught up: %v, changed %v", err, r != nil && r.Changed())
