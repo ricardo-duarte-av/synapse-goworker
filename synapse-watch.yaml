@@ -1,17 +1,52 @@
 # What goworker mirrors of Synapse, for the nightly watch
 # (.github/workflows/synapse-watch.yml, cmd/synapsewatch).
 #
-# Every night the newest Synapse release or rc tag is compared with
-# `reviewed`; a change to any path below opens (or updates) one issue
-# labelled synapse-watch. Port or dismiss what it lists, then set
-# `reviewed` to the tag you checked against: the issue closes itself on
-# the next run.
+# Every night the newest Synapse release or rc tag is compared with each
+# component's reviewed tag (its own, or the one below); a change to any of
+# its paths, unless its PR is in `handled`, is listed in one issue labelled
+# synapse-watch. Port or dismiss each, and add its PR number to `handled`;
+# once a component is clear, set its `reviewed` to the newest tag and drop
+# the numbers that covers. The issue closes itself when nothing is left.
 #
 # Paths are files or directories in element-hq/synapse. Seeded on
 # 2026-10-28 from the Synapse files our code cites; when you port from a
 # file not listed here, add it.
 
-reviewed: v1.164.1
+# The four older workers were ported from v1.159 (gosync's notes) and kept up
+# piecemeal since, with no record of what was reviewed: their backlog is
+# counted from there until each is caught up.
+reviewed: v1.159.0
+
+# Ported or dismissed past a component's reviewed tag (2026-10-29):
+handled:
+  # sync, to v1.164.1: MSC4222 stable, state_after, lazy-loaded members,
+  # non-compliant user IDs, sliding membership changes, sticky events.
+  - 20170
+  - 20081
+  - 20314
+  - 20169
+  - 20171
+  - 20289
+  - 20338
+  - 20339
+  - 20324
+  - 20350
+  - 20295
+  - 20362
+  - 20312
+  # Written by the event persister; we only read the rows it leaves.
+  - 20322
+  - 20323
+  # Push: already what our evaluator does / the editing API is main's.
+  - 20315
+  - 20202
+  # event_edges.is_state no longer read.
+  - 20069
+  # sender: the sticky event backlog, and NEW_SERVER_JOINED.
+  - 20165
+  - 20337
+  # request_token_inhibit_3pid_errors: a 3PID API main serves.
+  - 20243
 
 components:
   # Shared by every part: tables we read and write.
@@ -134,6 +169,8 @@ components:
 
   creator:
     code: internal/creator
+    # Ported against v1.164.1 in full (phase 7).
+    reviewed: v1.164.1
     synapse:
       - synapse/api/ratelimiting.py
       - synapse/events/builder.py

@@ -11,15 +11,17 @@ The approved plan is in
 
 - Synapse source: `/home/daedric/synapse`. Port against the deployed tag
   (`git show v1.164.1:<path>`), not the checkout, which runs ahead. On
-  2026-10-28 aguiarvieira.pt ran 1.164.1 and matrixbridg.es 1.164.0; the
-  creator is ported against v1.164.1 (sync is not yet: MSC4222's stable
-  `use_state_after` and the `state_after` fixes, TODO.md); check
+  2026-10-28 aguiarvieira.pt ran 1.164.1 and matrixbridg.es 1.164.0. The
+  creator is ported against v1.164.1; the other parts from v1.159 and kept
+  up piecemeal, their remaining backlog listed by the nightly watch; check
   with `docker exec <synapse container> python -c 'import synapse;
   print(synapse.__version__)'` and diff the tags for what you port.
-  `synapse-watch.yaml` says which Synapse paths each part mirrors and which
-  tag was last reviewed: bump `reviewed` once a release is ported or
-  dismissed (the nightly issue then closes), and add the Synapse file to
-  the part's list whenever you port from one that is not there.
+  `synapse-watch.yaml` says which Synapse paths each part mirrors, the tag
+  each was last reviewed against, and the Synapse PRs `handled` past it.
+  Add a PR's number there when you port or dismiss it, move a part's
+  `reviewed` forward once it is clear (the nightly issue closes when
+  nothing is left), and add the Synapse file to the part's list whenever
+  you port from one that is not there.
 - The five workers merged, and their working notes, which hold the traps
   and measurements behind nearly every rule. Read the relevant one before
   porting from it:

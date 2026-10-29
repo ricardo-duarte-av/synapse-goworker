@@ -101,13 +101,27 @@ func TestWatch(t *testing.T) {
 	}
 	md := r.markdown(m)
 	for _, want := range []string{"## creator (`internal/creator`)", "element-hq/synapse#42", "`synapse/gone.py` no longer exists",
-		"compare/v1.0.0...v1.1.0rc1", "reviewed: v1.1.0rc1"} {
+		"compare/v1.0.0...v1.1.0rc1", "`reviewed:` to v1.1.0rc1", "since v1.0.0"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("report lacks %q:\n%s", want, md)
 		}
 	}
 	if strings.Contains(md, "## sender") || strings.Contains(md, "do not mirror") {
 		t.Errorf("report lists what did not change:\n%s", md)
+	}
+
+	// A handled PR is not listed, and a component's own reviewed tag wins.
+	m.Handled = []int{42}
+	if r, err := watch(gitRepo(dir), m); err != nil || len(r.Components["creator"].Commits) != 1 {
+		t.Errorf("handled #42: %+v %v", r.Components["creator"], err)
+	}
+	m.Handled = nil
+	// (Without gone.py, which is in neither tag.)
+	comp := Component{Code: "internal/creator", Reviewed: "v1.1.0rc1", Synapse: []string{"synapse/handlers/message.py"}}
+	m.Components["creator"] = comp
+	if r, err := watch(gitRepo(dir), m); err != nil || len(r.Components["creator"].Commits) != 0 ||
+		r.Components["creator"].Reviewed != "v1.1.0rc1" {
+		t.Errorf("own reviewed tag: %+v %v", r.Components["creator"], err)
 	}
 
 	// Reviewed caught up: nothing to report.

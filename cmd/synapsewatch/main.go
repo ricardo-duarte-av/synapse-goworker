@@ -3,7 +3,8 @@
 //
 // It reads a clone of element-hq/synapse with its tags, finds the newest
 // release or rc tag, and for each component lists the commits and files
-// between `reviewed` and that tag under the component's paths. The report is
+// between its reviewed tag (its own, or the manifest's) and that tag under the
+// component's paths, less the Synapse PRs listed as handled. The report is
 // Markdown, for the nightly workflow to put in an issue; it judges nothing.
 //
 //	synapsewatch -manifest synapse-watch.yaml -synapse ../synapse -out report.md
@@ -30,15 +31,43 @@ import (
 
 // Manifest is synapse-watch.yaml.
 type Manifest struct {
+	// Reviewed is the tag a component was last reviewed against, unless it
+	// names its own.
 	Reviewed   string               `yaml:"reviewed"`
 	Components map[string]Component `yaml:"components"`
+	// Handled are Synapse PR numbers ported or dismissed although they are
+	// past a component's reviewed tag.
+	Handled []int `yaml:"handled"`
 }
 
 // Component is one part of goworker and the Synapse paths it mirrors.
 type Component struct {
-	Code    string   `yaml:"code"`
-	Synapse []string `yaml:"synapse"`
+	Code     string   `yaml:"code"`
+	Reviewed string   `yaml:"reviewed"`
+	Synapse  []string `yaml:"synapse"`
 }
+
+// reviewedOf is a component's reviewed tag.
+func (m *Manifest) reviewedOf(c Component) string {
+	if c.Reviewed != "" {
+		return c.Reviewed
+	}
+	return m.Reviewed
+}
+
+// handled reports whether a commit's subject names a handled PR: Synapse's
+// squash merges end in "(#1234)", and a backport may carry two.
+func (m *Manifest) handled(subject string) bool {
+	for _, n := range prRE.FindAllStringSubmatch(subject, -1) {
+		v, _ := strconv.Atoi(n[1])
+		if slices.Contains(m.Handled, v) {
+			return true
+		}
+	}
+	return false
+}
+
+var prRE = regexp.MustCompile(`\(#(\d+)\)`)
 
 func main() {
 	manifest := flag.String("manifest", "synapse-watch.yaml", "the manifest")
@@ -91,6 +120,13 @@ func loadManifest(path string) (*Manifest, error) {
 	}
 	if len(m.Components) == 0 {
 		return nil, fmt.Errorf("%s: no components", path)
+	}
+	for name, c := range m.Components {
+		if c.Reviewed != "" {
+			if _, ok := parseVersion(c.Reviewed); !ok {
+				return nil, fmt.Errorf("%s: component %s: reviewed %q is not a release tag", path, name, c.Reviewed)
+			}
+		}
 	}
 	return &m, nil
 }
@@ -177,18 +213,19 @@ func (g gitRepo) exists(ref, path string) (bool, error) {
 	return len(ls) > 0, err
 }
 
-// Result is what changed between reviewed and the newest tag.
+// Result is what changed between each component's reviewed tag and the
+// newest tag.
 type Result struct {
 	Newest string
-	// Ahead is whether the newest tag is after reviewed at all.
-	Ahead bool
 	// By component name.
 	Components map[string]*ComponentResult
 }
 
 // ComponentResult is one component's share of the changes.
 type ComponentResult struct {
-	Commits []Commit
+	// Reviewed is the tag the component's changes are counted from.
+	Reviewed string
+	Commits  []Commit
 	// Stat is git diff --stat over the component's paths.
 	Stat string
 	// Gone are manifest paths that no longer exist at the newest tag.
@@ -219,29 +256,34 @@ func watch(g gitRepo, m *Manifest) (*Result, error) {
 	if !ok {
 		return nil, fmt.Errorf("no release tags in %s: was it cloned with tags?", g)
 	}
-	if !slices.Contains(tags, m.Reviewed) {
-		return nil, fmt.Errorf("reviewed tag %s is not in %s", m.Reviewed, g)
-	}
-	rv, _ := parseVersion(m.Reviewed)
 	nv, _ := parseVersion(newest)
-	r := &Result{Newest: newest, Ahead: nv.compare(rv) > 0, Components: map[string]*ComponentResult{}}
+	r := &Result{Newest: newest, Components: map[string]*ComponentResult{}}
 
 	for name, c := range m.Components {
+		reviewed := m.reviewedOf(c)
+		if !slices.Contains(tags, reviewed) {
+			return nil, fmt.Errorf("component %s: reviewed tag %s is not in %s", name, reviewed, g)
+		}
+		// A path the component mirrors must exist at its reviewed tag, or at
+		// the newest if it is new since (added to the manifest as ported).
 		for _, p := range c.Synapse {
-			ok, err := g.exists(m.Reviewed, p)
+			ok, err := g.exists(reviewed, p)
+			if err == nil && !ok {
+				ok, err = g.exists(newest, p)
+			}
 			if err != nil {
 				return nil, err
 			}
 			if !ok {
-				return nil, fmt.Errorf("component %s: %s is not in Synapse at %s; fix the manifest", name, p, m.Reviewed)
+				return nil, fmt.Errorf("component %s: %s is not in Synapse at %s; fix the manifest", name, p, reviewed)
 			}
 		}
-		cr := &ComponentResult{}
+		cr := &ComponentResult{Reviewed: reviewed}
 		r.Components[name] = cr
-		if !r.Ahead {
+		if rv, _ := parseVersion(reviewed); nv.compare(rv) <= 0 {
 			continue
 		}
-		span := m.Reviewed + ".." + newest
+		span := reviewed + ".." + newest
 		args := append([]string{"log", "--no-merges", "--format=%H%x09%s", span, "--"}, c.Synapse...)
 		ls, err := g.lines(args...)
 		if err != nil {
@@ -249,6 +291,9 @@ func watch(g gitRepo, m *Manifest) (*Result, error) {
 		}
 		for _, l := range ls {
 			hash, subject, _ := strings.Cut(l, "\t")
+			if m.handled(subject) {
+				continue
+			}
 			cr.Commits = append(cr.Commits, Commit{hash, subject})
 		}
 		if len(cr.Commits) > 0 {
@@ -259,6 +304,10 @@ func watch(g gitRepo, m *Manifest) (*Result, error) {
 			cr.Stat = strings.TrimRight(stat, "\n")
 		}
 		for _, p := range c.Synapse {
+			if was, err := g.exists(reviewed, p); err != nil || !was {
+				// New since reviewed, so not gone.
+				continue
+			}
 			ok, err := g.exists(newest, p)
 			if err != nil {
 				return nil, err
@@ -279,13 +328,14 @@ const repoURL = "https://github.com/element-hq/synapse"
 func (r *Result) markdown(m *Manifest) string {
 	var b strings.Builder
 	if !r.Changed() {
-		fmt.Fprintf(&b, "Nothing goworker mirrors changed between Synapse %s (reviewed) and %s.\n", m.Reviewed, r.Newest)
+		fmt.Fprintf(&b, "Nothing goworker mirrors changed up to Synapse %s that is not reviewed or handled.\n", r.Newest)
 		return b.String()
 	}
-	fmt.Fprintf(&b, "Synapse changed code goworker mirrors between **%s** (reviewed) and **%s**: [compare](%s/compare/%s...%s).\n\n",
-		m.Reviewed, r.Newest, repoURL, m.Reviewed, r.Newest)
-	b.WriteString("For each change, port it (see the component's notes) or decide it does not affect us. " +
-		"Then set `reviewed: " + r.Newest + "` in `synapse-watch.yaml`; this issue closes on the next nightly run.\n")
+	fmt.Fprintf(&b, "Synapse up to **%s** changed code goworker mirrors since each component's reviewed tag.\n\n", r.Newest)
+	b.WriteString("For each change, port it (see the component's notes) or decide it does not affect us, " +
+		"and add its PR number to `handled:` in `synapse-watch.yaml`; once a component is clear, " +
+		"set its `reviewed:` to " + r.Newest + " and drop the numbers it covers. " +
+		"This issue closes on the first nightly run with nothing left.\n")
 
 	names := make([]string, 0, len(r.Components))
 	for n := range r.Components {
@@ -297,7 +347,8 @@ func (r *Result) markdown(m *Manifest) string {
 		if len(c.Commits) == 0 && len(c.Gone) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "\n## %s (`%s`)\n\n", n, m.Components[n].Code)
+		fmt.Fprintf(&b, "\n## %s (`%s`), since %s\n\n[compare](%s/compare/%s...%s)\n\n",
+			n, m.Components[n].Code, c.Reviewed, repoURL, c.Reviewed, r.Newest)
 		for _, p := range c.Gone {
 			fmt.Fprintf(&b, "- **`%s` no longer exists at %s**: moved or deleted.\n", p, r.Newest)
 		}

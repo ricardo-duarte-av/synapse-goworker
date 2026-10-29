@@ -1,9 +1,10 @@
 name: Synapse watch
 
 # Every night: has a Synapse release or rc changed code goworker mirrors
-# since the release we last reviewed (synapse-watch.yaml)? If so, one issue
-# labelled synapse-watch lists the commits, by component. It is retitled
-# when a newer tag adds to it, and closed once `reviewed` catches up.
+# since each component's reviewed tag, other than the PRs handled
+# (synapse-watch.yaml)? If so, one issue labelled synapse-watch lists the
+# commits, by component. It is rebuilt when the list changes, and closed
+# once nothing is left.
 
 on:
   schedule:
@@ -47,22 +48,27 @@ jobs:
           gh label create synapse-watch --color d93f0b \
             --description "Synapse changed code goworker mirrors" --force >/dev/null
           title="Synapse $NEWEST: changes to code goworker mirrors"
+          # The report's hash, so a changed list (a new tag, or handled PRs
+          # added to the manifest) rebuilds the issue and an unchanged one
+          # leaves it, and anything ticked on it, alone.
+          marker="<!-- synapse-watch $(sha256sum report.md | cut -c1-16) -->"
+          printf '\n%s\n' "$marker" >> report.md
           number=$(gh issue list --label synapse-watch --state open --json number --jq '.[0].number // empty')
-          current=$(test -n "$number" && gh issue view "$number" --json title --jq .title || true)
 
           if [ "$CHANGED" = "true" ]; then
             if [ -z "$number" ]; then
               gh issue create --title "$title" --label synapse-watch --body-file report.md
-            elif [ "$current" != "$title" ]; then
-              # A newer tag: the list is rebuilt from reviewed, so boxes
-              # ticked on the old one are not kept.
+            elif ! gh issue view "$number" --json body --jq .body | grep -qF "$marker"; then
+              current=$(gh issue view "$number" --json title --jq .title)
               gh issue edit "$number" --title "$title" --body-file report.md
-              gh issue comment "$number" --body "Updated for $NEWEST."
+              if [ "$current" != "$title" ]; then
+                gh issue comment "$number" --body "Updated for $NEWEST."
+              fi
             else
-              echo "Issue #$number is already about $NEWEST."
+              echo "Issue #$number is up to date."
             fi
           elif [ -n "$number" ]; then
-            gh issue close "$number" --comment "synapse-watch.yaml's reviewed tag has caught up with $NEWEST: nothing left to review."
+            gh issue close "$number" --comment "Nothing left to review up to $NEWEST: every change is reviewed or handled in synapse-watch.yaml."
           else
-            echo "Nothing to review: reviewed is $NEWEST or what changed since is not ours."
+            echo "Nothing to review up to $NEWEST."
           fi
