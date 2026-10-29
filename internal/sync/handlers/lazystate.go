@@ -94,8 +94,13 @@ func keepOnlyMembers(state map[store.StateKey]string, members map[string]bool) m
 // client asking for redundant members is asking not to be deduplicated, and
 // recording what it was sent would start deduplicating it as soon as it
 // stopped asking.
+//
+// A key in changed -- its state changed since the client's last sync -- is
+// sent even if the cache says it was sent already: the client may be retrying
+// a sync whose answer it never received (#20289).
 func dedupeLazyMembers(d Deps, f *filter.Collection, verdictUserID, deviceID string,
-	stateIDs map[store.StateKey]string, messages []store.TimelineEvent, initial bool) {
+	stateIDs map[store.StateKey]string, changed map[store.StateKey]bool,
+	messages []store.TimelineEvent, initial bool) {
 
 	if !f.LazyLoadMembers() || f.IncludeRedundantMembers() {
 		return
@@ -105,7 +110,7 @@ func dedupeLazyMembers(d Deps, f *filter.Collection, verdictUserID, deviceID str
 		cache.Clear()
 	} else {
 		for k, id := range stateIDs {
-			if k.Type == memberType && cache.Sent(k.StateKey) == id {
+			if k.Type == memberType && !changed[k] && cache.Sent(k.StateKey) == id {
 				delete(stateIDs, k)
 			}
 		}

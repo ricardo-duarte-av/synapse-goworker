@@ -361,7 +361,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 			if isCurrentlyJoined(rooms, roomID) {
 				continue
 			}
-			entry, err := archivedRoomEntry(ctx, d, roomID, verdict.UserID, c,
+			entry, err := archivedRoomEntry(ctx, d, roomID, verdict.UserID, verdict.DeviceID, c,
 				since, now, timeNow, cfg, d.MSC3391Enabled, useStateAfter, f)
 			if err != nil {
 				return nil, http.StatusInternalServerError, internalError(d, "archived room", err)
@@ -661,39 +661,25 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 	// MSC4222 reports what current state BECAME over the window, taken straight
 	// from the state delta stream, rather than the state a client must apply
 	// before the timeline.
-	var stateIDs map[store.StateKey]string
+	var (
+		stateIDs map[store.StateKey]string
+		changed  map[store.StateKey]bool
+	)
 	if useStateAfter {
-		stateIDs, err = d.Store.CurrentStateDeltas(ctx, room.RoomID,
-			since.Room.MaxStreamPos(), now.Room.MaxStreamPos())
+		stateIDs, changed, err = incrementalStateAfter(ctx, d, room.RoomID, userID, since,
+			now.Room, messages, stateMembers, true)
 		if err != nil {
 			return nil, err
 		}
-		// Lazy loading does not narrow the delta stream: Synapse deliberately
-		// returns every state change over the window, LL members included,
-		// because a client that missed a membership change cannot ask for it
-		// later (riot-web#7211). What lazy loading adds here is the memberships
-		// of timeline senders, which the delta stream would not carry if they
-		// did not change.
-		if len(stateMembers) > 0 {
-			current, err := d.Store.CurrentStateIDs(ctx, room.RoomID)
-			if err != nil {
-				return nil, err
-			}
-			for k, id := range keepOnlyMembers(current, stateMembers) {
-				if _, ok := stateIDs[k]; !ok {
-					stateIDs[k] = id
-				}
-			}
-		}
 		dropAliases(stateIDs)
 	} else {
-		stateIDs, err = incrementalStateDelta(ctx, d, room, messages, limited, since, now,
+		stateIDs, changed, err = incrementalStateDelta(ctx, d, room, messages, limited, since, now,
 			stateMembers)
 		if err != nil {
 			return nil, err
 		}
 	}
-	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, messages, false)
+	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, false)
 
 	summary := map[string]any{}
 	var summaryValue any = summary
@@ -809,10 +795,10 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 			"prev_batch": prevBatch.String(),
 			"limited":    limited,
 		},
-		stateKeyName(useStateAfter): map[string]any{"events": stateJSON},
-		"account_data":              map[string]any{"events": adEvents},
-		"ephemeral":                 map[string]any{"events": ephemeral},
-		"summary":                   summaryValue,
+		stateKeyName(ctx, useStateAfter): map[string]any{"events": stateJSON},
+		"account_data":                   map[string]any{"events": adEvents},
+		"ephemeral":                      map[string]any{"events": ephemeral},
+		"summary":                        summaryValue,
 	}
 	applyUnreadCounts(entry, unread, f, d.MSC3773Enabled)
 	stickyBlock, err := stickySection(ctx, d, room, userID, stickyIDs, messages, timeNow, cfg)
@@ -832,35 +818,46 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 // form an unbroken chain from where the client left off, the `state` block is
 // EMPTY -- everything that changed is in the timeline, and repeating it would
 // be waste. Only a gap, or a fork in the DAG, makes a state block necessary.
+//
+// changed is the keys whose state differs from the state at the previous
+// sync: the lazy-loaded members cache must not hold those back (#20289). The
+// other keys are memberships of timeline senders, which the client may have.
 func incrementalStateDelta(ctx context.Context, d Deps, room store.RoomForUser,
 	messages []store.TimelineEvent, limited bool,
-	since, now streamtoken.Token, members map[string]bool) (map[store.StateKey]string, error) {
+	since, now streamtoken.Token, members map[string]bool) (map[store.StateKey]string, map[store.StateKey]bool, error) {
 
-	if !limited && len(messages) > 0 {
-		linear, err := isLinearTimeline(ctx, d, room.RoomID, messages, since.Room)
-		if err != nil {
-			return nil, err
+	if !limited {
+		// An empty timeline counts as linear, as in Synapse.
+		linear := true
+		if len(messages) > 0 {
+			var err error
+			if linear, err = isLinearTimeline(ctx, d, room.RoomID, messages, since.Room); err != nil {
+				return nil, nil, err
+			}
 		}
 		if linear {
 			// Under lazy loading the state block is not empty even here: the
 			// client may never have been sent the memberships of the senders in
 			// this timeline, so those alone are returned. The caller dedupes
-			// the ones it has already sent.
+			// the ones it has already sent. Nothing else changed.
 			if len(members) == 0 {
-				return nil, nil
+				return nil, nil, nil
 			}
-			// Only the members are kept, so only the members are fetched.
-			state, err := stateAtEvent(ctx, d, messages[0].EventID,
-				members, memberList(members))
+			// Only the members are kept, so only the members are fetched: at
+			// the timeline's start, or with no timeline (the members are a
+			// sticky section's senders) at its end.
+			var state map[store.StateKey]string
+			var err error
+			if len(messages) > 0 {
+				state, err = stateAtEvent(ctx, d, messages[0].EventID, members, memberList(members))
+			} else {
+				state, err = stateIDsAtFor(ctx, d, room.RoomID, now.Room, members, memberList(members))
+			}
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			return keepOnlyMembers(state, members), nil
+			return keepOnlyMembers(state, members), nil, nil
 		}
-	}
-	if !limited && len(messages) == 0 {
-		// Nothing happened, so nothing changed.
-		return nil, nil
 	}
 
 	// Everything below asks the state store for only what a lazy-loading
@@ -874,13 +871,13 @@ func incrementalStateDelta(ctx context.Context, d Deps, room store.RoomForUser,
 	if len(messages) > 0 {
 		start, err = stateAtEvent(ctx, d, messages[0].EventID, members, wanted)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if start == nil {
 		start, err = stateIDsAtFor(ctx, d, room.RoomID, now.Room, members, wanted)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	// The timeline start keeps the lazy-load restriction even on a gappy sync.
@@ -901,16 +898,23 @@ func incrementalStateDelta(ctx context.Context, d Deps, room store.RoomForUser,
 	endWanted := memberList(ends)
 	previous, err := stateIDsAtFor(ctx, d, room.RoomID, since.Room, ends, endWanted)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	restrictToMembers(previous, ends)
 	end, err := stateIDsAtFor(ctx, d, room.RoomID, now.Room, ends, endWanted)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	restrictToMembers(end, ends)
 
-	return calculateState(start, end, previous, messages, members != nil), nil
+	state := calculateState(start, end, previous, messages, members != nil)
+	changed := map[store.StateKey]bool{}
+	for k, id := range state {
+		if previous[k] != id {
+			changed[k] = true
+		}
+	}
+	return state, changed, nil
 }
 
 // stateAtEvent resolves the state at (strictly, just after) one event,
@@ -1114,10 +1118,11 @@ func userChangesFromRooms(joined map[string]any) (joinedOrInvited []string, leav
 			continue
 		}
 		// Timeline only for the leave side; see the note on leaveCandidates.
-		// Both spellings of the state block: MSC4222 renames it, and the
-		// membership scan must follow it or the device-list and presence
-		// sections silently lose everyone who joined.
-		for _, section := range []string{"state", "org.matrix.msc4222.state_after", "timeline"} {
+		// Every spelling of the state block: MSC4222 renames it (stable and
+		// unstable), and the membership scan must follow it or the
+		// device-list and presence sections silently lose everyone who
+		// joined.
+		for _, section := range []string{"state", "state_after", "org.matrix.msc4222.state_after", "timeline"} {
 			block, ok := room[section].(map[string]any)
 			if !ok {
 				continue
@@ -1191,7 +1196,7 @@ func isCurrentlyJoined(rooms []store.RoomForUser, roomID string) bool {
 //
 // The section itself is smaller than a joined room's: no ephemeral, no unread
 // counts, no summary. Those describe a room you are in.
-func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID string,
+func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID, deviceID string,
 	change store.MembershipChange, since, now streamtoken.Token, timeNow int64,
 	cfg clientevent.Config, msc3391, useStateAfter bool,
 	f *filter.Collection) (map[string]any, error) {
@@ -1241,19 +1246,25 @@ func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID string,
 	if f.LazyLoadMembers() {
 		stateMembers = timelineMembers(messages, useStateAfter)
 	}
-	var stateIDs map[store.StateKey]string
+	var (
+		stateIDs map[store.StateKey]string
+		changed  map[store.StateKey]bool
+	)
 	if !change.OutOfBand {
 		if useStateAfter {
-			stateIDs, err = d.Store.CurrentStateDeltas(ctx, roomID,
-				since.Room.MaxStreamPos(), leaveKey.MaxStreamPos())
+			stateIDs, changed, err = incrementalStateAfter(ctx, d, roomID, userID, since,
+				leaveKey, messages, stateMembers, false)
 			dropAliases(stateIDs)
 		} else {
-			stateIDs, err = incrementalStateDelta(ctx, d, room, messages, limited, since,
+			stateIDs, changed, err = incrementalStateDelta(ctx, d, room, messages, limited, since,
 				endToken, stateMembers)
 		}
 		if err != nil {
 			return nil, err
 		}
+		// compute_state_delta dedupes lazy-loaded members for a left room
+		// as for a joined one.
+		dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, false)
 	}
 
 	accountData, err := d.Store.RoomAccountDataSince(ctx, userID,
@@ -1327,8 +1338,8 @@ func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID string,
 		"timeline": map[string]any{
 			"events": timeline, "prev_batch": prevBatch.String(), "limited": limited,
 		},
-		stateKeyName(useStateAfter): map[string]any{"events": stateJSON},
-		"account_data":              map[string]any{"events": adEvents},
+		stateKeyName(ctx, useStateAfter): map[string]any{"events": stateJSON},
+		"account_data":                   map[string]any{"events": adEvents},
 	}, nil
 }
 

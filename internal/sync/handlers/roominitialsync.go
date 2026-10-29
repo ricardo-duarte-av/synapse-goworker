@@ -36,8 +36,6 @@ type Deps struct {
 	MSC3391Enabled bool
 	// PushRuleFeatures gates individual base push rules.
 	PushRuleFeatures pushrules.Features
-	// MSC4222Enabled mirrors Synapse's experimental.msc4222_enabled.
-	MSC4222Enabled bool
 	// MSC3773Enabled and MSC3874Enabled change only how a filter is read.
 	MSC3773Enabled bool
 	MSC3874Enabled bool

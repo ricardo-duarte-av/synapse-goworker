@@ -47,23 +47,33 @@ func Sync(d Deps) http.Handler {
 			body   []byte
 			status int
 		)
-		// MSC4222 is opt-in per request, and only offered when enabled, exactly
-		// as Synapse gates it.
-		useStateAfter := d.MSC4222Enabled &&
-			r.URL.Query().Get("org.matrix.msc4222.use_state_after") == "true"
+		// Synapse parses its query parameters before it does any work, in
+		// this order, and 400s on the first bad one: set_presence, then the
+		// booleans full_state and use_state_after. Only then is the filter
+		// resolved and the poll begun.
+		setPresence, presErr := parseSetPresence(r)
+		if presErr != nil {
+			refuse(w, ann, http.StatusBadRequest, *presErr)
+			return
+		}
+		// full_state is validated as Synapse validates it; what it asks for
+		// is not served yet (TODO.md).
+		if _, boolErr := parseBoolean(r, "full_state"); boolErr != nil {
+			refuse(w, ann, http.StatusBadRequest, *boolErr)
+			return
+		}
+		useStateAfter, unstableName, boolErr := parseUseStateAfter(r)
+		if boolErr != nil {
+			refuse(w, ann, http.StatusBadRequest, *boolErr)
+			return
+		}
+		if unstableName {
+			r = r.WithContext(context.WithValue(r.Context(), unstableStateAfterKey{}, true))
+		}
 
 		f, mxErr := resolveFilter(r.Context(), d, verdict.UserID, filterQueryParam(r))
 		if mxErr != nil {
 			refuse(w, ann, http.StatusBadRequest, *mxErr)
-			return
-		}
-
-		// Synapse parses set_presence before it does any work and 400s on a
-		// value outside the allowed set, so this happens before the filter is
-		// resolved or the poll begins.
-		setPresence, presErr := parseSetPresence(r)
-		if presErr != nil {
-			refuse(w, ann, http.StatusBadRequest, *presErr)
 			return
 		}
 		// Relayed once per request, around the sync, where Synapse wraps the
@@ -576,16 +586,10 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 	// ended up rather than what it must apply first.
 	var stateIDs map[store.StateKey]string
 	if useStateAfter {
-		if stateMembers != nil {
-			stateIDs, err = d.Store.LazyStateIDsAt(ctx, room.RoomID, endKey,
-				memberList(stateMembers))
-		} else {
-			stateIDs, err = d.Store.StateIDsAt(ctx, room.RoomID, endKey)
-		}
+		stateIDs, err = initialStateAfter(ctx, d, room.RoomID, endKey, stateMembers, !archived)
 		if err != nil {
 			return nil, err
 		}
-		restrictToMembers(stateIDs, stateMembers)
 		dropAliases(stateIDs)
 	} else {
 		stateIDs, err = syncStateBlock(ctx, d, room, messages, endKey, stateMembers)
@@ -593,7 +597,8 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 			return nil, err
 		}
 	}
-	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, messages, initial)
+	// A full-state block has no changed keys (_compute_state_delta_for_full_sync).
+	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, nil, messages, initial)
 
 	// The summary is computed BEFORE the state block is loaded, because it can
 	// add to it: a hero whose membership the client has never been sent is
@@ -760,8 +765,8 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 				"prev_batch": prevBatch.String(),
 				"limited":    limited,
 			},
-			stateKeyName(useStateAfter): map[string]any{"events": stateJSON},
-			"account_data":              map[string]any{"events": adEvents},
+			stateKeyName(ctx, useStateAfter): map[string]any{"events": stateJSON},
+			"account_data":                   map[string]any{"events": adEvents},
 		}, nil
 	}
 
@@ -776,9 +781,9 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 			"prev_batch": prevBatch.String(),
 			"limited":    limited,
 		},
-		stateKeyName(useStateAfter): map[string]any{"events": stateJSON},
-		"account_data":              map[string]any{"events": adEvents},
-		"ephemeral":                 map[string]any{"events": ephemeral},
+		stateKeyName(ctx, useStateAfter): map[string]any{"events": stateJSON},
+		"account_data":                   map[string]any{"events": adEvents},
+		"ephemeral":                      map[string]any{"events": ephemeral},
 		// A summary is computed only when the filter enables lazy-loading of
 		// members, because that is when a client lacks the memberships to name
 		// the room itself. Otherwise the key is present and empty -- not
@@ -942,12 +947,50 @@ func stateEventIDsInCurrentState(ctx context.Context, d Deps,
 //
 // MSC4222 deliberately uses a different key rather than changing what `state`
 // means: a client that did not opt in must not silently start receiving state
-// with the opposite meaning.
-func stateKeyName(useStateAfter bool) string {
-	if useStateAfter {
+// with the opposite meaning. A client that opted in with the unstable
+// parameter gets the unstable field back (until 2027-09-01 in Synapse).
+func stateKeyName(ctx context.Context, useStateAfter bool) string {
+	switch {
+	case !useStateAfter:
+		return "state"
+	case ctx.Value(unstableStateAfterKey{}) != nil:
 		return "org.matrix.msc4222.state_after"
 	}
-	return "state"
+	return "state_after"
+}
+
+// unstableStateAfterKey marks a request that asked for state_after with
+// org.matrix.msc4222.use_state_after rather than the stable name.
+type unstableStateAfterKey struct{}
+
+// parseUseStateAfter is MSC4222's opt-in, stable since Synapse v1.164:
+// use_state_after, or else the unstable org.matrix.msc4222.use_state_after,
+// in which case unstable is true.
+func parseUseStateAfter(r *http.Request) (on, unstable bool, err *matrixerr.Error) {
+	if on, err = parseBoolean(r, "use_state_after"); on || err != nil {
+		return on, false, err
+	}
+	on, err = parseBoolean(r, "org.matrix.msc4222.use_state_after")
+	return on, on, err
+}
+
+// parseBoolean is parse_boolean with default False: absent is false, and
+// anything but "true" or "false" is refused.
+func parseBoolean(r *http.Request, name string) (bool, *matrixerr.Error) {
+	v, ok := r.URL.Query()[name]
+	if !ok || len(v) == 0 {
+		return false, nil
+	}
+	switch v[0] {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, &matrixerr.Error{
+		ErrCode: matrixerr.CodeInvalidParam,
+		Error:   "Boolean query parameter '" + name + "' must be one of ['true', 'false']",
+	}
 }
 
 // dropAliases removes every m.room.aliases entry from a state map.

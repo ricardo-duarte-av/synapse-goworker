@@ -184,7 +184,6 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Log:                 log,
 		MSC4354Enabled:      flag("msc4354_enabled", false),
 		MSC3391Enabled:      flag("msc3391_enabled", false),
-		MSC4222Enabled:      flag("msc4222_enabled", false),
 		MSC3773Enabled:      flag("msc3773_enabled", false),
 		MSC3874Enabled:      flag("msc3874_enabled", false),
 		FilterTimelineLimit: cfg.Sync.TimelineLimitCap(),
