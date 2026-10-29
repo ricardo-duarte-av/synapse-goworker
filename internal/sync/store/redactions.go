@@ -24,6 +24,7 @@ type clientEventSource struct {
 	Type             string
 	JSON             []byte
 	InternalMetadata []byte
+	ReceivedTS       int64
 }
 
 // Redactions finds which of the given events have been redacted.
@@ -164,7 +165,7 @@ func (s *Store) Redactions(ctx context.Context, eventIDs []string) (map[string]R
 	}
 	found := map[string]redactionRow{}
 	rows, err = s.query(ctx, "RedactionEvents", `
-		SELECT e.event_id, e.room_id, COALESCE(e.sender, ''), e.type, ej.json, ej.internal_metadata,
+		SELECT e.event_id, e.room_id, COALESCE(e.sender, ''), e.type, ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0),
 		       (e.rejection_reason IS NOT NULL OR rj.event_id IS NOT NULL)
 		  FROM events e JOIN event_json ej USING (event_id)
 		  LEFT JOIN rejections rj USING (event_id)
@@ -175,7 +176,7 @@ func (s *Store) Redactions(ctx context.Context, eventIDs []string) (map[string]R
 	for rows.Next() {
 		var r redactionRow
 		if err := rows.Scan(&r.src.EventID, &r.src.RoomID, &r.sender, &r.src.Type,
-			&r.src.JSON, &r.src.InternalMetadata, &r.rejected); err != nil {
+			&r.src.JSON, &r.src.InternalMetadata, &r.src.ReceivedTS, &r.rejected); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("store: redaction events: %w", err)
 		}
@@ -215,8 +216,8 @@ func (s *Store) Redactions(ctx context.Context, eventIDs []string) (map[string]R
 }
 
 // RedactionEvent exposes the redaction event for serialisation.
-func (r Redaction) RedactionEvent() (eventID, roomID, eventType string, body, meta []byte) {
-	return r.Event.EventID, r.Event.RoomID, r.Event.Type, r.Event.JSON, r.Event.InternalMetadata
+func (r Redaction) RedactionEvent() (eventID, roomID, eventType string, body, meta []byte, receivedTS int64) {
+	return r.Event.EventID, r.Event.RoomID, r.Event.Type, r.Event.JSON, r.Event.InternalMetadata, r.Event.ReceivedTS
 }
 
 func domainOf(userID string) string {

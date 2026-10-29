@@ -655,9 +655,18 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 	// Lazy loading restricts the state block to the memberships this timeline
 	// needs. Unlike a full-state sync, our own membership is NOT added: the
 	// client already has it, and Synapse only forces it in on the full path.
+	// The sticky section first: its senders' memberships are lazy-loaded
+	// too (#20362).
+	stickyBlock, stickySenders, err := stickySection(ctx, d, room, userID, stickyIDs, messages, timeNow, cfg)
+	if err != nil {
+		return nil, err
+	}
 	var stateMembers map[string]bool
 	if f.LazyLoadMembers() {
 		stateMembers = timelineMembers(messages, useStateAfter)
+		for _, s := range stickySenders {
+			stateMembers[s] = true
+		}
 	}
 
 	// MSC4222 reports what current state BECAME over the window, taken straight
@@ -803,10 +812,6 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 		"summary":                        summaryValue,
 	}
 	applyUnreadCounts(entry, unread, f, d.MSC3773Enabled)
-	stickyBlock, err := stickySection(ctx, d, room, userID, stickyIDs, messages, timeNow, cfg)
-	if err != nil {
-		return nil, err
-	}
 	if stickyBlock != nil {
 		entry["msc4354_sticky"] = stickyBlock
 	}

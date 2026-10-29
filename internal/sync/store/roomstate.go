@@ -82,7 +82,7 @@ func (s *Store) IsServerAdmin(ctx context.Context, userID string) (bool, error) 
 // get_events leaves it out.
 func (s *Store) CurrentStateInRowOrder(ctx context.Context, roomID, roomVersion string, key *StateKey) ([]StateEvent, error) {
 	q := `
-		SELECT cse.event_id, cse.type, cse.state_key, e.sender, ej.json, ej.internal_metadata
+		SELECT cse.event_id, cse.type, cse.state_key, e.sender, ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0)
 		  FROM current_state_events cse
 		  JOIN events e USING (event_id)
 		  JOIN event_json ej USING (event_id)
@@ -101,7 +101,7 @@ func (s *Store) CurrentStateInRowOrder(ctx context.Context, roomID, roomVersion 
 	for rows.Next() {
 		var ev StateEvent
 		if err := rows.Scan(&ev.EventID, &ev.Type, &ev.StateKey, &ev.Sender,
-			&ev.JSON, &ev.InternalMetadata); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS); err != nil {
 			return nil, fmt.Errorf("store: current state: %w", err)
 		}
 		ev.RoomID = roomID
@@ -178,7 +178,7 @@ func (s *Store) eventsNotRejected(ctx context.Context, eventIDs []string, roomVe
 	}
 	const q = `
 		SELECT e.event_id, e.room_id, e.type, COALESCE(e.state_key, ''), e.sender,
-		       ej.json, ej.internal_metadata
+		       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0)
 		  FROM events e JOIN event_json ej USING (event_id)
 		  LEFT JOIN rejections r USING (event_id)
 		 WHERE e.event_id = ANY($1) AND r.event_id IS NULL`
@@ -191,7 +191,7 @@ func (s *Store) eventsNotRejected(ctx context.Context, eventIDs []string, roomVe
 	for rows.Next() {
 		var ev StateEvent
 		if err := rows.Scan(&ev.EventID, &ev.RoomID, &ev.Type, &ev.StateKey, &ev.Sender,
-			&ev.JSON, &ev.InternalMetadata); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS); err != nil {
 			return nil, fmt.Errorf("store: events: %w", err)
 		}
 		ev.RoomVersion = roomVersion

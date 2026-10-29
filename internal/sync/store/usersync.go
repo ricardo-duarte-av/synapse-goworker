@@ -320,12 +320,12 @@ func (s *Store) MultiRoomReceipts(ctx context.Context, roomIDs []string, toMax i
 // InviteEvent loads a single event for the `invite` field of /initialSync.
 func (s *Store) InviteEvent(ctx context.Context, eventID, roomID, roomVersion string) (StateEvent, error) {
 	const q = `
-		SELECT e.type, COALESCE(e.state_key, ''), e.sender, ej.json, ej.internal_metadata
+		SELECT e.type, COALESCE(e.state_key, ''), e.sender, ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0)
 		  FROM events e JOIN event_json ej USING (event_id)
 		 WHERE e.event_id = $1`
 	var ev StateEvent
 	if err := s.queryRow(ctx, "InviteEvent", q, eventID).Scan(
-		&ev.Type, &ev.StateKey, &ev.Sender, &ev.JSON, &ev.InternalMetadata); err != nil {
+		&ev.Type, &ev.StateKey, &ev.Sender, &ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS); err != nil {
 		return StateEvent{}, fmt.Errorf("store: invite event: %w", err)
 	}
 	ev.EventID = eventID

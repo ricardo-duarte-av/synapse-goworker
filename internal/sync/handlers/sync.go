@@ -571,10 +571,19 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 	// actually needs. Our own membership is always included on a full-state
 	// sync: without it a client cannot tell whether it is still in the room,
 	// and Element got this wrong for exactly that reason (riot-web#7209).
+	// The sticky section first: its senders' memberships are lazy-loaded
+	// too (#20362).
+	stickyBlock, stickySenders, err := stickySection(ctx, d, room, userID, stickyIDs, messages, timeNow, cfg)
+	if err != nil {
+		return nil, err
+	}
 	var stateMembers map[string]bool
 	if f.LazyLoadMembers() {
 		stateMembers = timelineMembers(messages, useStateAfter)
 		stateMembers[userID] = true
+		for _, s := range stickySenders {
+			stateMembers[s] = true
+		}
 	}
 
 	// The `state` block is what the client needs to interpret the timeline that
@@ -791,10 +800,6 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		"summary": summaryValue,
 	}
 	applyUnreadCounts(entry, unread, f, d.MSC3773Enabled)
-	stickyBlock, err := stickySection(ctx, d, room, userID, stickyIDs, messages, timeNow, cfg)
-	if err != nil {
-		return nil, err
-	}
 	if stickyBlock != nil {
 		entry["msc4354_sticky"] = stickyBlock
 	}

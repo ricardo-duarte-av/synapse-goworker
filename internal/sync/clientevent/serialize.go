@@ -95,38 +95,16 @@ type Config struct {
 // rust/src/events/mod.rs:403.
 const stickyMaxDurationMS = int64(60 * 60 * 1000)
 
-// applyStickyTTL adds `unsigned.msc4354_sticky_duration_ttl_ms` (MSC4354).
-//
-// The remaining lifetime, not the configured duration: a client needs to know
-// how long the event stays pinned from now, so the value shrinks as the event
-// ages and the field disappears once it has expired.
-//
-// The `min(origin_server_ts, time_now)` is not redundant. It stops a remote
-// server claiming a timestamp in the future to make its event stick for longer
-// than the one-hour cap allows.
-func applyStickyTTL(out []byte, nowMS int64) ([]byte, error) {
-	sticky := gjson.GetBytes(out, "msc4354_sticky")
-	if !sticky.IsObject() {
-		return out, nil
+// applyStickyTTL adds `unsigned.msc4354_sticky_duration_ttl_ms` (MSC4354):
+// the time the event stays sticky from now, as rust/src/events/serialize.rs
+// reports it from locally_sticky_until_ts. The value shrinks as the event
+// ages, and the field goes once it has expired.
+func applyStickyTTL(out []byte, ev Stored, nowMS int64) ([]byte, error) {
+	until := StickyUntil(out, ev.InternalMetadata, ev.ReceivedTS)
+	if remaining := until - nowMS; until > 0 && remaining > 0 {
+		return sjson.SetBytes(out, "unsigned.msc4354_sticky_duration_ttl_ms", remaining)
 	}
-	duration := sticky.Get("duration_ms")
-	// The MSC requires a non-negative integer; anything else means not sticky.
-	if !duration.Exists() || duration.Type != gjson.Number || duration.Int() < 0 {
-		return out, nil
-	}
-	ms := duration.Int()
-	if ms > stickyMaxDurationMS {
-		ms = stickyMaxDurationMS
-	}
-	originTS := gjson.GetBytes(out, "origin_server_ts").Int()
-	if originTS > nowMS {
-		originTS = nowMS
-	}
-	expiresAt := originTS + ms
-	if expiresAt <= nowMS {
-		return out, nil
-	}
-	return sjson.SetBytes(out, "unsigned.msc4354_sticky_duration_ttl_ms", expiresAt-nowMS)
+	return out, nil
 }
 
 // persistedUnsignedFields is the complete set of `unsigned` keys Synapse keeps
@@ -168,7 +146,11 @@ type Stored struct {
 	JSON []byte
 	// InternalMetadata is `event_json.internal_metadata` verbatim.
 	InternalMetadata []byte
-	RoomVersion      string
+	// ReceivedTS is `events.received_ts`, 0 when unknown (an event from
+	// before Synapse v0.16): an MSC4354 sticky event is sticky from the
+	// earlier of it and origin_server_ts.
+	ReceivedTS  int64
+	RoomVersion string
 	// Membership is the sender's membership at this event, for MSC4115's
 	// `unsigned.membership`. Empty to omit.
 	Membership string
@@ -305,7 +287,7 @@ func Serialize(ev Stored, nowMS int64, cfg Config) ([]byte, error) {
 	}
 
 	if cfg.MSC4354Enabled {
-		if out, err = applyStickyTTL(out, nowMS); err != nil {
+		if out, err = applyStickyTTL(out, ev, nowMS); err != nil {
 			return nil, err
 		}
 	}

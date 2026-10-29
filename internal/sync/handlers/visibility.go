@@ -31,7 +31,8 @@ func filterVisibleAlways(ctx context.Context, d Deps, roomID, userID string,
 	events []store.TimelineEvent, isPeeking bool, nowMS int64,
 	alwaysInclude map[string]bool) ([]store.TimelineEvent, []string, error) {
 
-	res, err := eventfilter.ForClient(ctx, d.Store, roomID, userID, events, isPeeking, nowMS, alwaysInclude)
+	res, err := eventfilter.ForClient(ctx, d.Store, roomID, userID, events, isPeeking, nowMS,
+		d.MSC4354Enabled, alwaysInclude)
 	if err != nil {
 		return nil, nil, err
 	}

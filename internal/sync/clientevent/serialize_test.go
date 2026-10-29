@@ -165,12 +165,19 @@ func TestRedactsIsMirrored(t *testing.T) {
 
 // MSC4354. The value is the time the event has LEFT to live, not its configured
 // duration, so it shrinks as the event ages and vanishes once expired.
+// MSC4354's TTL as Synapse v1.164 reports it: from the earlier of
+// origin_server_ts and received_ts (#20324), for a strictly positive duration
+// (#20350), not for spammy events or ones with no received_ts.
 func TestStickyTTL(t *testing.T) {
-	sticky := func(durationMS int64, originTS int64) Stored {
-		return Stored{EventID: "$e", Type: "m.room.message",
+	stickyWith := func(duration string, originTS, receivedTS int64, meta string) Stored {
+		return Stored{EventID: "$e", Type: "m.room.message", ReceivedTS: receivedTS,
+			InternalMetadata: []byte(meta),
 			JSON: []byte(fmt.Sprintf(`{"type":"m.room.message","sender":"@u:e","content":{},
-				"origin_server_ts":%d,"msc4354_sticky":{"duration_ms":%d},"unsigned":{}}`,
-				originTS, durationMS))}
+				"origin_server_ts":%d,"msc4354_sticky":{"duration_ms":%s},"unsigned":{}}`,
+				originTS, duration))}
+	}
+	sticky := func(durationMS, originTS, receivedTS int64) Stored {
+		return stickyWith(fmt.Sprint(durationMS), originTS, receivedTS, `{}`)
 	}
 	ttl := func(t *testing.T, ev Stored, nowMS int64, enabled bool) (float64, bool) {
 		t.Helper()
@@ -183,44 +190,34 @@ func TestStickyTTL(t *testing.T) {
 		return v, ok
 	}
 
-	t.Run("remaining lifetime", func(t *testing.T) {
-		got, ok := ttl(t, sticky(10000, 1000), 4000, true)
-		if !ok || got != 7000 {
-			t.Errorf("ttl = %v (present=%v), want 7000", got, ok)
+	for name, tc := range map[string]struct {
+		ev      Stored
+		now     int64
+		want    float64
+		present bool
+	}{
+		"remaining lifetime":          {sticky(10000, 1000, 1000), 4000, 7000, true},
+		"from received_ts if earlier": {sticky(10000, 3000, 1000), 4000, 7000, true},
+		// A remote server cannot claim a future timestamp to stick longer.
+		"a future origin_server_ts buys nothing": {sticky(5000, 1_000_000, 1000), 2000, 4000, true},
+		"capped at one hour":                     {sticky(99*60*60*1000, 1000, 1000), 1000, float64(stickyMaxDurationMS), true},
+		"expired":                                {sticky(1000, 1000, 1000), 5000, 0, false},
+		"zero duration":                          {sticky(0, 1000, 1000), 1000, 0, false},
+		"float duration":                         {stickyWith("5000.0", 1000, 1000, `{}`), 1000, 0, false},
+		"negative duration":                      {stickyWith("-5", 1000, 1000, `{}`), 1000, 0, false},
+		"string duration":                        {stickyWith(`"soon"`, 1000, 1000, `{}`), 2000, 0, false},
+		"no received_ts":                         {sticky(10000, 1000, 0), 2000, 0, false},
+		"policy server spammy":                   {stickyWith("10000", 1000, 1000, `{"policy_server_spammy":true}`), 2000, 0, false},
+		"spam checker spammy":                    {stickyWith("10000", 1000, 1000, `{"spam_checker_spammy":true}`), 2000, 0, false},
+	} {
+		got, ok := ttl(t, tc.ev, tc.now, true)
+		if ok != tc.present || got != tc.want {
+			t.Errorf("%s: ttl %v (present %v), want %v (present %v)", name, got, ok, tc.want, tc.present)
 		}
-	})
-	t.Run("expired events carry nothing", func(t *testing.T) {
-		if _, ok := ttl(t, sticky(1000, 1000), 5000, true); ok {
-			t.Error("an expired sticky event should carry no ttl")
-		}
-	})
-	t.Run("capped at one hour", func(t *testing.T) {
-		got, _ := ttl(t, sticky(99*60*60*1000, 1000), 1000, true)
-		if got != float64(stickyMaxDurationMS) {
-			t.Errorf("ttl = %v, want the one-hour cap %d", got, stickyMaxDurationMS)
-		}
-	})
-	// A remote server must not be able to claim a future timestamp and make its
-	// event stick for longer than the cap allows.
-	t.Run("a future origin_server_ts buys nothing", func(t *testing.T) {
-		got, _ := ttl(t, sticky(5000, 1_000_000), 1000, true)
-		if got != 5000 {
-			t.Errorf("ttl = %v, want 5000 (clamped to now, not the claimed future)", got)
-		}
-	})
-	t.Run("disabled", func(t *testing.T) {
-		if _, ok := ttl(t, sticky(10000, 1000), 4000, false); ok {
-			t.Error("no ttl should appear when the feature is off")
-		}
-	})
-	t.Run("malformed duration means not sticky", func(t *testing.T) {
-		ev := Stored{EventID: "$e", Type: "m.room.message",
-			JSON: []byte(`{"type":"m.room.message","sender":"@u:e","content":{},
-				"origin_server_ts":1000,"msc4354_sticky":{"duration_ms":"soon"},"unsigned":{}}`)}
-		if _, ok := ttl(t, ev, 2000, true); ok {
-			t.Error("a non-integer duration must be treated as non-sticky")
-		}
-	})
+	}
+	if _, ok := ttl(t, sticky(10000, 1000, 1000), 4000, false); ok {
+		t.Error("no ttl should appear when the feature is off")
+	}
 }
 
 // The delay id uses the MSC-prefixed key, not a bare "delay_id".

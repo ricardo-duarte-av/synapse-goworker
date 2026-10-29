@@ -1090,7 +1090,6 @@ func stickyEventsExtension(
 		}
 
 		loaded := make([]store.TimelineEvent, 0, len(ids))
-		always := make(map[string]bool, len(ids))
 		for _, id := range ids {
 			ev, ok := events[id]
 			if !ok {
@@ -1100,20 +1099,15 @@ func stickyEventsExtension(
 			loaded = append(loaded, store.TimelineEvent{
 				Stored: ev.Stored, Sender: ev.Sender, StateKey: ev.StateKey,
 			})
-			always[id] = true
 		}
 
-		// Every sticky event bypasses the visibility decision, because MSC4354
-		// says so: "History visibility checks MUST NOT be applied to sticky
-		// events. Any joined user is authorised to see sticky events for the
-		// duration they remain sticky."
-		//
-		// It still goes THROUGH the filter rather than around it, and that is
-		// the point: the filter is what works out the caller's membership at
-		// each event, which MSC4115 puts in `unsigned`. Serialising these
-		// directly loses that field, and the reference caught it.
+		// The ordinary visibility filter, which since Synapse v1.164 exempts
+		// a still-sticky event from history visibility itself (#20295):
+		// "Any joined user is authorised to see sticky events for the
+		// duration they remain sticky." It also works out the caller's
+		// membership at each event, which MSC4115 puts in `unsigned`.
 		filtered, err := eventfilter.ForClient(ctx, d.Store, roomID, in.UserID,
-			loaded, false, in.NowMS, always)
+			loaded, false, in.NowMS, d.MSC4354Enabled, nil)
 		if err != nil {
 			return nil, err
 		}

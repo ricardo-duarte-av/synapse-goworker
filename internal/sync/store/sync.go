@@ -532,7 +532,7 @@ func (s *Store) EventsByID(ctx context.Context, eventIDs []string, roomVersion s
 	}
 	const q = `
 		SELECT e.event_id, e.room_id, e.type, COALESCE(e.state_key, ''), e.sender,
-		       ej.json, ej.internal_metadata
+		       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0)
 		  FROM events e JOIN event_json ej USING (event_id)
 		 WHERE e.event_id = ANY($1)`
 	rows, err := s.query(ctx, "EventsByID", q, eventIDs)
@@ -545,7 +545,7 @@ func (s *Store) EventsByID(ctx context.Context, eventIDs []string, roomVersion s
 	for rows.Next() {
 		var ev StateEvent
 		if err := rows.Scan(&ev.EventID, &ev.RoomID, &ev.Type, &ev.StateKey, &ev.Sender,
-			&ev.JSON, &ev.InternalMetadata); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS); err != nil {
 			return nil, fmt.Errorf("store: events by id: %w", err)
 		}
 		ev.RoomVersion = roomVersion
@@ -596,7 +596,7 @@ func (s *Store) PaginateBackwards(ctx context.Context, roomID, roomVersion strin
 	const cols = `e.event_id, e.type, e.sender, e.stream_ordering,
 	       e.topological_ordering, COALESCE(e.instance_name, ''),
 	       COALESCE(e.state_key, ''), e.state_key IS NOT NULL,
-	       ej.json, ej.internal_metadata, e.rejection_reason IS NULL`
+	       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0), e.rejection_reason IS NULL`
 	if from.IsHistorical() {
 		sql = `SELECT ` + cols + `
 		  FROM events e JOIN event_json ej USING (event_id)
@@ -633,7 +633,7 @@ func (s *Store) PaginateBackwards(ctx context.Context, roomID, roomVersion strin
 		)
 		if err := rows.Scan(&ev.EventID, &ev.Type, &ev.Sender, &ev.StreamOrdering,
 			&ev.TopologicalOrder, &ev.InstanceName, &ev.StateKey, &ev.IsState,
-			&ev.JSON, &ev.InternalMetadata, &ok); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS, &ok); err != nil {
 			return nil, from, false, fmt.Errorf("store: paginate backwards: %w", err)
 		}
 		ev.RoomID = roomID
@@ -707,7 +707,7 @@ func (s *Store) PaginateBackwardsStream(ctx context.Context, roomID, roomVersion
 		SELECT e.event_id, e.type, e.sender, e.stream_ordering,
 		       e.topological_ordering, COALESCE(e.instance_name, ''),
 		       COALESCE(e.state_key, ''), e.state_key IS NOT NULL,
-		       ej.json, ej.internal_metadata, e.rejection_reason IS NULL
+		       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0), e.rejection_reason IS NULL
 		  FROM events e JOIN event_json ej USING (event_id)
 		 WHERE e.outlier = FALSE AND e.room_id = $1
 		   AND e.stream_ordering <= $2 AND e.stream_ordering > $3
@@ -731,7 +731,7 @@ func (s *Store) PaginateBackwardsStream(ctx context.Context, roomID, roomVersion
 		)
 		if err := rows.Scan(&ev.EventID, &ev.Type, &ev.Sender, &ev.StreamOrdering,
 			&ev.TopologicalOrder, &ev.InstanceName, &ev.StateKey, &ev.IsState,
-			&ev.JSON, &ev.InternalMetadata, &ok); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS, &ok); err != nil {
 			return nil, from, false, fmt.Errorf("store: paginate backwards by stream: %w", err)
 		}
 		ev.RoomID = roomID

@@ -87,7 +87,7 @@ func (s *Store) RoomTimelineSince(ctx context.Context, roomIDs []string, roomVer
 			SELECT e.room_id, e.event_id, e.type, e.sender, e.stream_ordering,
 			       e.topological_ordering, COALESCE(e.instance_name, ''),
 			       COALESCE(e.state_key, ''), e.state_key IS NOT NULL,
-			       ej.json, ej.internal_metadata,
+			       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0),
 			       e.rejection_reason IS NULL,
 			       ROW_NUMBER() OVER (PARTITION BY e.room_id
 			                          ORDER BY e.stream_ordering DESC) AS rn
@@ -110,7 +110,7 @@ func (s *Store) RoomTimelineSince(ctx context.Context, roomIDs []string, roomVer
 		)
 		if err := rows.Scan(&ev.RoomID, &ev.EventID, &ev.Type, &ev.Sender, &ev.StreamOrdering,
 			&ev.TopologicalOrder, &ev.InstanceName, &ev.StateKey, &ev.IsState,
-			&ev.JSON, &ev.InternalMetadata, &ok, &rn); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS, &ok, &rn); err != nil {
 			return nil, fmt.Errorf("store: room timeline since: %w", err)
 		}
 		// A rejected event took a row number, so it counted towards the limit

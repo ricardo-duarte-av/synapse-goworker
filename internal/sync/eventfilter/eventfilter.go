@@ -19,6 +19,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/visibility"
 )
@@ -63,7 +64,7 @@ func visibilityKeys(userID string) []store.StateKey {
 // alwaysInclude is Synapse's `always_include_ids`: events that bypass the
 // decision entirely. Pass nil when there are none.
 func ForClient(ctx context.Context, db *store.Store, roomID, userID string,
-	events []store.TimelineEvent, isPeeking bool, nowMS int64,
+	events []store.TimelineEvent, isPeeking bool, nowMS int64, msc4354 bool,
 	alwaysInclude map[string]bool) (Result, error) {
 
 	if len(events) == 0 {
@@ -116,6 +117,30 @@ func ForClient(ctx context.Context, db *store.Store, roomID, userID string,
 		NowMS:                  nowMS,
 		ReturnSoftFailed:       extra.ReturnSoftFailed,
 		ReturnPolicySpammy:     extra.ReturnPolicySpammy,
+		MSC4354:                msc4354,
+	}
+
+	// When each still-sticky event stops being sticky. Synapse loads a
+	// redacted event pruned, without `msc4354_sticky`, so a redacted event
+	// is not sticky; sticky events are few, so only theirs are looked up.
+	stickyUntil := map[string]int64{}
+	if msc4354 && !isPeeking {
+		var candidates []string
+		for _, ev := range events {
+			if until := clientevent.StickyUntil(ev.JSON, ev.InternalMetadata, ev.ReceivedTS); until > nowMS {
+				stickyUntil[ev.EventID] = until
+				candidates = append(candidates, ev.EventID)
+			}
+		}
+		if len(candidates) > 0 {
+			redacted, err := db.Redactions(ctx, candidates)
+			if err != nil {
+				return Result{}, err
+			}
+			for id := range redacted {
+				delete(stickyUntil, id)
+			}
+		}
 	}
 
 	kept := make([]store.TimelineEvent, 0, len(events))
@@ -133,6 +158,7 @@ func ForClient(ctx context.Context, db *store.Store, roomID, userID string,
 		}
 
 		vev := timelineToVisibilityEvent(ev)
+		vev.StickyUntil = stickyUntil[ev.EventID]
 		verdict := visibility.Check(vctx, vev, state)
 		if alwaysInclude[ev.EventID] {
 			// Synapse's always_include_ids returns early from

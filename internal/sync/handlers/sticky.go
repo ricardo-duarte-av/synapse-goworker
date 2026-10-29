@@ -34,7 +34,9 @@ func stickyByRoom(ctx context.Context, d Deps, joinedIDs []string, from int64,
 }
 
 // stickySection builds a room's `msc4354_sticky` block, or nil if there is
-// nothing to say.
+// nothing to say, and the senders of the events in it: a lazy-loading client
+// is sent their memberships too (#20362). It runs before the state block is
+// computed, as in Synapse.
 //
 // Two rules from MSC4354, and both are the opposite of what the rest of a room
 // entry does:
@@ -44,18 +46,18 @@ func stickyByRoom(ctx context.Context, d Deps, joinedIDs []string, from int64,
 //     it twice is the one thing worth avoiding. This is why the section is
 //     invisible until an event ages out of the timeline -- or until a filter
 //     excludes it, which is how the omission was noticed at all.
-//   - History visibility is NOT applied. "Any joined user is authorised to see
-//     sticky events for the duration they remain sticky". Synapse expresses
-//     that by running the ordinary visibility pass with EVERY sticky event in
-//     `always_include_ids`, which is not the same as skipping the pass: it is
-//     also what stamps `unsigned.membership` (MSC4115) onto each event. Skip
-//     the pass and the events come out visibly different from Synapse's.
+//   - History visibility is NOT applied to a still-sticky event: "Any joined
+//     user is authorised to see sticky events for the duration they remain
+//     sticky". Since Synapse v1.164 the visibility check itself grants that,
+//     on every endpoint (#20295), so the section takes the ordinary pass,
+//     which is also what stamps `unsigned.membership` (MSC4115) onto each
+//     event.
 func stickySection(ctx context.Context, d Deps, room store.RoomForUser, userID string,
 	stickyIDs []string, timeline []store.TimelineEvent, timeNow int64,
-	cfg clientevent.Config) (map[string]any, error) {
+	cfg clientevent.Config) (map[string]any, []string, error) {
 
 	if len(stickyIDs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	inTimeline := make(map[string]bool, len(timeline))
 	for _, ev := range timeline {
@@ -70,15 +72,14 @@ func stickySection(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		}
 	}
 	if len(wanted) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	events, err := d.Store.EventsByID(ctx, wanted, room.RoomVersion)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	loaded := make([]store.TimelineEvent, 0, len(wanted))
-	alwaysInclude := make(map[string]bool, len(wanted))
 	for _, id := range wanted {
 		ev, ok := events[id]
 		if !ok {
@@ -88,18 +89,21 @@ func stickySection(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		loaded = append(loaded, store.TimelineEvent{
 			Stored: ev.Stored, Sender: ev.Sender, StateKey: ev.StateKey,
 		})
-		alwaysInclude[id] = true
 	}
 	// isPeeking is false: only a joined room reaches here.
-	visible, memberships, err := filterVisibleAlways(ctx, d, room.RoomID, userID,
-		loaded, false, timeNow, alwaysInclude)
+	visible, memberships, err := filterVisible(ctx, d, room.RoomID, userID,
+		loaded, false, timeNow)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	senders := make([]string, 0, len(visible))
+	for _, ev := range visible {
+		senders = append(senders, ev.Sender)
 	}
 
 	redactions, err := d.Store.Redactions(ctx, wanted)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	out := make([]json.RawMessage, 0, len(visible))
@@ -107,16 +111,16 @@ func stickySection(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		stored := ev.Stored
 		stored.Membership = memberships[i]
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		body, err := clientevent.Serialize(stored, timeNow, cfg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, body)
 	}
 	if len(out) == 0 {
-		return nil, nil
+		return nil, senders, nil
 	}
-	return map[string]any{"events": out}, nil
+	return map[string]any{"events": out}, senders, nil
 }

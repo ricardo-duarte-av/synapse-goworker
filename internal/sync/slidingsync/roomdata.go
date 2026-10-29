@@ -329,7 +329,7 @@ func buildTimeline(
 	// is_peeking is "not joined": someone reading a world-readable room they
 	// are not in gets the rules for an outsider.
 	filtered, err := eventfilter.ForClient(ctx, d.Store, req.RoomID, req.UserID,
-		events, req.Room.Membership != "join", req.NowMS, nil)
+		events, req.Room.Membership != "join", req.NowMS, d.MSC4354Enabled, nil)
 	if err != nil {
 		return out, nil, nil, nil, err
 	}

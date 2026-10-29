@@ -29,7 +29,7 @@ func (s *Store) RoomEventsForward(ctx context.Context, roomIDs []string,
 			SELECT e.room_id, e.event_id, e.type, e.sender, e.stream_ordering,
 			       e.topological_ordering, COALESCE(e.instance_name, ''),
 			       COALESCE(e.state_key, ''), e.state_key IS NOT NULL,
-			       ej.json, ej.internal_metadata,
+			       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0),
 			       e.rejection_reason IS NULL,
 			       ROW_NUMBER() OVER (PARTITION BY e.room_id
 			                          ORDER BY e.stream_ordering ASC) AS rn
@@ -54,7 +54,7 @@ func (s *Store) RoomEventsForward(ctx context.Context, roomIDs []string,
 		)
 		if err := rows.Scan(&ev.RoomID, &ev.EventID, &ev.Type, &ev.Sender, &ev.StreamOrdering,
 			&ev.TopologicalOrder, &ev.InstanceName, &ev.StateKey, &ev.IsState,
-			&ev.JSON, &ev.InternalMetadata, &ok, &rn); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS, &ok, &rn); err != nil {
 			return nil, fmt.Errorf("store: room events forward: %w", err)
 		}
 		// Rejected events consume a row number and are dropped after it.
@@ -87,7 +87,7 @@ func (s *Store) MembershipEventsForUser(ctx context.Context, userID string,
 		SELECT e.room_id, e.event_id, e.type, e.sender, e.stream_ordering,
 		       e.topological_ordering, COALESCE(e.instance_name, ''),
 		       COALESCE(e.state_key, ''), e.state_key IS NOT NULL,
-		       ej.json, ej.internal_metadata, COALESCE(r.room_version, '1')
+		       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0), COALESCE(r.room_version, '1')
 		  FROM events e
 		  JOIN event_json ej USING (event_id)
 		  LEFT JOIN rooms r ON r.room_id = e.room_id
@@ -107,7 +107,7 @@ func (s *Store) MembershipEventsForUser(ctx context.Context, userID string,
 		var ev TimelineEvent
 		if err := rows.Scan(&ev.RoomID, &ev.EventID, &ev.Type, &ev.Sender, &ev.StreamOrdering,
 			&ev.TopologicalOrder, &ev.InstanceName, &ev.StateKey, &ev.IsState,
-			&ev.JSON, &ev.InternalMetadata, &ev.RoomVersion); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS, &ev.RoomVersion); err != nil {
 			return nil, fmt.Errorf("store: membership events for user: %w", err)
 		}
 		out = append(out, ev)

@@ -163,7 +163,7 @@ type StateEvent struct {
 func (s *Store) CurrentState(ctx context.Context, roomID, roomVersion string) ([]StateEvent, error) {
 	const q = `
 		SELECT cse.event_id, cse.type, cse.state_key, e.sender,
-		       ej.json, ej.internal_metadata
+		       ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0)
 		  FROM current_state_events cse
 		  JOIN events e USING (event_id)
 		  JOIN event_json ej USING (event_id)
@@ -179,7 +179,7 @@ func (s *Store) CurrentState(ctx context.Context, roomID, roomVersion string) ([
 	for rows.Next() {
 		var ev StateEvent
 		if err := rows.Scan(&ev.EventID, &ev.Type, &ev.StateKey, &ev.Sender,
-			&ev.JSON, &ev.InternalMetadata); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS); err != nil {
 			return nil, fmt.Errorf("store: current state: %w", err)
 		}
 		ev.RoomID = roomID
@@ -240,7 +240,7 @@ func (s *Store) RecentEvents(ctx context.Context, roomID, roomVersion string, li
 		sql = `
 			SELECT e.event_id, e.type, e.sender, e.stream_ordering,
 			       e.topological_ordering, COALESCE(e.instance_name, ''),
-			       COALESCE(e.state_key, ''), e.state_key IS NOT NULL, ej.json, ej.internal_metadata,
+			       COALESCE(e.state_key, ''), e.state_key IS NOT NULL, ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0),
 			       e.rejection_reason IS NULL
 			  FROM events e JOIN event_json ej USING (event_id)
 			 WHERE e.outlier = FALSE AND e.room_id = $1
@@ -253,7 +253,7 @@ func (s *Store) RecentEvents(ctx context.Context, roomID, roomVersion string, li
 		sql = `
 			SELECT e.event_id, e.type, e.sender, e.stream_ordering,
 			       e.topological_ordering, COALESCE(e.instance_name, ''),
-			       COALESCE(e.state_key, ''), e.state_key IS NOT NULL, ej.json, ej.internal_metadata,
+			       COALESCE(e.state_key, ''), e.state_key IS NOT NULL, ej.json, ej.internal_metadata, COALESCE(e.received_ts, 0),
 			       e.rejection_reason IS NULL
 			  FROM events e JOIN event_json ej USING (event_id)
 			 WHERE e.outlier = FALSE AND e.room_id = $1
@@ -281,7 +281,7 @@ func (s *Store) RecentEvents(ctx context.Context, roomID, roomVersion string, li
 		)
 		if err := rows.Scan(&ev.EventID, &ev.Type, &ev.Sender, &ev.StreamOrdering,
 			&ev.TopologicalOrder, &ev.InstanceName, &ev.StateKey, &ev.IsState,
-			&ev.JSON, &ev.InternalMetadata, &ok); err != nil {
+			&ev.JSON, &ev.InternalMetadata, &ev.ReceivedTS, &ok); err != nil {
 			return nil, end, fmt.Errorf("store: recent events: %w", err)
 		}
 		ev.RoomID = roomID

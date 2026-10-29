@@ -79,6 +79,10 @@ type Event struct {
 	// PrevHistoryVisibility is unsigned.prev_content.history_visibility, used
 	// only when the event IS an m.room.history_visibility event.
 	PrevHistoryVisibility string
+
+	// StickyUntil is when the event stops being MSC4354-sticky here
+	// (clientevent.StickyUntil), 0 if it is not sticky.
+	StickyUntil int64
 }
 
 // StateAtEvent is the resolved state after an event, restricted to what the
@@ -116,6 +120,9 @@ type Context struct {
 	// ReturnPolicySpammy is the narrower version: only events soft-failed by a
 	// policy server.
 	ReturnPolicySpammy bool
+	// MSC4354 is msc4354_enabled: a still-sticky event is exempt from the
+	// membership part of history visibility.
+	MSC4354 bool
 }
 
 // Verdict is the outcome for one event.
@@ -166,6 +173,17 @@ func Check(ctx Context, ev Event, state StateAtEvent) Verdict {
 			return Verdict{Visible: true, Membership: MembershipAfter(ctx, ev, state)}
 		}
 		return Verdict{}
+	}
+
+	// MSC4354 (Synapse v1.164, #20295, on every endpoint): "History
+	// visibility checks MUST NOT be applied to sticky events. Any joined
+	// user or server is authorised to see sticky events for the duration
+	// they remain sticky." In effect `invited` and `joined` become `shared`
+	// for an event still sticky. Not for someone peeking, and not past the
+	// soft-failure and send-to-client checks above; and ahead of the erased
+	// sender's pruning, as in Synapse.
+	if ctx.MSC4354 && !ctx.IsPeeking && ev.StickyUntil > 0 && ctx.NowMS < ev.StickyUntil {
+		return Verdict{Visible: true, Membership: MembershipAfter(ctx, ev, state)}
 	}
 
 	visibility := validVisibility(state.HistoryVisibility)

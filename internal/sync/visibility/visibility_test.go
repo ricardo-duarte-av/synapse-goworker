@@ -205,3 +205,29 @@ func TestMembershipAnnotation(t *testing.T) {
 		t.Errorf("membership = %q, want leave when the caller had none", got.Membership)
 	}
 }
+
+// MSC4354 (Synapse v1.164, #20295): a still-sticky event is exempt from the
+// membership part of history visibility, unless the user is peeking; once
+// it has expired, or with the MSC off, the ordinary rules apply.
+func TestStickyEventsExemptFromHistoryVisibility(t *testing.T) {
+	sticky := msg("@them:example.com")
+	sticky.StickyUntil = 10_000
+	for _, tc := range []struct {
+		name string
+		ctx  Context
+		want bool
+		ev   Event
+	}{
+		{"sticky, was not joined", Context{UserID: user, MSC4354: true, NowMS: 5_000}, true, sticky},
+		{"expired", Context{UserID: user, MSC4354: true, NowMS: 10_000}, false, sticky},
+		{"peeking", Context{UserID: user, MSC4354: true, NowMS: 5_000, IsPeeking: true}, false, sticky},
+		{"MSC off", Context{UserID: user, NowMS: 5_000}, false, sticky},
+		{"not sticky", Context{UserID: user, MSC4354: true, NowMS: 5_000}, false, msg("@them:example.com")},
+		{"ignored sender", Context{UserID: user, MSC4354: true, NowMS: 5_000,
+			IgnoredSenders: map[string]bool{"@them:example.com": true}}, false, sticky},
+	} {
+		if got := Check(tc.ctx, tc.ev, at(Joined, "")).Visible; got != tc.want {
+			t.Errorf("%s: visible %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
