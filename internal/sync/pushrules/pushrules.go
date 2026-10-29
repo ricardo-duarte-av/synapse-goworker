@@ -31,6 +31,7 @@ type Features struct {
 	MSC3381PollsEnabled        bool
 	MSC3664Enabled             bool
 	MSC4028PushEncryptedEvents bool
+	MSC4075Enabled             bool
 	MSC4210Enabled             bool
 	MSC4306Enabled             bool
 }
@@ -161,6 +162,11 @@ func (f Features) allows(ruleID string) bool {
 		return false
 	}
 	if !f.MSC4028PushEncryptedEvents && ruleID == "global/override/.org.matrix.msc4028.encrypted_event" {
+		return false
+	}
+	if !f.MSC4075Enabled &&
+		(ruleID == "global/override/.org.matrix.msc4075.rule.rtc.invite_for_me" ||
+			ruleID == "global/override/.org.matrix.msc4075.rule.rtc.invite_for_room") {
 		return false
 	}
 	// Note the inverted sense: MSC4210 *removes* the legacy mention rules.

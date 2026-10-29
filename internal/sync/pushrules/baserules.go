@@ -100,6 +100,33 @@ var baseAppendOverride = []Rule{
 		DefaultEnabled: true,
 	},
 	{
+		RuleID:        "global/override/.org.matrix.msc4075.rule.rtc.invite_for_me",
+		PriorityClass: 5,
+		Conditions: []string{
+			"{\"kind\":\"event_match\",\"key\":\"type\",\"pattern\":\"org.matrix.msc4075.rtc.notification\"}",
+			"{\"kind\":\"event_property_contains\",\"key\":\"content.m\\\\.mentions.user_ids\",\"value_type\":\"user_id\"}",
+		},
+		Actions: []string{
+			"\"notify\"",
+			"{\"set_tweak\":\"sound\",\"value\":\"ring\"}",
+		},
+		DefaultEnabled: true,
+	},
+	{
+		RuleID:        "global/override/.org.matrix.msc4075.rule.rtc.invite_for_room",
+		PriorityClass: 5,
+		Conditions: []string{
+			"{\"kind\":\"event_match\",\"key\":\"type\",\"pattern\":\"org.matrix.msc4075.rtc.notification\"}",
+			"{\"kind\":\"event_property_is\",\"key\":\"content.m\\\\.mentions.room\",\"value\":true}",
+			"{\"kind\":\"sender_notification_permission\",\"key\":\"room\"}",
+		},
+		Actions: []string{
+			"\"notify\"",
+			"{\"set_tweak\":\"sound\",\"value\":\"ring\"}",
+		},
+		DefaultEnabled: true,
+	},
+	{
 		RuleID:        "global/override/.m.rule.is_user_mention",
 		PriorityClass: 5,
 		Conditions: []string{

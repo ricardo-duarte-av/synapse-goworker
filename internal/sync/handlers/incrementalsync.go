@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 
 	"github.com/tidwall/gjson"
@@ -253,6 +254,20 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		}
 		if wasJoined != "join" {
 			newlyJoined = append(newlyJoined, room.RoomID)
+			// A newly joined room gets ALL its sticky events, historical ones
+			// included, not only those since `since`, and without the
+			// per-sync limit (sticky_events_for_newly_joined_rooms, #20233).
+			if d.MSC4354Enabled {
+				_, all, err := d.Store.StickyEvents(ctx, []string{room.RoomID}, 0, now.StickyEvents,
+					timeNow, math.MaxInt32)
+				if err != nil {
+					return nil, http.StatusInternalServerError, internalError(d, "sticky events", err)
+				}
+				if sticky == nil {
+					sticky = map[string][]string{}
+				}
+				sticky[room.RoomID] = all[room.RoomID]
+			}
 			// The room is given a full-state entry, but its timeline still
 			// comes from the window this sync loaded: Synapse builds the
 			// chunk first and marks the room newly joined afterwards, so the

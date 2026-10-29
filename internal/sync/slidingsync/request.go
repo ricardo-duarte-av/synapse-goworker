@@ -114,6 +114,10 @@ type Extensions struct {
 
 	ThreadSubscriptions *ThreadSubscriptionsExtension `json:"io.element.msc4308.thread_subscriptions"`
 	StickyEvents        *StickyEventsExtension        `json:"org.matrix.msc4354.sticky_events"`
+	// Profiles (MSC4262) is only decoded, so a malformed body is refused as
+	// Synapse's model refuses it; the extension is served only with
+	// include_profile_updates_in_sync, off on both hosts (TODO.md).
+	Profiles *ProfilesExtension `json:"org.matrix.msc4262.profiles"`
 }
 
 // ExtensionScope is the reserved lists/rooms targeting every room-scoped
@@ -152,6 +156,11 @@ type StickyEventsExtension struct {
 	// a sentinel type for the same reason: absent means "everything current",
 	// where a token means "changes after this".
 	SinceSet bool `json:"-"`
+}
+
+type ProfilesExtension struct {
+	Enabled bool     `json:"enabled"`
+	Fields  []string `json:"fields"`
 }
 
 // ParseRequest decodes and validates a request body.

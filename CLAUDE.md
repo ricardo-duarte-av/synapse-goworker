@@ -11,9 +11,9 @@ The approved plan is in
 
 - Synapse source: `/home/daedric/synapse`. Port against the deployed tag
   (`git show v1.164.1:<path>`), not the checkout, which runs ahead. On
-  2026-10-28 aguiarvieira.pt ran 1.164.1 and matrixbridg.es 1.164.0. The
-  creator is ported against v1.164.1; the other parts from v1.159 and kept
-  up piecemeal, their remaining backlog listed by the nightly watch; check
+  2026-10-28 aguiarvieira.pt ran 1.164.1 and matrixbridg.es 1.164.0. Every
+  part was reviewed to v1.164.1 on 2026-10-29 (the creator ported against
+  it, the others caught up from v1.159 commit by commit); check
   with `docker exec <synapse container> python -c 'import synapse;
   print(synapse.__version__)'` and diff the tags for what you port.
   `synapse-watch.yaml` says which Synapse paths each part mirrors, the tag

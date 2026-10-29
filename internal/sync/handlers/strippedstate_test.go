@@ -4,8 +4,11 @@ import (
 	"testing"
 )
 
+// The stripped state from unsigned, then the membership event stripped to
+// type, state_key, content and sender (strip_event, Synapse v1.162, #19723).
 func TestStrippedStateEvents(t *testing.T) {
-	body := []byte(`{"type":"m.room.member","state_key":"@a:x","content":{"membership":"invite"},` +
+	body := []byte(`{"type":"m.room.member","state_key":"@a:x","sender":"@b:x","content":{"membership":"invite"},` +
+		`"event_id":"$e","origin_server_ts":1,` +
 		`"unsigned":{"age":5,"invite_room_state":[{"type":"m.room.name","state_key":"","content":{"name":"R"}},` +
 		`{"type":"m.room.create","state_key":"","content":{"room_version":"12"}}]}}`)
 
@@ -16,7 +19,7 @@ func TestStrippedStateEvents(t *testing.T) {
 	want := []string{
 		`{"type":"m.room.name","state_key":"","content":{"name":"R"}}`,
 		`{"type":"m.room.create","state_key":"","content":{"room_version":"12"}}`,
-		`{"type":"m.room.member","state_key":"@a:x","content":{"membership":"invite"},"unsigned":{"age":5}}`,
+		`{"type":"m.room.member","state_key":"@a:x","content":{"membership":"invite"},"sender":"@b:x"}`,
 	}
 	if len(events) != len(want) {
 		t.Fatalf("got %d events, want %d: %s", len(events), len(want), events)
@@ -28,28 +31,20 @@ func TestStrippedStateEvents(t *testing.T) {
 	}
 }
 
+// A missing or malformed stripped state is empty, as in Synapse.
 func TestStrippedStateEventsWithoutState(t *testing.T) {
 	cases := map[string]string{
-		"absent":   `{"type":"m.room.member","unsigned":{"age":5}}`,
-		"not list": `{"type":"m.room.member","unsigned":{"age":5,"knock_room_state":{"x":1}}}`,
+		"absent":   `{"type":"m.room.member","state_key":"@a:x","sender":"@a:x","content":{"membership":"knock"},"unsigned":{"age":5}}`,
+		"not list": `{"type":"m.room.member","state_key":"@a:x","sender":"@a:x","content":{"membership":"knock"},"unsigned":{"age":5,"knock_room_state":{"x":1}}}`,
 	}
 	for name, body := range cases {
 		events, err := strippedStateEvents([]byte(body), "knock_room_state")
 		if err != nil {
 			t.Fatal(err)
 		}
-		const want = `{"type":"m.room.member","unsigned":{"age":5}}`
+		const want = `{"type":"m.room.member","state_key":"@a:x","content":{"membership":"knock"},"sender":"@a:x"}`
 		if len(events) != 1 || string(events[0]) != want {
 			t.Errorf("%s: got %s, want [%s]", name, events, want)
 		}
-	}
-
-	// Synapse writes `unsigned` back even when the pop emptied it.
-	events, err := strippedStateEvents([]byte(`{"unsigned":{"invite_room_state":[]}}`), "invite_room_state")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || string(events[0]) != `{"unsigned":{}}` {
-		t.Errorf("got %s", events)
 	}
 }
