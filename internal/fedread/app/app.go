@@ -77,12 +77,14 @@ type Settings struct {
 
 // FedRead is the assembled read endpoints.
 type FedRead struct {
-	handler *fedapi.Handler
-	reads   *limits.Gate
-	streams *limits.Gate
-	db      *store.Store
-	sub     *replication.Subscriber
-	log     zerolog.Logger
+	handler  *fedapi.Handler
+	resolver *matrixstate.Resolver
+	server   string
+	reads    *limits.Gate
+	streams  *limits.Gate
+	db       *store.Store
+	sub      *replication.Subscriber
+	log      zerolog.Logger
 }
 
 // New connects and assembles the read endpoints.
@@ -132,8 +134,9 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 		MaxBodySize: 64 << 10,
 		Expired:     metrics.AuthExpiredKey,
 	})
+	f.resolver, f.server = matrixstate.NewResolver(db), cfg.ServerName
 	f.handler = fedapi.New(cfg.ServerName, fc.RCFederation, cfg.Upstream, log,
-		fedapi.WithNative(matrixstate.NewResolver(db), verifier,
+		fedapi.WithNative(f.resolver, verifier,
 			time.Duration(fc.NativeTimeoutSeconds)*time.Second),
 		fedapi.WithStreamTimeout(time.Duration(fc.StreamTimeoutSeconds)*time.Second),
 		fedapi.WithStreamIdleTimeout(time.Duration(fc.StreamIdleTimeoutSeconds)*time.Second))
@@ -146,6 +149,14 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 		Int("auth_chains_mb", s.AuthChainsMB).
 		Msg("federation reads: caching immutable data in process")
 	return f, nil
+}
+
+// EventVisibleToServer is filter_events_for_server for one local event, with
+// redact=False and filter_out_erased_senders=True: whether server may be sent
+// it. The outbound sender asks it of the sticky events it catches a
+// destination up on. An event we do not hold is not visible.
+func (f *FedRead) EventVisibleToServer(ctx context.Context, eventID, server string) (bool, error) {
+	return f.resolver.EventVisibleToServer(ctx, eventID, server, f.server)
 }
 
 // Handler serves the read endpoints. Paths it does not route are answered

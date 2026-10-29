@@ -17,6 +17,7 @@ type recorder struct {
 	batches    []batch
 	positions  []position
 	serversUp  []string
+	joined     []string
 	replicates int
 }
 
@@ -38,7 +39,10 @@ func (r *recorder) OnPosition(stream, instance string, pos int64) {
 	r.positions = append(r.positions, position{stream, instance, pos})
 }
 func (r *recorder) OnRemoteServerUp(server string) { r.serversUp = append(r.serversUp, server) }
-func (r *recorder) OnReplicate()                   { r.replicates++ }
+func (r *recorder) OnNewServerJoined(server, roomID string) {
+	r.joined = append(r.joined, server+" "+roomID)
+}
+func (r *recorder) OnReplicate() { r.replicates++ }
 
 func newTestSubscriber(t *testing.T) (*Subscriber, *recorder) {
 	t.Helper()
@@ -297,5 +301,15 @@ func TestPackageNeverPublishes(t *testing.T) {
 	}
 	if files == 0 {
 		t.Fatal("no source files were parsed; the guard is not doing anything")
+	}
+}
+
+// NEW_SERVER_JOINED <server> <room_id> (Synapse v1.164, #20337).
+func TestNewServerJoined(t *testing.T) {
+	s, rec := newTestSubscriber(t)
+	s.handleLine(`NEW_SERVER_JOINED remote.example !room:example.org`)
+	s.handleLine(`NEW_SERVER_JOINED malformed`)
+	if len(rec.joined) != 1 || rec.joined[0] != "remote.example !room:example.org" {
+		t.Errorf("joined %v", rec.joined)
 	}
 }

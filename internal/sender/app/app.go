@@ -66,6 +66,11 @@ type Settings struct {
 	// Nil without redis: no new events are seen.
 	Replication *bus.Consumer
 
+	// EventVisibleToServer is filter_events_for_server for one local event
+	// (the federation reads' port), which the MSC4354 sticky event backlog
+	// is filtered with. Nil: the backlog is not sent (its rows stay).
+	EventVisibleToServer func(ctx context.Context, eventID, server string) (bool, error)
+
 	// UserAgent is sent on every federation request.
 	UserAgent string
 	// Tag, Commit and BuildTime are stamped into the build info metric.
@@ -90,6 +95,10 @@ type Worker struct {
 	role atomic.Pointer[role]
 	// onReplicate is told when a Synapse process connects to the bus.
 	onReplicate atomic.Pointer[func()]
+
+	// msc4354 is msc4354_enabled when the sender started: whether the sticky
+	// event backlog is sent.
+	msc4354 bool
 
 	db      *store.Store
 	writer  *store.Writer
@@ -214,7 +223,19 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 		log.Info().Str("destination", destination).Msg("destination recovered; backoff cleared")
 	})
 
+	// The MSC4354 sticky event backlog, drained by every destination's
+	// queue between live transactions.
+	var sticky queue.StickySource
+	w.msc4354 = scfg.Flag("msc4354_enabled", false) && cfg.EventVisibleToServer != nil
+	if w.msc4354 {
+		sticky = &sender.StickyBacklog{
+			Store: w.writer, Events: w.db, Visible: cfg.EventVisibleToServer,
+			ServerName: scfg.ServerName, Limit: cfg.Sender.MaxPDUsPerTransaction,
+		}
+	}
+
 	w.queues = queue.NewManager(queue.ManagerConfig{
+		Sticky: sticky,
 		// Presence only, and never typing or receipts; see queue.BatchConfig.
 		Batch: queue.BatchConfig{
 			MaxStates: cfg.Sender.PresenceBatchStates,
@@ -336,6 +357,8 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 
 	w.catchup = sender.NewCatchUp(sender.CatchUpConfig{
 		Store:        w.db,
+		Sticky:       w.writer,
+		ServerName:   scfg.ServerName,
 		Queues:       w.queues,
 		Log:          log,
 		ShouldHandle: w.shouldHandle,

@@ -101,6 +101,20 @@ func (r *Resolver) eventVisible(ctx context.Context, ev *store.Event, targetServ
 	return r.eventVisibleInRoom(ctx, ev, targetServer, localServer, false)
 }
 
+// EventVisibleToServer loads an event and applies filter_events_for_server to
+// it, for a local event (so the partial-state rule cannot apply). An event we
+// do not hold is not visible.
+func (r *Resolver) EventVisibleToServer(ctx context.Context, eventID, targetServer, localServer string) (bool, error) {
+	ev, err := r.db.GetEvent(ctx, eventID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return r.eventVisibleInRoom(ctx, ev, targetServer, localServer, false)
+}
+
 // eventVisibleInRoom is eventVisible with the room's partial-state status
 // supplied, for the one endpoint that permits such rooms.
 //

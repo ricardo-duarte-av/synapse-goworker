@@ -48,6 +48,11 @@ type CatchUpStore interface {
 	GetEvents(ctx context.Context, ids []string) ([]store.Event, error)
 }
 
+// StickyCatchUpStore records the sticky events a catch-up transaction skips.
+type StickyCatchUpStore interface {
+	MarkStickyBacklogAfterCatchUp(ctx context.Context, destination, localPattern string, old, new int64, sent []int64) error
+}
+
 // CatchUp replays what a destination missed while this sender could not reach
 // it.
 //
@@ -61,6 +66,10 @@ type CatchUp struct {
 	store  CatchUpStore
 	queues *queue.Manager
 	log    zerolog.Logger
+	// sticky records the sticky events a catch-up transaction skips over;
+	// nil records nothing. serverName makes the local-sender pattern.
+	sticky     StickyCatchUpStore
+	serverName string
 
 	shouldHandle func(destination string) bool
 	due          func(destination string) bool
@@ -71,7 +80,12 @@ type CatchUp struct {
 
 // CatchUpConfig builds a CatchUp.
 type CatchUpConfig struct {
-	Store        CatchUpStore
+	Store CatchUpStore
+	// Sticky, when set, records the MSC4354 sticky events each catch-up
+	// transaction skips over as a backlog, as Synapse does whether or not
+	// MSC4354 is enabled. ServerName is ours.
+	Sticky       StickyCatchUpStore
+	ServerName   string
 	Queues       *queue.Manager
 	Log          zerolog.Logger
 	ShouldHandle func(destination string) bool
@@ -89,6 +103,7 @@ type CatchUpConfig struct {
 func NewCatchUp(cfg CatchUpConfig) *CatchUp {
 	return &CatchUp{
 		store: cfg.Store, queues: cfg.Queues, log: cfg.Log,
+		sticky: cfg.Sticky, serverName: cfg.ServerName,
 		shouldHandle: cfg.ShouldHandle, due: cfg.Due, active: cfg.Active,
 		concurrency: cfg.Concurrency,
 		kick:        make(chan struct{}, 1),
@@ -292,6 +307,17 @@ func (c *CatchUp) Destination(ctx context.Context, destination string) error {
 					return nil
 				}
 				return err
+			}
+			// Moving the cursor leaves a gap of unsent events in other rooms;
+			// this server's sticky events in it become a backlog
+			// (mark_backlogged_sticky_events_after_catchup_transaction).
+			if c.sticky != nil {
+				if err := c.sticky.MarkStickyBacklogAfterCatchUp(ctx, destination,
+					store.LocalUserPattern(c.serverName), lastSuccessful, e.StreamOrdering,
+					[]int64{e.StreamOrdering}); err != nil {
+					return err
+				}
+				d.NotifyStickyBacklog()
 			}
 			// Advanced to the ORIGINAL event's ordering: this is a cursor into
 			// destination_rooms, not a record of what was delivered.

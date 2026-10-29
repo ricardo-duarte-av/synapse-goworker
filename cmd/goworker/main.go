@@ -289,8 +289,11 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		MaxConcurrentDestinations: lim.SenderDestinations,
 		CatchUpConcurrency:        lim.SenderCatchUp,
 		Replication:               consumer("sender"),
-		UserAgent:                 "synapse-goworker/" + tag,
-		Tag:                       tag, Commit: commit, BuildTime: buildTime,
+		// The MSC4354 sticky event backlog is filtered as the federation
+		// reads filter what they serve.
+		EventVisibleToServer: reads.EventVisibleToServer,
+		UserAgent:            "synapse-goworker/" + tag,
+		Tag:                  tag, Commit: commit, BuildTime: buildTime,
 		Log: componentLogger(log, cfg.Log, "sender"),
 	})
 	if err != nil {

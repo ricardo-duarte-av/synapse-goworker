@@ -68,6 +68,19 @@ type EDU struct {
 	Presence map[string]PresenceEntry
 }
 
+// StickySource supplies a destination's backlog of MSC4354 sticky events:
+// this server's own sticky events it has not yet been sent, because it
+// joined a room late or a catch-up skipped them (StickyEventBacklogTracker,
+// per_destination_queue.py, Synapse v1.163).
+type StickySource interface {
+	// Next returns the next owed sticky events for the destination, ready to
+	// send, and complete, to call once they are delivered: it records the
+	// progress. ok is false when nothing is owed. pdus may be empty with ok
+	// true -- every event was filtered out -- and complete still records the
+	// progress.
+	Next(ctx context.Context, destination string) (pdus []PDU, complete func(context.Context) error, ok bool, err error)
+}
+
 // PDU is an event waiting to go to a destination.
 type PDU struct {
 	EventID string
@@ -161,6 +174,16 @@ type Destination struct {
 	// is single-threaded per destination.
 	outageLogged bool
 
+	// sticky is the destination's sticky event backlog, nil without MSC4354.
+	// stickyBacklogged says it may hold something (assumed until proved
+	// otherwise, as in Synapse), stickyGen counts the notifications that set
+	// it, and stickyTurn, touched only by the loop, alternates transactions
+	// between the backlog and the live queue so neither starves the other.
+	sticky           StickySource
+	stickyBacklogged bool
+	stickyGen        uint64
+	stickyTurn       bool
+
 	batch BatchConfig
 	wake  func()
 	// heldSince is when the presence currently waiting was first held back.
@@ -202,6 +225,8 @@ type Config struct {
 	// failure grows a backoff built for dead servers, which on this deployment
 	// multiplies to a year.
 	OnRateLimited func(destination string, after time.Duration) time.Duration
+	// Sticky is the MSC4354 sticky event backlog; nil when the MSC is off.
+	Sticky StickySource
 	// Batch holds presence back so it can accumulate. Zero disables it.
 	Batch BatchConfig
 	// Wake re-runs this destination's loop, used when a hold expires. Set by
@@ -263,7 +288,30 @@ func NewDestination(cfg Config) *Destination {
 		due:           cfg.Due,
 		batch:         cfg.Batch,
 		wake:          cfg.Wake,
+		sticky:        cfg.Sticky,
+		// Assume a backlog until the source says there is none.
+		stickyBacklogged: cfg.Sticky != nil,
 	}
+}
+
+// NotifyStickyBacklog says the destination may be owed sticky events again:
+// it newly joined a room holding some, or a catch-up skipped some
+// (notify_potential_new_backlog). The caller wakes the queue.
+func (d *Destination) NotifyStickyBacklog() {
+	d.mu.Lock()
+	if d.sticky != nil {
+		d.stickyBacklogged = true
+		d.stickyGen++
+		d.newData = true
+	}
+	d.mu.Unlock()
+}
+
+// StickyBacklogged reports whether the destination may be owed sticky events.
+func (d *Destination) StickyBacklogged() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.stickyBacklogged
 }
 
 // Name is the remote server's name.
@@ -456,21 +504,69 @@ func (d *Destination) Run(ctx context.Context) {
 		// Hold presence back, if there is nothing else to send and it has not
 		// waited long enough. Everything else -- a PDU, typing, a receipt, a
 		// device EDU -- flushes the whole queue immediately and takes any held
-		// presence with it.
+		// presence with it. A sticky backlog still gets its turn.
+		held := false
 		if wait := d.holdForLocked(time.Now()); wait > 0 {
 			d.scheduleFlushLocked(wait)
-			d.mu.Unlock()
-			return
+			if !d.stickyBacklogged {
+				d.mu.Unlock()
+				return
+			}
+			held = true
+		} else {
+			d.heldSince = time.Time{}
 		}
-		d.heldSince = time.Time{}
 
-		batch, err := d.takeLocked()
+		var batch taken
+		var err error
+		if !held {
+			batch, err = d.takeLocked()
+		}
+		backlogged, gen := d.stickyBacklogged, d.stickyGen
 		d.mu.Unlock()
 		if err != nil {
 			// An EDU that cannot be encoded. It stays queued, as a failed send
 			// would, and the loop exits for a later Attempt to retry.
 			d.log.Error().Err(err).Msg("failed to encode a queued EDU")
 			return
+		}
+
+		// _prepare_transaction's round robin: the sticky backlog on its turn,
+		// or whenever the live queue has nothing; otherwise the live queue,
+		// and the next turn is the backlog's if it may hold anything. A
+		// backlog transaction leaves the live units queued: takeLocked only
+		// copies.
+		var stickyDone func(context.Context) error
+		mainEmpty := len(batch.pdus) == 0 && len(batch.edus) == 0
+		if backlogged && (d.stickyTurn || mainEmpty) {
+			d.stickyTurn = false
+			stickyPDUs, done, ok, serr := d.sticky.Next(ctx, d.name)
+			switch {
+			case serr != nil:
+				d.log.Error().Err(serr).Msg("failed to read the sticky event backlog")
+				if mainEmpty {
+					return
+				}
+			case !ok:
+				d.mu.Lock()
+				// Unless a notification came in meanwhile.
+				if d.stickyGen == gen {
+					d.stickyBacklogged = false
+				}
+				d.mu.Unlock()
+			case len(stickyPDUs) == 0:
+				// All filtered out: the progress is still recorded, and the
+				// loop goes round for the next batch.
+				if err := done(ctx); err != nil {
+					d.log.Error().Err(err).Msg("failed to record sticky event backlog progress")
+					return
+				}
+				continue
+			default:
+				batch, stickyDone = taken{pdus: stickyPDUs}, done
+			}
+		} else if !mainEmpty {
+			d.stickyTurn = backlogged
 		}
 		pdus, edus := batch.pdus, batch.edus
 
@@ -516,6 +612,15 @@ func (d *Destination) Run(ctx context.Context) {
 				Int("pdus", len(pdus)).Int("edus", len(edus)).
 				Msg("transaction failed; units remain queued")
 			return
+		}
+
+		if stickyDone != nil {
+			// Backlogged sticky events: nothing was dequeued and the events
+			// cursor does not move; only the backlog's position does.
+			if err := stickyDone(ctx); err != nil {
+				d.log.Error().Err(err).Msg("failed to record sticky event backlog progress")
+			}
+			continue
 		}
 
 		d.dequeue(len(pdus), len(edus))

@@ -280,6 +280,23 @@ func (h *handler) OnRemoteServerUp(server string) {
 	h.worker.queues.Wake(q)
 }
 
+// OnNewServerJoined is FederationSender.notify_new_server_joined: a remote
+// server joined a room, so it may be owed this server's sticky events there
+// (the events writer has already written the backlog row). Only with MSC4354,
+// only for a destination this shard sends to and the federation whitelist
+// allows; the queue's backoff gate still applies.
+func (h *handler) OnNewServerJoined(server, _ string) {
+	if !h.worker.msc4354 || !h.worker.shouldHandle(server) {
+		return
+	}
+	if wl := h.worker.syn.Load().DomainWhitelist; wl != nil && !wl[server] {
+		return
+	}
+	q := h.worker.queues.Get(server)
+	q.NotifyStickyBacklog()
+	h.worker.queues.Wake(q)
+}
+
 func (h *handler) OnReplicate() {
 	if f := h.worker.onReplicate.Load(); f != nil {
 		(*f)()

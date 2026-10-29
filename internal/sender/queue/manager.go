@@ -41,6 +41,7 @@ type Manager struct {
 	longBackoff   func(destination string) bool
 	onEDUsDropped func(destination string, n int)
 	onRateLimited func(destination string, after time.Duration) time.Duration
+	sticky        StickySource
 
 	mu    sync.RWMutex
 	dests map[string]*Destination
@@ -80,6 +81,9 @@ type ManagerConfig struct {
 	// OnRateLimited reports a destination asking us to slow down; see
 	// Config.OnRateLimited.
 	OnRateLimited func(destination string, after time.Duration) time.Duration
+	// Sticky is the MSC4354 sticky event backlog every destination drains;
+	// nil when the MSC is off.
+	Sticky StickySource
 }
 
 // NewManager builds a Manager.
@@ -103,6 +107,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		longBackoff:   cfg.LongBackoff,
 		onEDUsDropped: cfg.OnEDUsDropped,
 		onRateLimited: cfg.OnRateLimited,
+		sticky:        cfg.Sticky,
 		dests:         map[string]*Destination{},
 		base:          context.Background(),
 	}
@@ -153,6 +158,7 @@ func (m *Manager) Get(name string) *Destination {
 		LongBackoff:   m.longBackoff,
 		OnEDUsDropped: m.onEDUsDropped,
 		OnRateLimited: m.onRateLimited,
+		Sticky:        m.sticky,
 	})
 	// The destination needs to be able to re-run its own loop when a batching
 	// hold expires, and the Manager owns the concurrency bound, so the hook is

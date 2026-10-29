@@ -66,10 +66,11 @@ const (
 
 // Command names on the wire (replication/tcp/commands.py).
 const (
-	cmdRDATA          = "RDATA"
-	cmdPOSITION       = "POSITION"
-	cmdRemoteServerUp = "REMOTE_SERVER_UP"
-	cmdReplicate      = "REPLICATE"
+	cmdRDATA           = "RDATA"
+	cmdPOSITION        = "POSITION"
+	cmdRemoteServerUp  = "REMOTE_SERVER_UP"
+	cmdNewServerJoined = "NEW_SERVER_JOINED"
+	cmdReplicate       = "REPLICATE"
 )
 
 // batchToken is the literal token Synapse sends for a row that is part of a
@@ -104,6 +105,9 @@ type Handler interface {
 	// to work by somebody else; the sender wakes that destination
 	// immediately.
 	OnRemoteServerUp(server string)
+	// OnNewServerJoined says a remote server joined a room (Synapse v1.164,
+	// #20337): it may be owed this server's sticky events there.
+	OnNewServerJoined(server, roomID string)
 	// OnReplicate says a Synapse process has (re)connected to the bus. It is
 	// called on the subscriber's goroutine and must not block.
 	OnReplicate()
@@ -268,6 +272,12 @@ func (s *Subscriber) handleLine(line string) {
 	case cmdRemoteServerUp:
 		if s.handler != nil {
 			s.handler.OnRemoteServerUp(strings.TrimSpace(rest))
+		}
+	case cmdNewServerJoined:
+		// "NEW_SERVER_JOINED <server> <room_id>" (NewServerJoinedCommand).
+		server, roomID, ok := strings.Cut(rest, " ")
+		if ok && s.handler != nil {
+			s.handler.OnNewServerJoined(server, roomID)
 		}
 	}
 }
