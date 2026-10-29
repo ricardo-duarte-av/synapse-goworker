@@ -24,9 +24,8 @@ const MaxMissingEvents = 20
 //   - the result is reversed at the end, because it was built backwards and
 //     the caller wants approximate chronological order.
 //
-// The `NOT is_state` predicate is kept even though every row in this
-// deployment has is_state false: the column is legacy, but dropping the
-// predicate would change behaviour on a database where it is not.
+// There is no `NOT is_state` predicate: Synapse stopped reading
+// event_edges.is_state in v1.164 (#20069) and will drop the column.
 // The bool reports that the walk stopped because it reached the limit rather
 // than because it ran out of DAG. That distinction is not visible in the
 // result: events are filtered afterwards, so a walk that truncated at 20 can
@@ -129,7 +128,6 @@ func (s *Store) prevEvents(ctx context.Context, eventID, roomID string, limit in
 		JOIN events ON events.event_id = ee.prev_event_id
 		WHERE ee.event_id = $1
 		  AND events.room_id = $2
-		  AND NOT ee.is_state
 		ORDER BY ee.prev_event_id
 		LIMIT $3`, eventID, roomID, limit)
 	if err != nil {

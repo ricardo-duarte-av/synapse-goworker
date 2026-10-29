@@ -160,7 +160,7 @@ func loadTargets(ctx context.Context, pool *pgxpool.Pool, depth int) ([]target, 
 		  UNION ALL
 		  SELECT b.room_id, b.tip, ee.prev_event_id, b.hop + 1
 		  FROM back b
-		  JOIN event_edges ee ON ee.event_id = b.cur AND NOT ee.is_state
+		  JOIN event_edges ee ON ee.event_id = b.cur
 		  WHERE b.hop < $1
 		)
 		SELECT room_id, tip, min(cur)
