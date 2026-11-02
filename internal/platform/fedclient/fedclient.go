@@ -26,13 +26,49 @@ func New(serverName, keyLine string, allow func(string) bool, timeout time.Durat
 	if err != nil {
 		return nil, fmt.Errorf("fedclient: signing key: %w", err)
 	}
-	c := federation.NewClient(serverName, key, federation.NewInMemoryCache(), clientSettings(timeout))
-	useragent.Client(c)
+	c := NewMautrix(serverName, key, clientSettings(timeout))
 	// mautrix sets no Content-Type; Synapse sends application/json, and
 	// some servers refuse a body without it (400, then M_FORBIDDEN).
 	c.HTTP.Transport = &JSONContentType{Next: c.HTTP.Transport}
 	c.AllowServer = allow
 	return c, nil
+}
+
+// NewMautrix is a mautrix federation client as every part's must be: the
+// shared resolution cache (Resolutions), an entry forgotten when connecting
+// through it fails, and Synapse's User-Agent. key may be nil, for a client
+// that only fetches published keys.
+func NewMautrix(serverName string, key *federation.SigningKey, settings exhttp.ClientSettings) *federation.Client {
+	c := federation.NewClient(serverName, key, Resolutions, settings)
+	useragent.Client(c)
+	c.HTTP.Transport = &ForgetOnFailure{Next: c.HTTP.Transport, Cache: Resolutions}
+	return c
+}
+
+// ForgetOnFailure forgets a server's cached resolution when a request to it
+// fails without an answer: a refused or timed-out connection, a TLS failure,
+// no response in time. The cache would otherwise keep sending to an address
+// that does not answer -- the bare name's :8448, after a .well-known that
+// timed out -- until its TTL. The destination's backoff, not this, decides
+// when it is tried again; the retry then resolves afresh. A request its
+// caller gave up on says nothing about the server and forgets nothing.
+type ForgetOnFailure struct {
+	Next  http.RoundTripper
+	Cache *ResolveCache
+}
+
+func (t *ForgetOnFailure) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Read before the resolving transport rewrites the URL to the
+	// resolved host.
+	server := ""
+	if req.URL.Scheme == "matrix-federation" {
+		server = req.URL.Host
+	}
+	resp, err := t.Next.RoundTrip(req)
+	if err != nil && server != "" && !errors.Is(req.Context().Err(), context.Canceled) {
+		t.Cache.Forget(server)
+	}
+	return resp, err
 }
 
 // clientSettings is mautrix's sensible settings for Synapse's request

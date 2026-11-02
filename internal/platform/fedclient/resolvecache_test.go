@@ -1,4 +1,4 @@
-package sink
+package fedclient
 
 import (
 	"testing"
@@ -7,10 +7,10 @@ import (
 	"maunium.net/go/mautrix/federation"
 )
 
-func testResolveCache(t *testing.T) (*resolveCache, *time.Time) {
+func testResolveCache(t *testing.T) (*ResolveCache, *time.Time) {
 	t.Helper()
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
-	c := newResolveCache()
+	c := NewResolveCache()
 	c.now = func() time.Time { return now }
 	c.jitter = func() float64 { return 1 } // deterministic
 	return c, &now
@@ -61,7 +61,8 @@ func TestResolveCacheShortensAFallbackForADelegatingServer(t *testing.T) {
 }
 
 // A server that simply has no .well-known -- most of them -- is re-checked
-// hourly rather than daily, matching WELL_KNOWN_INVALID_CACHE_PERIOD.
+// every few minutes rather than daily: from here it looks the same as one
+// whose .well-known timed out.
 func TestResolveCacheShortensNonDelegatingServers(t *testing.T) {
 	c, now := testResolveCache(t)
 	c.StoreResolution(resolved("plain.example", "plain.example", now.Add(24*time.Hour)))

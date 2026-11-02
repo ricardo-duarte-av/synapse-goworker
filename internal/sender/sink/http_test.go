@@ -8,6 +8,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/federation"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 )
 
 // http.Transport's zero values are the wrong shape for a federation sender in
@@ -21,9 +23,13 @@ import (
 // empty one -- which reads like "defaults" -- leaves every one of these unset.
 func TestHTTPSinkBoundsItsConnectionPool(t *testing.T) {
 	h := NewHTTP(HTTPConfig{Log: zerolog.Nop()})
-	rt, ok := h.client.Transport.(*federation.ServerResolvingTransport)
+	f, ok := h.client.Transport.(*fedclient.ForgetOnFailure)
 	if !ok {
-		t.Fatalf("transport is %T, not the resolving transport", h.client.Transport)
+		t.Fatalf("transport is %T, not ForgetOnFailure", h.client.Transport)
+	}
+	rt, ok := f.Next.(*federation.ServerResolvingTransport)
+	if !ok {
+		t.Fatalf("transport is %T, not the resolving transport", f.Next)
 	}
 
 	if rt.Transport.MaxIdleConns == 0 {

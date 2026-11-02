@@ -17,6 +17,7 @@ import (
 	"go.mau.fi/util/exhttp"
 	"maunium.net/go/mautrix/federation"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/txn"
 )
@@ -82,13 +83,13 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 	}
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	// Ours rather than mautrix's default cache. Both keep resolutions in
-	// memory; the difference is the TTL, and mautrix keeps every resolution for
-	// 24 hours however it was reached -- including one that fell back to port
-	// 8448 because a delegating server's .well-known was briefly down. See
-	// resolveCache.
+	// The process's one resolution cache rather than mautrix's default. Both
+	// keep resolutions in memory; the difference is the TTL, and mautrix keeps
+	// every resolution for 24 hours however it was reached -- including one
+	// that fell back to port 8448 because a delegating server's .well-known
+	// was briefly down. See fedclient.ResolveCache.
 	transport := federation.NewServerResolvingTransport(
-		newResolveCache(),
+		fedclient.Resolutions,
 		exhttp.DialerFunc(dialer.DialContext),
 		exhttp.ClientSettings{
 			// ClientSettings only carries what it has fields for, and applies
@@ -116,12 +117,14 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 	// time per destination is a rule this worker already enforces, so a second
 	// idle connection to one server is headroom, not throughput.
 	transport.Transport.MaxIdleConns = 512
-	useragent.Resolving(transport)
 	transport.Transport.MaxIdleConnsPerHost = 2
+	useragent.Resolving(transport)
 
 	return &HTTP{
 		client: &http.Client{
-			Transport: transport,
+			// A resolution we cannot connect through is forgotten, so the
+			// retry the destination's backoff allows resolves afresh.
+			Transport: &fedclient.ForgetOnFailure{Next: transport, Cache: fedclient.Resolutions},
 			// Redirects are not part of the federation protocol, and following
 			// one would send a signed transaction somewhere it was not
 			// addressed to -- the signature names the destination.

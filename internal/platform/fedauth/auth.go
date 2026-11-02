@@ -22,7 +22,7 @@ import (
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/federation"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 )
 
 // Verifier authenticates incoming federation requests.
@@ -96,10 +96,10 @@ func NewKeys(serverName string, opts Options) *Keys {
 
 	// No signing key: this client only fetches published keys, which is an
 	// unauthenticated federation request.
-	// The resolution cache (well-known and SRV lookups) is separate from the
-	// key cache; only the latter is layered over Synapse's.
-	client := federation.NewClient(serverName, nil, cache.mem, settings)
-	useragent.Client(client)
+	// Resolutions (well-known and SRV lookups) are the process's shared
+	// cache, separate from the key cache; only the latter is layered over
+	// Synapse's.
+	client := fedclient.NewMautrix(serverName, nil, settings)
 	return &Keys{cache: cache, client: client, notaries: opts.Notaries}
 }
 

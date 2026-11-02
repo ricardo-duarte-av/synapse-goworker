@@ -29,7 +29,6 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 )
 
 // DBKeys reads the keys Synapse holds (StoreKeyFetcher).
@@ -60,8 +59,7 @@ func New(serverName string, db DBKeys, notaries []string) *Keyring {
 	// Each attempt is timed by fedclient.Attempt; this only bounds one.
 	settings := exhttp.SensibleClientSettings
 	settings.GlobalTimeout = 2 * time.Minute
-	fed := federation.NewClient(serverName, nil, federation.NewInMemoryCache(), settings)
-	useragent.Client(fed)
+	fed := fedclient.NewMautrix(serverName, nil, settings)
 	return &Keyring{db: db, fed: fed, notaries: notaries, server: serverName, now: time.Now,
 		mem: map[string]map[string]pdu.VerifyKey{}}
 }

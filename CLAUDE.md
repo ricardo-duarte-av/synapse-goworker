@@ -57,7 +57,12 @@ events' state groups (`platform/statecache`: the first read by fedread and
 inbound, the second by fedread and sync; armed and purged by fedread's
 replication consumer), and other servers' published keys (`platform/fedauth`
 `Keys`, which /send and the federation reads verify with; it reads
-server_keys_json through whichever component's pool offers first). Before the
+server_keys_json through whichever component's pool offers first), and
+server name resolutions (`platform/fedclient` `Resolutions`, operator,
+2026-11-02: every federation client's; a resolution reached without a
+.well-known delegation is kept 5 minutes, not Synapse's hour, and one we
+cannot connect through is forgotten at once, after inbound's mautrix cache
+pinned continuwuity.org to an unreachable :8448 for a day). Before the
 keys were shared, fedread's copy of fedauth lacked inbound's 2026-10-17 fixes
 and refused requests Synapse accepted. Since phase 7 also the event code
 inbound and the creator had each copied (`pdu`, `pdustore`, `stateres`,
