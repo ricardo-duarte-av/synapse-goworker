@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 )
 
 // Client sends replication requests to named Synapse instances.
@@ -156,6 +157,8 @@ func (c *Client) post(ctx context.Context, t *target, url string, body []byte) (
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// ReplicationClient's, as Synapse's workers send it.
+	req.Header.Set("User-Agent", useragent.HTTP())
 	if c.secret != "" {
 		req.Header.Set("Authorization", "Bearer "+c.secret)
 	}

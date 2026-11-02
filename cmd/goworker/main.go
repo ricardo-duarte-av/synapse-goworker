@@ -40,6 +40,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
 )
@@ -108,6 +109,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if err != nil {
 		return err
 	}
+	// Our requests send Synapse's User-Agent, which carries main's version:
+	// ask main before anything sends.
+	useragent.SetSuffix(hs.UserAgentSuffix)
+	probeSynapseVersion(ctx, upstream, true, log)
 
 	db, lim, pools := cfg.Database, cfg.Limits, cfg.Database.Pools
 	// Every pool connects as Synapse does: homeserver.yaml's database block,
@@ -292,7 +297,6 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		// The MSC4354 sticky event backlog is filtered as the federation
 		// reads filter what they serve.
 		EventVisibleToServer: reads.EventVisibleToServer,
-		UserAgent:            "synapse-goworker/" + tag,
 		Tag:                  tag, Commit: commit, BuildTime: buildTime,
 		Log: componentLogger(log, cfg.Log, "sender"),
 	})
@@ -347,7 +351,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		g.Go(func() error { return creator.Run(gctx) })
 	}
 	g.Go(func() error {
-		watchHomeserver(gctx, src, sender, log)
+		watchHomeserver(gctx, src, sender, upstream, log)
 		return gctx.Err()
 	})
 	g.Go(func() error {

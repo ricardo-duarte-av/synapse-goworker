@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 )
 
 // TestForwardPreservesRequestURI is the load-bearing test of the proxy.
@@ -326,5 +328,41 @@ func TestForwardMarksClientCancellation(t *testing.T) {
 	}
 	if res.Err != nil {
 		t.Errorf("Err = %v, want nil: a client hang-up is not our error", res.Err)
+	}
+}
+
+// Main's Server header is Synapse's version string, which our own requests
+// send as their User-Agent: Probe asks for it, and every proxied answer
+// carries it.
+func TestProbeAndForwardLearnSynapsesVersion(t *testing.T) {
+	version := "Synapse/1.164.0"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", version)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer upstream.Close()
+	p, err := New(Config{Addrs: []string{strings.TrimPrefix(upstream.URL, "http://")}}, zerolog.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.Probe(context.Background())
+	if err != nil || got != "Synapse/1.164.0" || useragent.Federation() != "Synapse/1.164.0" {
+		t.Fatalf("Probe: %q, %v; useragent %q", got, err, useragent.Federation())
+	}
+
+	version = "Synapse/1.165.0"
+	rec := httptest.NewRecorder()
+	p.Forward(rec, httptest.NewRequest(http.MethodGet, "/_matrix/client/versions", nil), 0)
+	if useragent.Federation() != "Synapse/1.165.0" {
+		t.Fatalf("after a proxied answer: %q", useragent.Federation())
+	}
+
+	version = "nginx"
+	if _, err := p.Probe(context.Background()); err == nil {
+		t.Fatal("Probe accepted a Server header that is not Synapse's")
+	}
+	if useragent.Federation() != "Synapse/1.165.0" {
+		t.Fatalf("a non-Synapse answer replaced the version: %q", useragent.Federation())
 	}
 }

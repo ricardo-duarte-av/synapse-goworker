@@ -43,6 +43,8 @@ components:
       - synapse/events/__init__.py
       - synapse/federation/federation_base.py
       - synapse/handlers/event_auth.py
+      - synapse/http/client.py
+      - synapse/http/federation/matrix_federation_agent.py
       - synapse/http/matrixfederationclient.py
       - synapse/http/site.py
       - synapse/push/bulk_push_rule_evaluator.py

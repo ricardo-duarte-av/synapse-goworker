@@ -16,7 +16,9 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 )
 
@@ -104,7 +106,10 @@ const homeserverSettle = 2 * time.Second
 // edited: Synapse's own senders read the file only at start, so taking over
 // the moment it changed would send alongside a sender that has not yet been
 // told to stop. SIGHUP applies it at once, for when no restart is coming.
-func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *senderapp.Worker, log zerolog.Logger) {
+//
+// A restart may also be an upgrade, so each trigger asks main its version
+// again, for the User-Agent our requests send (useragent).
+func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *senderapp.Worker, upstream *proxy.Proxy, log zerolog.Logger) {
 	path := src.Path()
 	trigger := make(chan string, 1)
 	fire := func(why string) {
@@ -143,6 +148,7 @@ func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *sender
 			return
 		case <-time.After(homeserverSettle):
 		}
+		probeSynapseVersion(ctx, upstream, false, log)
 		mt := modTime(path)
 		if mt.Equal(applied) {
 			continue
@@ -158,7 +164,42 @@ func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *sender
 		applied, reported = mt, mt
 		homeserverReloads.WithLabelValues("ok").Inc()
 		log.Info().Str("trigger", why).Msg("applied the changed homeserver.yaml")
+		useragent.SetSuffix(scfg.UserAgentSuffix)
 		sender.SetSynapse(scfg)
+	}
+}
+
+// probeSynapseVersion asks main for its version string, for useragent,
+// trying for a few seconds: main may be restarting. Until it answers, the
+// last version heard (or useragent.Fallback) is sent; any answer main gives
+// through the proxy later corrects it, as does the probe on its next
+// REPLICATE. start logs the outcome even when nothing changed.
+func probeSynapseVersion(ctx context.Context, upstream *proxy.Proxy, start bool, log zerolog.Logger) {
+	before := useragent.Federation()
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, err = upstream.Probe(pctx)
+		cancel()
+		if err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+	ua := useragent.Federation()
+	switch {
+	case err != nil:
+		log.Warn().Err(err).Str("user_agent", ua).Bool("known", useragent.Known()).
+			Msg("could not ask main for Synapse's version; sending the last known as our User-Agent")
+	case ua != before || start:
+		log.Info().Str("user_agent", ua).Str("http_user_agent", useragent.HTTP()).
+			Msg("sending Synapse's User-Agent")
+	default:
+		log.Debug().Str("user_agent", ua).Msg("Synapse's version unchanged")
 	}
 }
 

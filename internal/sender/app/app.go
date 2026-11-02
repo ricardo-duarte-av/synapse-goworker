@@ -71,8 +71,6 @@ type Settings struct {
 	// is filtered with. Nil: the backlog is not sent (its rows stay).
 	EventVisibleToServer func(ctx context.Context, eventID, server string) (bool, error)
 
-	// UserAgent is sent on every federation request.
-	UserAgent string
 	// Tag, Commit and BuildTime are stamped into the build info metric.
 	Tag, Commit, BuildTime string
 
@@ -192,11 +190,10 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 	}
 
 	live := sink.NewHTTP(sink.HTTPConfig{
-		Log:       log,
-		UserAgent: cfg.UserAgent,
-		Timeout:   scfg.ClientTimeout,
-		Retries:   scfg.MaxLongRetries,
-		MaxDelay:  scfg.MaxLongRetryDelay,
+		Log:      log,
+		Timeout:  scfg.ClientTimeout,
+		Retries:  scfg.MaxLongRetries,
+		MaxDelay: scfg.MaxLongRetryDelay,
 	})
 	live.SetOnSent(w.countTransaction)
 	live.SetOnEDUTypes(countEDUTypes)

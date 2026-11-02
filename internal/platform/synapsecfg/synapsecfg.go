@@ -145,6 +145,11 @@ type Config struct {
 	// (default false): a profile field may then be set to null.
 	IncludeProfileUpdatesInSync bool
 
+	// UserAgentSuffix is user_agent_suffix: Synapse appends it, after a
+	// space, to the User-Agent of every HTTP client but the federation
+	// client's (http/client.py BaseHttpClient). "" when unset.
+	UserAgentSuffix string
+
 	// Membership is what update_membership reads.
 	Membership Membership
 
@@ -192,8 +197,9 @@ type raw struct {
 	SigningKey     string `yaml:"signing_key"`
 	SigningKeyPath string `yaml:"signing_key_path"`
 
-	RedactionAllowedPeriod      any  `yaml:"redaction_allowed_period"`
-	IncludeProfileUpdatesInSync bool `yaml:"include_profile_updates_in_sync"`
+	RedactionAllowedPeriod      any    `yaml:"redaction_allowed_period"`
+	IncludeProfileUpdatesInSync bool   `yaml:"include_profile_updates_in_sync"`
+	UserAgentSuffix             string `yaml:"user_agent_suffix"`
 
 	InstanceMap map[string]struct {
 		Path string `yaml:"path"`
@@ -301,7 +307,8 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 
 	cfg := &Config{Path: path, ServerName: r.ServerName, signingKey: r.SigningKey, signingKeyPath: r.SigningKeyPath,
-		RedactionAllowedPeriod: r.RedactionAllowedPeriod != nil, IncludeProfileUpdatesInSync: r.IncludeProfileUpdatesInSync}
+		RedactionAllowedPeriod: r.RedactionAllowedPeriod != nil, IncludeProfileUpdatesInSync: r.IncludeProfileUpdatesInSync,
+		UserAgentSuffix: r.UserAgentSuffix}
 
 	var err error
 	if cfg.InstanceMap, err = instanceMap(r); err != nil {

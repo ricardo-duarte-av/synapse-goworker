@@ -45,6 +45,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
 )
 
@@ -357,6 +358,8 @@ func (c *Client) post(ctx context.Context, userID, deviceID, state string, isSyn
 	}
 	req.Header.Set("Authorization", "Bearer "+t.secret)
 	req.Header.Set("Content-Type", "application/json")
+	// ReplicationClient's, as Synapse's workers send it.
+	req.Header.Set("User-Agent", useragent.HTTP())
 
 	resp, err := t.http.Do(req)
 	if err != nil {

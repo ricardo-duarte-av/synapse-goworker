@@ -107,6 +107,16 @@ Still per component, on purpose:
   client in user_ips as `Go-http-client/1.1` at the socket's path; the
   fallback now forwards X-Forwarded-For and User-Agent.
 
+- **Every request we make sends Synapse's User-Agent** (operator,
+  2026-11-02; `platform/useragent`): `Synapse/<main's version>`, learnt from
+  main's Server header (probed at start and on each REPLICATE/SIGHUP, and
+  seen on every proxied answer). Federation requests send it alone, as
+  matrixfederationclient.py does; replication, the presence relay and
+  .well-known lookups append homeserver.yaml's `user_agent_suffix`, as
+  BaseHttpClient does. A new mautrix `federation.Client` must go through
+  `useragent.Client`, or it sends mautrix's. Requests we only forward (the
+  proxy, /whoami, inbound's sweep nudge) keep the caller's.
+  `useragent.Fallback` (sent until main answers) moves with `reviewed`.
 - **No component switches** (operator, 2026-10-26). The worker serves whatever
   nginx sends it and sends federation only while homeserver.yaml lists its
   `instance_name` in `federation_sender_instances`. Not being listed is a

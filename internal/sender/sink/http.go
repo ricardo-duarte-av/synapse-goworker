@@ -17,6 +17,7 @@ import (
 	"go.mau.fi/util/exhttp"
 	"maunium.net/go/mautrix/federation"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/txn"
 )
 
@@ -32,9 +33,8 @@ import (
 // unapproved destination, so there is no flag inside here that could be read
 // the wrong way. See docs/going-live.md.
 type HTTP struct {
-	client    *http.Client
-	log       zerolog.Logger
-	userAgent string
+	client *http.Client
+	log    zerolog.Logger
 
 	retries  int
 	maxDelay time.Duration
@@ -54,10 +54,6 @@ type HTTP struct {
 // HTTPConfig builds an HTTP sink.
 type HTTPConfig struct {
 	Log zerolog.Logger
-	// UserAgent identifies us to remote servers. Ours, not Synapse's: a remote
-	// operator looking at their logs should be able to tell which of our
-	// senders they are talking to.
-	UserAgent string
 	// Timeout bounds one attempt. Synapse's federation.client_timeout.
 	Timeout time.Duration
 	// Retries and MaxDelay mirror Synapse's max_long_retries and
@@ -83,9 +79,6 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 	}
 	if cfg.MaxDelay <= 0 {
 		cfg.MaxDelay = 60 * time.Second
-	}
-	if cfg.UserAgent == "" {
-		cfg.UserAgent = "synapse-gofederation-worker"
 	}
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
@@ -123,6 +116,7 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 	// time per destination is a rule this worker already enforces, so a second
 	// idle connection to one server is headroom, not throughput.
 	transport.Transport.MaxIdleConns = 512
+	useragent.Resolving(transport)
 	transport.Transport.MaxIdleConnsPerHost = 2
 
 	return &HTTP{
@@ -136,11 +130,10 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 			},
 			Timeout: cfg.Timeout,
 		},
-		log:       cfg.Log,
-		userAgent: cfg.UserAgent,
-		retries:   cfg.Retries,
-		maxDelay:  cfg.MaxDelay,
-		timeout:   cfg.Timeout,
+		log:      cfg.Log,
+		retries:  cfg.Retries,
+		maxDelay: cfg.MaxDelay,
+		timeout:  cfg.Timeout,
 	}
 }
 
@@ -233,7 +226,8 @@ func (h *HTTP) attempt(ctx context.Context, req *txn.Request) (Result, bool, err
 	}
 	httpReq.Header.Set("Authorization", req.AuthHeader)
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", h.userAgent)
+	// Synapse's, exactly: a remote server must not tell us from it.
+	httpReq.Header.Set("User-Agent", useragent.Federation())
 	httpReq.ContentLength = int64(len(req.Body))
 
 	if h.inFlight != nil {

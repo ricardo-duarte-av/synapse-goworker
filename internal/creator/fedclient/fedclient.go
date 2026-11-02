@@ -47,7 +47,6 @@ func New(serverName, keyLine string, allow func(string) bool, ranges synapsecfg.
 		a, ok := netip.AddrFromSlice(ip)
 		return ok && !ranges.Blocked(a)
 	}
-	c.UserAgent = "goevent-creator"
 	return &Client{fed: c}, nil
 }
 

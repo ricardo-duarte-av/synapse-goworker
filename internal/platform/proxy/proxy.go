@@ -13,13 +13,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 )
 
 // Config names the upstreams: Synapse's main process here, which is the
@@ -67,9 +71,10 @@ type Proxy struct {
 }
 
 type backend struct {
-	name  string
-	host  string
-	proxy *httputil.ReverseProxy
+	name      string
+	host      string
+	proxy     *httputil.ReverseProxy
+	transport *http.Transport
 }
 
 // New builds a Proxy from the upstream configuration.
@@ -131,8 +136,17 @@ func newBackend(name, host string, dial dialFunc, timeout time.Duration, idle in
 		DisableCompression: true,
 	}
 
+	b.transport = transport
 	b.proxy = &httputil.ReverseProxy{
 		Transport: transport,
+		// Every answer carries Synapse's version string, which our own
+		// requests send as their User-Agent.
+		ModifyResponse: func(resp *http.Response) error {
+			if useragent.Observe(resp.Header.Get("Server")) {
+				log.Info().Str("user_agent", useragent.Federation()).Msg("Synapse's version changed; sending it as our User-Agent")
+			}
+			return nil
+		},
 		Rewrite: func(r *httputil.ProxyRequest) {
 			rewrite(r, host)
 		},
@@ -217,6 +231,28 @@ func (p *Proxy) pick() *backend {
 	}
 	i := p.next.Add(1) - 1
 	return p.backends[i%uint64(len(p.backends))]
+}
+
+// Probe asks the upstream which Synapse it is (its Server header, on
+// /health), for useragent. It returns what it answered with.
+func (p *Proxy) Probe(ctx context.Context) (string, error) {
+	b := p.pick()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+b.host+"/health", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := b.transport.RoundTrip(req)
+	if err != nil {
+		return "", err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	server := resp.Header.Get("Server")
+	if !strings.HasPrefix(server, "Synapse/") {
+		return server, fmt.Errorf("proxy: %s answered with Server %q, not Synapse's", b.name, server)
+	}
+	useragent.Observe(server)
+	return server, nil
 }
 
 // Backends returns the configured upstream names, for logging and readiness.

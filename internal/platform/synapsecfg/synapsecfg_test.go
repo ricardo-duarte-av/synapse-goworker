@@ -355,3 +355,12 @@ func TestParseDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestUserAgentSuffix(t *testing.T) {
+	if got := mustParse(t, "server_name: x\n").UserAgentSuffix; got != "" {
+		t.Errorf("unset: %q", got)
+	}
+	if got := mustParse(t, "server_name: x\nuser_agent_suffix: \"(ops@x)\"\n").UserAgentSuffix; got != "(ops@x)" {
+		t.Errorf("set: %q", got)
+	}
+}

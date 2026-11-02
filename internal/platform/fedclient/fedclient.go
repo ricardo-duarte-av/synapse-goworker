@@ -14,6 +14,8 @@ import (
 
 	"go.mau.fi/util/exhttp"
 	"maunium.net/go/mautrix/federation"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 )
 
 // New builds a client signing as serverName with a Synapse-format key line
@@ -25,11 +27,11 @@ func New(serverName, keyLine string, allow func(string) bool, timeout time.Durat
 		return nil, fmt.Errorf("fedclient: signing key: %w", err)
 	}
 	c := federation.NewClient(serverName, key, federation.NewInMemoryCache(), clientSettings(timeout))
+	useragent.Client(c)
 	// mautrix sets no Content-Type; Synapse sends application/json, and
 	// some servers refuse a body without it (400, then M_FORBIDDEN).
 	c.HTTP.Transport = &JSONContentType{Next: c.HTTP.Transport}
 	c.AllowServer = allow
-	c.UserAgent = "goinbound-worker"
 	return c, nil
 }
 

@@ -21,6 +21,8 @@ import (
 	"go.mau.fi/util/exhttp"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/federation"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 )
 
 // Verifier authenticates incoming federation requests.
@@ -97,6 +99,7 @@ func NewKeys(serverName string, opts Options) *Keys {
 	// The resolution cache (well-known and SRV lookups) is separate from the
 	// key cache; only the latter is layered over Synapse's.
 	client := federation.NewClient(serverName, nil, cache.mem, settings)
+	useragent.Client(client)
 	return &Keys{cache: cache, client: client, notaries: opts.Notaries}
 }
 
