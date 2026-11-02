@@ -43,6 +43,7 @@ The approved plan is in
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
 | `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |
 | `internal/creator` | goevent-creator, as `app.New` + `Handler` + `Run`; its writes matched on the escaped path ahead of the client mux (`app.Match`); `docs/creator.md` holds its notes |
+| `internal/fedping` | MSC4524 ping/pong (not in Synapse; main's 404 is its "disabled"); started from the metrics listener's `/debug/federation/ping` |
 | `cmd/goevent-e2e` | the creator's live suite, in its test rooms only |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
 | `synapse-watch.yaml`, `cmd/synapsewatch`, `.github/workflows/synapse-watch.yml` | nightly: Synapse release commits (not rcs) since `reviewed` that touch what we mirror, as one issue labelled synapse-watch |

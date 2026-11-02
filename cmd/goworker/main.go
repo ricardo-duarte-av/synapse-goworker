@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	creatorapp "github.com/ricardo-duarte-av/synapse-goworker/internal/creator/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedping"
 	fedreadapp "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
@@ -35,6 +36,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
@@ -311,12 +313,38 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		return nil
 	}
 
+	// MSC4524 ping and pong, when nginx sends them here; started from the
+	// metrics listener. Without the signing key they stay on main, which
+	// answers 404 M_UNRECOGNIZED, the MSC's "disabled".
+	var ping *fedping.Server
+	if line, err := hs.SigningKeyLine(); err != nil {
+		log.Warn().Err(err).Msg("MSC4524 ping unavailable without the signing key; its paths are proxied to main")
+	} else {
+		var allow func(string) bool
+		if hs.DomainWhitelist != nil {
+			allow = func(s string) bool { return hs.DomainWhitelist[s] }
+		}
+		fc, err := fedclient.New(hs.ServerName, line, allow, 30*time.Second)
+		if err != nil {
+			log.Warn().Err(err).Msg("MSC4524 ping unavailable; its paths are proxied to main")
+		} else {
+			ping = fedping.New(fedping.Options{
+				ServerName: hs.ServerName,
+				Verifier:   fedauth.New(hs.ServerName, fedauth.Options{Keys: keys}),
+				Client:     fc,
+				Log:        componentLogger(log, cfg.Log, "ping"),
+			})
+			closers = append(closers, ping.Close)
+		}
+	}
+
 	client := http.NewServeMux()
 	clientSync.Register(client)
 	router := &httpserve.Router{
 		Send:         send,
 		Reads:        reads.Handler(),
 		ReadsMatch:   func(p string) bool { _, ok := fedapi.Match(p); return ok },
+		PingMatch:    fedping.Match,
 		Creator:      createEvents,
 		CreatorMatch: creatorapp.Match,
 		Client:       client,
@@ -337,7 +365,14 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ReadHeaderTimeout: 20 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	metricsSrv := metricsServer(cfg.Listen.Metrics)
+	if ping != nil {
+		router.Ping = ping
+	}
+	var debugPing http.Handler
+	if ping != nil {
+		debugPing = ping.DebugHandler()
+	}
+	metricsSrv := metricsServer(cfg.Listen.Metrics, debugPing)
 
 	g, gctx := errgroup.WithContext(ctx)
 	if stream != nil {

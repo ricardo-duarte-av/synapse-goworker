@@ -25,6 +25,10 @@ func testRouter() *Router {
 		ReadsMatch: func(p string) bool {
 			return strings.HasPrefix(p, "/_matrix/federation/v1/event/")
 		},
+		Ping: named("ping"),
+		PingMatch: func(p string) bool {
+			return p == "/_matrix/federation/v1/ping"
+		},
 		Client:   client,
 		Fallback: named("main"),
 	}
@@ -39,6 +43,7 @@ func TestRouting(t *testing.T) {
 		{"GET", "/_matrix/federation/v1/event/%24a%2F%2Fb", "reads"},
 		{"PUT", "/_matrix/federation/v2/send_join/!r:x/$e", "main"},
 		{"GET", "/_matrix/federation/v1/version", "main"},
+		{"POST", "/_matrix/federation/v1/ping", "ping"},
 		{"GET", "/_matrix/client/v3/sync", "sync"},
 		{"POST", "/_matrix/client/v3/sync", "main"},
 		{"GET", "/_matrix/client/v3/rooms/!r:x/messages", "main"},

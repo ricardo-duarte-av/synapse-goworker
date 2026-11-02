@@ -19,6 +19,9 @@ type Router struct {
 	// Reads serves the federation paths ReadsMatch accepts.
 	Reads      http.Handler
 	ReadsMatch func(escapedPath string) bool
+	// Ping serves the MSC4524 paths PingMatch accepts.
+	Ping      http.Handler
+	PingMatch func(escapedPath string) bool
 	// Creator serves the client writes CreatorMatch accepts (send, state,
 	// redact, membership, join, knock, profile), matched on the escaped
 	// path and the method: a GET under the same prefix is a read, and goes
@@ -44,6 +47,8 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.Send.ServeHTTP(w, r)
 	case rt.Reads != nil && rt.ReadsMatch != nil && rt.ReadsMatch(p):
 		rt.Reads.ServeHTTP(w, r)
+	case rt.Ping != nil && rt.PingMatch != nil && rt.PingMatch(p):
+		rt.Ping.ServeHTTP(w, r)
 	case strings.HasPrefix(p, "/_matrix/federation/"), strings.HasPrefix(p, "/_matrix/key/"):
 		rt.Fallback.ServeHTTP(w, r)
 	case rt.Creator != nil && rt.CreatorMatch != nil && rt.CreatorMatch(r.Method, p):

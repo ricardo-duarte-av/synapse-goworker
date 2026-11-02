@@ -8,6 +8,7 @@ One Go process for the Synapse work that five separate Go workers did:
 | Inbound federation | [synapse-goinbound-worker](https://github.com/ricardo-duarte-av/synapse-goinbound-worker) | `PUT /_matrix/federation/v1/send/{txnId}` |
 | Federation reads | [synapse-gopro-worker](https://github.com/ricardo-duarte-av/synapse-gopro-worker) | `/_matrix/federation/v1/{event,state,state_ids,get_missing_events}` |
 | Outbound federation | [synapse-gofederation-worker](https://github.com/ricardo-duarte-av/synapse-gofederation-worker) | none; sends transactions |
+| Federation ping (MSC4524) | new; Synapse has none | `POST /_matrix/federation/{v1,unstable/uk.timedout.msc4524.tabletennis}/{ping,pong}` |
 | Event creation | [synapse-goevent-creator](https://github.com/ricardo-duarte-av/synapse-goevent-creator) | `rooms/{id}/send`, `/state`, `/redact`, the membership verbs, `join/`, `knock/`, `profile/` (writes) |
 
 The old repositories are the archive: their history, their docs and the
@@ -48,6 +49,36 @@ One socket serves both client and federation paths; point nginx's
 `location` blocks for the endpoints above at it. Anything else that reaches
 it is proxied to `upstream` (Synapse's main process). The metrics listener
 serves `/metrics`, `/health` and `/debug/pprof`.
+
+### Federation ping (MSC4524)
+
+[MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)
+checks federation both ways: we ask another server a question, it answers,
+then confirms the answer to us in a signed request of its own. Synapse does
+not implement it; main answers the paths 404 `M_UNRECOGNIZED`, which the MSC
+reads as "disabled", so routing the four paths to the worker is what enables
+it. Pings are limited to one per origin every 30 s, and an unsigned one also
+to one per client address (the last X-Forwarded-For entry, nginx's); each
+pong waits 2-5 s. The `location`, before any broader federation one:
+
+```nginx
+## MSC4524 federation ping/pong: goworker (on main they are 404, disabled)
+location ~ ^/_matrix/federation/(v1|unstable/uk\.timedout\.msc4524\.tabletennis)/(ping|pong)/?$ {
+	include /data/nginx/custom/matrix-config.conf;
+	proxy_pass http://av-matrix-goworker;
+}
+```
+
+To ping a server, from wherever the metrics listener is reachable:
+
+```sh
+curl -X POST 'http://<metrics addr>/debug/federation/ping?server=example.org&wait=30s'
+```
+
+The JSON report lists each attempt (signed, then unsigned if the signature
+was refused; the unstable path, then the stable one if unrecognised), the
+other server's answer and details, whether its pong arrived, and a one-line
+conclusion. The pong is only received if nginx routes `.../pong` here.
 
 `homeserver.yaml` is re-read when a Synapse process restarts (it announces
 that with REPLICATE on the bus), or on SIGHUP. Add `instance_name` to

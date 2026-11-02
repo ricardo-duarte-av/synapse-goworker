@@ -46,9 +46,10 @@ func setRuntimeMetrics(tag, commit, buildTime string, limitMB int) {
 	memoryLimit.Set(float64(int64(limitMB) << 20))
 }
 
-// metricsServer serves /metrics, /health and optionally /debug/pprof. Nil
-// when no address is configured.
-func metricsServer(cfg config.Metrics) *http.Server {
+// metricsServer serves /metrics, /health, optionally /debug/pprof, and, when
+// ping is not nil, POST /debug/federation/ping?server=<name>, which starts an
+// MSC4524 ping. Nil when no address is configured.
+func metricsServer(cfg config.Metrics, ping http.Handler) *http.Server {
 	if cfg.Addr == "" {
 		return nil
 	}
@@ -57,6 +58,9 @@ func metricsServer(cfg config.Metrics) *http.Server {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("OK"))
 	})
+	if ping != nil {
+		mux.Handle("/debug/federation/ping", ping)
+	}
 	if cfg.PProf {
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

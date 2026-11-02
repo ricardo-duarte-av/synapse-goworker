@@ -15,7 +15,7 @@ listen:
   socket: /var/sockets/nginx/goworker.sock
   socket_mode: "0666"          # nginx runs as another uid
   metrics:
-    addr: ":9200"              # /metrics, /health, /debug/pprof -- internal only
+    addr: ":9200"              # /metrics, /health, /debug/pprof, POST /debug/federation/ping -- internal only
     pprof: true
 
 upstream:
