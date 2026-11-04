@@ -13,7 +13,10 @@ const (
 	// EndpointGetMissingEvents is the first POST endpoint here, and the first
 	// whose request carries a body the answer depends on.
 	EndpointGetMissingEvents Endpoint = "get_missing_events"
-	EndpointUnknown          Endpoint = "unknown"
+	// EndpointUserKeysQuery is POST /user/keys/query: local users' device
+	// and cross-signing keys.
+	EndpointUserKeysQuery Endpoint = "user_keys_query"
+	EndpointUnknown       Endpoint = "unknown"
 )
 
 // Streams reports that an endpoint writes its answer incrementally rather
@@ -30,7 +33,7 @@ func (e Endpoint) Streams() bool {
 // body, which must then be buffered so that verification, the native answer
 // and the proxy can each read it.
 func (e Endpoint) HasRequestBody() bool {
-	return e == EndpointGetMissingEvents
+	return e == EndpointGetMissingEvents || e == EndpointUserKeysQuery
 }
 
 // Route describes a matched federation request.
@@ -64,6 +67,12 @@ var prefixes = []struct {
 // parameter carries percent-encoded characters ('!' and ':' in room IDs, '$' in
 // event IDs) that must survive to the upstream unchanged.
 func Match(escapedPath string) (Route, bool) {
+	// Paths without a parameter, matched whole (with Synapse's optional
+	// trailing slash).
+	switch strings.TrimSuffix(escapedPath, "/") {
+	case "/_matrix/federation/v1/user/keys/query":
+		return Route{Endpoint: EndpointUserKeysQuery}, true
+	}
 	for _, p := range prefixes {
 		if !strings.HasPrefix(escapedPath, p.prefix) {
 			continue

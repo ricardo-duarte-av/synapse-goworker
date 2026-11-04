@@ -231,6 +231,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Upstream:          upstream,
 		States:            states,
 		Keys:              keys,
+		KeyQuery:          fedreadapp.KeyQueryFor(hs, log),
 		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
 		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
 		Log:               componentLogger(log, cfg.Log, "federation_reads"),

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/tidwall/gjson"
 
@@ -26,15 +27,19 @@ type Resolver interface {
 	StateIDs(ctx context.Context, origin, roomID, eventID string) (*matrixstate.StateIDsResponse, error)
 	Event(ctx context.Context, origin, serverName, eventID string) (*matrixstate.TransactionResponse, error)
 	GetMissingEvents(ctx context.Context, origin, serverName, roomID string, earliest, latest []string, limit int) (*matrixstate.MissingEventsResponse, error)
+	UserKeys(ctx context.Context, users []string, devices map[string][]string) ([]byte, error)
+	KeyQueryOptions() matrixstate.KeyQueryOptions
 	State(ctx context.Context, w io.Writer, origin, roomID, eventID string) (matrixstate.StateResult, error)
 }
 
 // Request identifies what to answer.
 type Request struct {
 	Endpoint string
-	Origin   string
-	RoomID   string
-	EventID  string
+	// Method is the request's; only POST is /user/keys/query's.
+	Method  string
+	Origin  string
+	RoomID  string
+	EventID string
 	// Body is the raw request body, for endpoints whose answer depends on it.
 	// Carried as bytes rather than parsed, so every caller parses it
 	// identically.
@@ -94,6 +99,9 @@ func Answer(ctx context.Context, r Resolver, serverName string, request Request)
 			return nil, 0, Meta{}, err
 		}
 		return body, http.StatusOK, Meta{}, nil
+
+	case "user_keys_query":
+		return userKeysQuery(ctx, r, serverName, request)
 
 	case "get_missing_events":
 		var body MissingEventsRequest
@@ -175,4 +183,82 @@ func pyTrue(v gjson.Result) bool {
 		return !empty
 	}
 	return true
+}
+
+// notHosted is on_federation_query_client_keys' refusal of a user not ours.
+var notHosted = []byte(`{"errcode":"M_UNKNOWN","error":"User is not hosted on this homeserver"}`)
+
+// userKeysQuery is FederationClientKeysQueryServlet.on_POST over
+// on_federation_query_client_keys: content["device_keys"] (absent, empty),
+// every user ours or a 400, then the keys. Left to Synapse: another method,
+// a body whose shape Synapse fails on or answers in its own words (a
+// device_keys that is not an object, a user ID UserID.from_string refuses, a
+// device list that is not a list of strings), and under MSC3984 a user an
+// appservice owns exclusively.
+func userKeysQuery(ctx context.Context, r Resolver, serverName string, request Request) ([]byte, int, Meta, error) {
+	if request.Method != "POST" {
+		return nil, 0, Meta{}, NotReproduced{Reason: "method"}
+	}
+	root := gjson.ParseBytes(request.Body)
+	if len(request.Body) == 0 || !json.Valid(request.Body) || !root.IsObject() {
+		return nil, 0, Meta{}, NotReproduced{Reason: "body"}
+	}
+	dk := root.Get("device_keys")
+	if dk.Exists() && !dk.IsObject() {
+		return nil, 0, Meta{}, NotReproduced{Reason: "body"}
+	}
+	var users []string
+	devices := map[string][]string{}
+	bad := false
+	dk.ForEach(func(k, v gjson.Result) bool {
+		var ids []string
+		switch {
+		case v.Type == gjson.Null:
+		case v.IsArray():
+			for _, e := range v.Array() {
+				if e.Type != gjson.String {
+					bad = true
+					return false
+				}
+				ids = append(ids, e.Str)
+			}
+		default:
+			bad = true
+			return false
+		}
+		if _, seen := devices[k.Str]; !seen {
+			users = append(users, k.Str)
+		}
+		devices[k.Str] = ids
+		return true
+	})
+	if bad {
+		return nil, 0, Meta{}, NotReproduced{Reason: "body"}
+	}
+	for _, u := range users {
+		// UserID.from_string raises in its own words.
+		if !strings.HasPrefix(u, "@") || !strings.Contains(u, ":") {
+			return nil, 0, Meta{}, NotReproduced{Reason: "user_id"}
+		}
+	}
+	for _, u := range users {
+		if _, domain, _ := strings.Cut(u, ":"); domain != serverName {
+			return notHosted, http.StatusBadRequest, Meta{}, nil
+		}
+	}
+	if o := r.KeyQueryOptions(); o.MSC3984 {
+		if o.ExclusiveUnknown {
+			return nil, 0, Meta{}, NotReproduced{Reason: "appservice_namespaces"}
+		}
+		for _, u := range users {
+			if o.ExclusiveUsers != nil && o.ExclusiveUsers.MatchString(u) {
+				return nil, 0, Meta{}, NotReproduced{Reason: "appservice_keys"}
+			}
+		}
+	}
+	body, err := r.UserKeys(ctx, users, devices)
+	if err != nil {
+		return nil, 0, Meta{}, err
+	}
+	return body, http.StatusOK, Meta{}, nil
 }

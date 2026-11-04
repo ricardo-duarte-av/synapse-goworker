@@ -14,8 +14,8 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/e2ekeys"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/store"
 )
 
 // POST /keys/query: KeyQueryServlet over E2eKeysHandler.query_devices
@@ -195,62 +195,16 @@ func queryDevices(ctx context.Context, d Deps, k KeysDeps, verdict clientauth.Ve
 	failures := map[string]json.RawMessage{}
 
 	// query_local_devices.
-	if len(local) > 0 {
-		var all []string
-		var pairs []store.UserDevice
-		for _, u := range local {
-			results[u] = map[string]json.RawMessage{}
-			if len(query.devices[u]) == 0 {
-				all = append(all, u)
-			}
-			for _, dev := range query.devices[u] {
-				pairs = append(pairs, store.UserDevice{UserID: u, DeviceID: dev})
-			}
-		}
-		keys, err := d.Store.DeviceKeys(ctx, all, pairs)
-		if err != nil {
-			return nil, "", err
-		}
-		var signed []store.UserDevice
-		for u, devs := range keys {
-			for dev, k := range devs {
-				if k.KeyJSON != nil {
-					signed = append(signed, store.UserDevice{UserID: u, DeviceID: dev})
-				}
-			}
-		}
-		sigs, err := d.Store.DeviceSelfCrossSignatures(ctx, signed)
-		if err != nil {
-			return nil, "", err
-		}
-		for u, devs := range keys {
-			if results[u] == nil {
-				continue
-			}
-			for dev, k := range devs {
-				if k.KeyJSON == nil {
-					continue
-				}
-				body := k.KeyJSON
-				for _, s := range sigs[store.UserDevice{UserID: u, DeviceID: dev}] {
-					if body, err = sjson.SetBytes(body, "signatures."+gjson.Escape(u)+"."+gjson.Escape(s.KeyID), s.Signature); err != nil {
-						return nil, "", err
-					}
-				}
-				unsigned := `{}`
-				if k.DisplayName != nil {
-					unsigned = `{"device_display_name":` + string(jsonString(*k.DisplayName)) + `}`
-				}
-				if body, err = sjson.SetRawBytes(body, "unsigned", []byte(unsigned)); err != nil {
-					return nil, "", err
-				}
-				results[u][dev] = body
-			}
-		}
+	localKeys, err := e2ekeys.Local(ctx, d.Store.Query, local, query.devices, true)
+	if err != nil {
+		return nil, "", err
+	}
+	for u, devs := range localKeys {
+		results[u] = devs
 	}
 
 	// get_cross_signing_keys_from_cache, with from's signatures.
-	master, selfSigning, userSigning, err := crossSigningKeys(ctx, d, valid, from)
+	master, selfSigning, userSigning, err := e2ekeys.CrossSigning(ctx, d.Store.Query, valid, from)
 	if err != nil {
 		return nil, "", err
 	}
@@ -401,65 +355,6 @@ func queryDevices(ctx context.Context, d Deps, k KeysDeps, verdict clientauth.Ve
 		return nil, "", err
 	}
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), "", nil
-}
-
-// crossSigningKeys is get_cross_signing_keys_from_cache over
-// get_e2e_cross_signing_keys_bulk(user_ids, from_user_id): everyone's
-// master and self-signing keys, from's own user-signing key, each with the
-// signatures from made on it.
-func crossSigningKeys(ctx context.Context, d Deps, users []string, from string) (
-	master, selfSigning, userSigning map[string]json.RawMessage, err error) {
-
-	master, selfSigning, userSigning = map[string]json.RawMessage{}, map[string]json.RawMessage{}, map[string]json.RawMessage{}
-	keys, err := d.Store.CrossSigningKeys(ctx, users)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	// _get_e2e_cross_signing_signatures_txn: each key is found by its user
-	// and the last value of its "keys", its public key.
-	type slot struct{ user, typ string }
-	bySigned := map[store.UserDevice]slot{}
-	var targets []store.UserDevice
-	for u, byType := range keys {
-		for typ, data := range byType {
-			pub := ""
-			gjson.GetBytes(data, "keys").ForEach(func(_, v gjson.Result) bool {
-				pub = v.String()
-				return true
-			})
-			t := store.UserDevice{UserID: u, DeviceID: pub}
-			if _, dup := bySigned[t]; !dup {
-				targets = append(targets, t)
-			}
-			bySigned[t] = slot{u, typ}
-		}
-	}
-	if from != "" && len(targets) > 0 {
-		sigs, err := d.Store.CrossSignaturesBy(ctx, from, targets)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		for _, s := range sigs {
-			at := bySigned[s.Target]
-			data := keys[at.user][at.typ]
-			if data, err = sjson.SetBytes(data, "signatures."+gjson.Escape(from)+"."+gjson.Escape(s.KeyID), s.Signature.Signature); err != nil {
-				return nil, nil, nil, err
-			}
-			keys[at.user][at.typ] = data
-		}
-	}
-	for u, byType := range keys {
-		if k, ok := byType["master"]; ok {
-			master[u] = k
-		}
-		if k, ok := byType["self_signing"]; ok {
-			selfSigning[u] = k
-		}
-	}
-	if k, ok := keys[from]["user_signing"]; ok && from != "" {
-		userSigning[from] = k
-	}
-	return master, selfSigning, userSigning, nil
 }
 
 // pyTruthy is Python's truth of a JSON value: false for a missing key,

@@ -15,12 +15,14 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/store"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/appservice"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // Config is the `federation_reads:` block.
@@ -69,6 +71,8 @@ type Settings struct {
 	// Upstream is Synapse's main process, the fallback for anything not
 	// answered natively.
 	Upstream *proxy.Proxy
+	// KeyQuery is what POST /user/keys/query reads from homeserver.yaml.
+	KeyQuery matrixstate.KeyQueryOptions
 	// Reads bounds concurrent non-streamed answers; StateStreams the
 	// streamed /state ones.
 	Reads, StateStreams *limits.Gate
@@ -129,12 +133,13 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 	keys.UseDB(db)
 	verifier := fedauth.New(cfg.ServerName, fedauth.Options{
 		Keys: keys,
-		// These endpoints are all GET with no body; nothing legitimate is
-		// large.
-		MaxBodySize: 64 << 10,
+		// Two endpoints carry a body (/get_missing_events, /user/keys/query);
+		// the handler buffers at most 1MB of it.
+		MaxBodySize: 1 << 20,
 		Expired:     metrics.AuthExpiredKey,
 	})
 	f.resolver, f.server = matrixstate.NewResolver(db), cfg.ServerName
+	f.resolver.SetKeyQuery(cfg.KeyQuery)
 	f.handler = fedapi.New(cfg.ServerName, fc.RCFederation, cfg.Upstream, log,
 		fedapi.WithNative(f.resolver, verifier,
 			time.Duration(fc.NativeTimeoutSeconds)*time.Second),
@@ -218,3 +223,20 @@ func (f *FedRead) Run(ctx context.Context) error {
 
 // Close releases the pool.
 func (f *FedRead) Close() { f.db.Close() }
+
+// KeyQueryFor reads /user/keys/query's options from homeserver.yaml.
+func KeyQueryFor(hs *synapsecfg.Config, log zerolog.Logger) matrixstate.KeyQueryOptions {
+	o := matrixstate.KeyQueryOptions{
+		DisplayNames: hs.AllowDeviceNameLookup,
+		MSC3984:      hs.Flag("msc3984_appservice_key_query", false),
+	}
+	if o.MSC3984 {
+		re, err := appservice.ExclusiveUsers(hs.AppServiceFiles)
+		if err != nil {
+			log.Warn().Err(err).Msg("federation reads: appservice namespaces unreadable; key queries go to Synapse")
+			o.ExclusiveUnknown = true
+		}
+		o.ExclusiveUsers = re
+	}
+	return o
+}

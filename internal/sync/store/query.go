@@ -39,3 +39,9 @@ func txQuery(ctx context.Context, tx pgx.Tx, name, sql string, args ...any) (pgx
 	metrics.DBQueries.WithLabelValues(name).Inc()
 	return tx.Query(ctx, sql, args...)
 }
+
+// Query is query, for a package that takes a query function
+// (platform/e2ekeys).
+func (s *Store) Query(ctx context.Context, name, sql string, args ...any) (pgx.Rows, error) {
+	return s.query(ctx, name, sql, args...)
+}

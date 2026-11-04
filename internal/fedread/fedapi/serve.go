@@ -90,7 +90,7 @@ func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, 
 	defer cancel()
 
 	start := time.Now()
-	body, status, meta, err := h.answer(ctx, endpoint, result.Origin, roomID, eventID, reqBody)
+	body, status, meta, err := h.answer(ctx, r.Method, endpoint, result.Origin, roomID, eventID, reqBody)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -148,7 +148,7 @@ func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, 
 
 // answer computes the response, converting a panic into an error so a bug in
 // the native path falls back to the proxy rather than killing the connection.
-func (h *Handler) answer(ctx context.Context, endpoint, origin, roomID, eventID string, reqBody []byte) (body []byte, status int, meta native.Meta, err error) {
+func (h *Handler) answer(ctx context.Context, method, endpoint, origin, roomID, eventID string, reqBody []byte) (body []byte, status int, meta native.Meta, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			nativeFallback.WithLabelValues(endpoint, "panic").Inc()
@@ -159,6 +159,7 @@ func (h *Handler) answer(ctx context.Context, endpoint, origin, roomID, eventID 
 	}()
 	return native.Answer(ctx, h.resolver, h.serverName, native.Request{
 		Endpoint: endpoint,
+		Method:   method,
 		Origin:   origin,
 		RoomID:   roomID,
 		EventID:  eventID,

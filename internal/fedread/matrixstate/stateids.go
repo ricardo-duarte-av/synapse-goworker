@@ -28,6 +28,8 @@ type Resolver struct {
 	acls *cache.LRU[string, *ServerACL]
 	// stateIDs collapses identical /state_ids computations in flight.
 	stateIDs *stateIDsFlight
+	// keyQuery configures /user/keys/query.
+	keyQuery KeyQueryOptions
 }
 
 // NewResolver builds a Resolver over the given store.

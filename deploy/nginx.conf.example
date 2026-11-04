@@ -15,8 +15,9 @@ upstream goworker {
 
 # In the server { } block:
 #
-#   # Federation: inbound transactions and the four read endpoints.
-#   location ~ ^/_matrix/federation/v1/(send|event|state|state_ids|get_missing_events)/ {
+#   # Federation: inbound transactions, the four read endpoints, and the
+#   # key query (local users' device and cross-signing keys).
+#   location ~ ^/_matrix/federation/v1/((send|event|state|state_ids|get_missing_events)/|user/keys/query/?$) {
 #       include /data/nginx/custom/matrix-config.conf;
 #       proxy_pass http://goworker;
 #

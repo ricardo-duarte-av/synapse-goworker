@@ -105,3 +105,17 @@ func TestOriginFromAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchUserKeysQuery(t *testing.T) {
+	for path, ok := range map[string]bool{
+		"/_matrix/federation/v1/user/keys/query":  true,
+		"/_matrix/federation/v1/user/keys/query/": true,
+		"/_matrix/federation/v1/user/keys/claim":  false,
+		"/_matrix/federation/v2/user/keys/query":  false,
+	} {
+		r, got := Match(path)
+		if got != ok || (ok && r.Endpoint != EndpointUserKeysQuery) {
+			t.Errorf("%s: %+v %v", path, r, got)
+		}
+	}
+}
