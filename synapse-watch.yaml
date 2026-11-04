@@ -14,8 +14,9 @@
 
 # Every part reviewed to v1.164.1 on 2026-10-29: the 1.159-1.164.1 backlog
 # (issue #1) ported or dismissed commit by commit; the decisions are in
-# the commit that moved this.
-reviewed: v1.164.1
+# the commit that moved this. v1.164.2 (2026-11-04): its one change restores
+# the unstable MSC2965 /auth_metadata path, which nothing here mirrors.
+reviewed: v1.164.2
 
 # Ported or dismissed past a component's reviewed tag:
 handled: []
