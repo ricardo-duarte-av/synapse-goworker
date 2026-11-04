@@ -12,15 +12,21 @@
 package fedauth
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/exhttp"
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/crypto/canonicaljson"
 	"maunium.net/go/mautrix/federation"
+	"maunium.net/go/mautrix/federation/signutil"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 )
@@ -177,6 +183,16 @@ func (v *Verifier) Verify(r *http.Request) Result {
 	// origin server directly, which is the last resort in Synapse's order too.
 	v.warmCache(r.Context(), r.Header.Get("Authorization"))
 
+	if origin, respErr, handled := v.verifyEmptyObject(r); handled {
+		if respErr != nil {
+			return Result{Err: respErr}
+		}
+		if respErr := v.requireCurrentlyValidKey(r.Header.Get("Authorization")); respErr != nil {
+			return Result{Err: respErr}
+		}
+		return Result{Origin: origin}
+	}
+
 	modified, respErr := v.auth.Authenticate(r)
 	if respErr != nil {
 		return Result{Err: respErr}
@@ -238,3 +254,64 @@ func (v *Verifier) requireCurrentlyValidKey(authHeader string) *mautrix.RespErro
 
 // ServerName returns the homeserver this verifier accepts requests for.
 func (v *Verifier) ServerName() string { return v.serverName }
+
+// verifyEmptyObject verifies a request whose body is an empty JSON object,
+// which mautrix cannot: its signable request holds the content as a
+// json.RawMessage with omitempty, and under jsonv2 omitempty drops {}, so it
+// checks the signature over a request without "content" while Synapse (and
+// every server) signed one with "content": {} (_parse_auth_header's
+// json_request, content set whenever it is not None). handled is false for
+// any other body, which is left to mautrix, the body readable again.
+func (v *Verifier) verifyEmptyObject(r *http.Request) (origin string, respErr *mautrix.RespError, handled bool) {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.ContentLength == 0 || r.Body == nil {
+		return "", nil, false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, v.auth.MaxBodySize+1))
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || int64(len(body)) > v.auth.MaxBodySize {
+		return "", nil, false
+	}
+	if c, err := canonicaljson.CanonicalJSON(body); err != nil || string(c) != "{}" {
+		return "", nil, false
+	}
+
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "X-Matrix ") {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Missing or invalid X-Matrix header", StatusCode: http.StatusUnauthorized}, true
+	}
+	parsed := federation.ParseXMatrixAuth(auth)
+	if parsed.Origin == "" || parsed.KeyID == "" || parsed.Signature == "" {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Malformed X-Matrix header", StatusCode: http.StatusUnauthorized}, true
+	}
+	destination := v.auth.GetDestination(parsed)
+	if destination == "" || (parsed.Destination != "" && parsed.Destination != destination) {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Invalid destination in X-Matrix header", StatusCode: http.StatusUnauthorized}, true
+	}
+	keys, err := v.auth.GetKeysWithCache(r.Context(), parsed.Origin, parsed.KeyID)
+	if err != nil {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Failed to query keys to authenticate request", StatusCode: http.StatusUnauthorized}, true
+	}
+	if err := keys.VerifySelfSignature(); err != nil {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Invalid self-signatures in server keys", StatusCode: http.StatusUnauthorized}, true
+	}
+	key, ok := keys.VerifyKeys[parsed.KeyID]
+	if !ok {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Key ID not found", StatusCode: http.StatusUnauthorized}, true
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(map[string]any{
+		"method": r.Method, "uri": r.URL.RequestURI(), "origin": parsed.Origin,
+		"destination": destination, "content": json.RawMessage(`{}`),
+	})
+	message, err := canonicaljson.CanonicalJSON(buf.Bytes())
+	if err != nil {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Failed to verify request signature", StatusCode: http.StatusUnauthorized}, true
+	}
+	if err := signutil.VerifyJSONCanonical(key.Key, parsed.Signature, message); err != nil {
+		return "", &mautrix.RespError{ErrCode: "M_UNAUTHORIZED", Err: "Failed to verify request signature", StatusCode: http.StatusUnauthorized}, true
+	}
+	return parsed.Origin, nil, true
+}

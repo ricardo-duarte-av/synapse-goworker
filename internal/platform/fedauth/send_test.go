@@ -80,3 +80,36 @@ func TestVerifyBodyLimit(t *testing.T) {
 		t.Error("a body over MaxBodySize verified")
 	}
 }
+
+// An empty-object body: Synapse signs "content": {} with it, which mautrix
+// cannot check (omitempty drops {} under jsonv2), so Verify does.
+func TestVerifyEmptyObjectBody(t *testing.T) {
+	v := New("example.com", Options{})
+	key := federation.GenerateSigningKey()
+	trust(t, v, "remote.example", key)
+	sign := func(withContent bool) *http.Request {
+		msg := map[string]any{"method": "POST", "uri": "/_matrix/federation/v1/user/keys/query",
+			"origin": "remote.example", "destination": "example.com"}
+		if withContent {
+			msg["content"] = map[string]any{}
+		}
+		sig, err := key.SignJSON(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _ := http.NewRequest(http.MethodPost, "http://example.com/_matrix/federation/v1/user/keys/query", bytes.NewReader([]byte(`{}`)))
+		r.ContentLength = 2
+		r.Header.Set("Authorization", `X-Matrix origin="remote.example",destination="example.com",key="`+string(key.ID)+`",sig="`+sig+`"`)
+		return r
+	}
+	r := sign(true)
+	if res := v.Verify(r); !res.OK() || res.Origin != "remote.example" {
+		t.Fatalf("Synapse's signature over content {} was rejected: %+v", res.Err)
+	}
+	if b, _ := io.ReadAll(r.Body); string(b) != `{}` {
+		t.Errorf("body left %q", b)
+	}
+	if res := v.Verify(sign(false)); res.OK() {
+		t.Error("a signature without the content verified")
+	}
+}
