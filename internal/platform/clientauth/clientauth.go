@@ -47,6 +47,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/appservice"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
@@ -345,7 +346,7 @@ func (a *Authenticator) authenticate(ctx context.Context, r *http.Request) (Verd
 	q := r.URL.Query()
 	ip := ClientIP(r)
 
-	if as, ok := a.as.byToken[token]; ok && as.allowsIP(ip) {
+	if as, ok := a.as.byToken[token]; ok && as.AllowsIP(ip) {
 		v, err := a.appServiceUser(ctx, as, q)
 		if err != nil || !v.Valid {
 			return v, err
@@ -438,13 +439,13 @@ func ClientIP(r *http.Request) string {
 
 // appServiceUser is the rest of get_appservice_user, once the token is
 // known to be this service's and its address allowed.
-func (a *Authenticator) appServiceUser(ctx context.Context, as *appService, q url.Values) (Verdict, error) {
-	userID := as.sender
+func (a *Authenticator) appServiceUser(ctx context.Context, as *appservice.Service, q url.Values) (Verdict, error) {
+	userID := as.Sender
 	if v, ok := q["user_id"]; ok {
 		userID = v[0]
 		// validate_appservice_can_control_user_id.
-		if userID != as.sender {
-			if !as.interestedInUser(userID) {
+		if userID != as.Sender {
+			if !as.InterestedInUser(userID) {
 				return Verdict{Source: SourceNative, Rejection: reject(http.StatusForbidden, "M_FORBIDDEN",
 					fmt.Sprintf("Application service cannot masquerade as this user (%s).", userID), nil)}, nil
 			}
@@ -471,8 +472,8 @@ func (a *Authenticator) appServiceUser(ctx context.Context, as *appService, q ur
 					deviceID, userID), nil)}, nil
 		}
 	}
-	return Verdict{Valid: true, UserID: userID, DeviceID: deviceID, AppServiceID: as.id,
-		AppServiceUnlimited: as.unlimited, Entity: userID, Source: SourceNative}, nil
+	return Verdict{Valid: true, UserID: userID, DeviceID: deviceID, AppServiceID: as.ID,
+		AppServiceUnlimited: !as.RateLimited, Entity: userID, Source: SourceNative}, nil
 }
 
 // record is _record_request: USER_IP for the entity that authenticated, and

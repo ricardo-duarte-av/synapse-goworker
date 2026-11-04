@@ -106,52 +106,6 @@ namespaces:
 ` + extra)
 }
 
-func TestParseAppService(t *testing.T) {
-	as, why, err := parseAppService("example.org", registration(""))
-	if err != nil || why != "" {
-		t.Fatal(err, why)
-	}
-	for user, want := range map[string]bool{
-		"@bridgebot:example.org":  true, // the sender
-		"@bridge_1:example.org":   true,
-		"@bridge_1:example.orgX":  true, // re.match: a prefix suffices
-		"@sharedwhatever:else":    true, // a non-exclusive namespace counts
-		"@alice:example.org":      false,
-		"x@bridge_1:example.org":  false, // anchored at the start
-		"@bridgebot:example.org2": false,
-	} {
-		if got := as.interestedInUser(user); got != want {
-			t.Errorf("%s: got %v, want %v", user, got, want)
-		}
-	}
-
-	_, why, err = parseAppService("example.org", []byte(strings.Replace(string(registration("")),
-		`'@shared'`, `'@(?!admin)'`, 1)))
-	if err != nil || why == "" {
-		t.Fatalf("a lookahead should be valid but not native: %v %q", err, why)
-	}
-
-	for _, bad := range []string{
-		strings.Replace(string(registration("")), "as_token: AS_TOKEN\n", "", 1),
-		strings.Replace(string(registration("")), "sender_localpart: bridgebot", "sender_localpart: 'bridge bot'", 1),
-		strings.Replace(string(registration("")), "exclusive: false\n", "", 1),
-	} {
-		if _, _, err := parseAppService("example.org", []byte(bad)); err == nil {
-			t.Errorf("accepted:\n%s", bad)
-		}
-	}
-
-	as, _, err = parseAppService("example.org", registration("ip_range_whitelist: ['10.0.0.0/8', '192.0.2.7']\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for ip, want := range map[string]bool{"10.1.2.3": true, "192.0.2.7": true, "192.0.2.8": false, "::ffff:10.0.0.1": true, "nonsense": false} {
-		if got := as.allowsIP(ip); got != want {
-			t.Errorf("%s: got %v, want %v", ip, got, want)
-		}
-	}
-}
-
 type fakePublisher struct {
 	mu    sync.Mutex
 	lines []string
