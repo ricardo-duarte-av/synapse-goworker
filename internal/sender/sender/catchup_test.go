@@ -2,6 +2,7 @@ package sender
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
@@ -24,6 +25,33 @@ type fakeCatchUpStore struct {
 	// delivered, which is a different thing from zero.
 	lastSuccessful map[string]int64
 	outstanding    []string
+	// extrems are each room's forward extremities, held in byID too;
+	// partial the partial-stated rooms.
+	extrems map[string][]string
+	extra   []store.Event
+	partial map[string]bool
+}
+
+func (f *fakeCatchUpStore) GetPrevEventsForRoom(_ context.Context, room string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ids, ok := f.extrems[room]; ok {
+		return ids, nil
+	}
+	// By default the owed event is the room's extremity.
+	var out []string
+	for _, evs := range f.owed {
+		for _, e := range evs {
+			if e.RoomID == room {
+				out = append(out, e.EventID)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeCatchUpStore) IsPartialStateRoom(_ context.Context, room string) (bool, error) {
+	return f.partial[room], nil
 }
 
 func (f *fakeCatchUpStore) GetDestinationLastSuccessfulStreamOrdering(_ context.Context, d string) (int64, bool, error) {
@@ -67,6 +95,9 @@ func (f *fakeCatchUpStore) GetEvents(_ context.Context, ids []string) ([]store.E
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	byID := map[string]store.Event{}
+	for _, e := range f.extra {
+		byID[e.EventID] = e
+	}
 	for _, evs := range f.owed {
 		for _, e := range evs {
 			byID[e.EventID] = e
@@ -399,4 +430,67 @@ func (b *blockingCatchUpSink) sawFast() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.fast
+}
+
+// A room whose owed event is no longer an extremity is caught up with its
+// current extremities, those the destination may see and not behind its
+// position, the cursor still the owed event's (per_destination_queue.py).
+func TestCatchUpSendsCurrentExtremities(t *testing.T) {
+	owed := owedEvent("$owed", 5)
+	room := owed.RoomID
+	ev := func(id string, order int64, rejected string) store.Event {
+		e := owedEvent(id, order)
+		e.RoomID, e.RejectionReason = room, rejected
+		return e
+	}
+	for _, c := range []struct {
+		name    string
+		extrems []string
+		partial bool
+		hidden  map[string]bool
+		want    []string
+	}{
+		{"extremities instead", []string{"$x1", "$x2"}, false, nil, []string{"$x1", "$x2"}},
+		{"the invisible, rejected and old are left out", []string{"$x1", "$hidden", "$rej", "$old"}, false,
+			map[string]bool{"$hidden": true}, []string{"$x1"}},
+		{"nothing left: the owed event", []string{"$hidden"}, false, map[string]bool{"$hidden": true}, []string{"$owed"}},
+		{"still an extremity", []string{"$owed", "$x1"}, false, nil, []string{"$owed"}},
+		{"partial state", []string{"$x1"}, true, nil, []string{"$owed"}},
+	} {
+		st := &fakeCatchUpStore{
+			owed:           map[string][]store.Event{"b.example": {owed}},
+			lastSuccessful: map[string]int64{"b.example": 3},
+			extrems:        map[string][]string{room: c.extrems},
+			extra:          []store.Event{ev("$x1", 9, ""), ev("$x2", 8, ""), ev("$hidden", 7, ""), ev("$rej", 10, "auth_error"), ev("$old", 2, "")},
+			partial:        map[string]bool{room: c.partial},
+		}
+		cu, m, sink := catchUpHarness(t, st)
+		cu.visible = func(_ context.Context, id, server string) (bool, error) {
+			return server == "b.example" && !c.hidden[id], nil
+		}
+		if err := cu.Destination(context.Background(), "b.example"); err != nil {
+			t.Fatal(err)
+		}
+		if sink.count() != 1 {
+			t.Fatalf("%s: %d transactions", c.name, sink.count())
+		}
+		var body struct {
+			PDUs []struct {
+				EventID string `json:"event_id"`
+			} `json:"pdus"`
+		}
+		if err := json.Unmarshal([]byte(sink.sent[0]), &body); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, p := range body.PDUs {
+			got = append(got, p.EventID)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s: sent %v, want %v", c.name, got, c.want)
+		}
+		if pos := m.Get("b.example").LastSuccessfulStreamOrdering(); pos != 5 {
+			t.Errorf("%s: cursor %d, want the owed event's 5", c.name, pos)
+		}
+	}
 }

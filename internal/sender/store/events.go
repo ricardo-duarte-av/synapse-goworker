@@ -266,3 +266,38 @@ func (s *Store) PartialStateServersAtJoin(ctx context.Context, roomID string) ([
 	// a partial room with nobody in it (room.py:1794).
 	return out, len(out) > 0, nil
 }
+
+// GetPrevEventsForRoom is get_prev_events_for_room: the room's ten deepest
+// forward extremities.
+func (s *Store) GetPrevEventsForRoom(ctx context.Context, roomID string) ([]string, error) {
+	ctx = dbtrace.WithQueryName(ctx, "prev_events_for_room")
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.event_id FROM event_forward_extremities AS f
+		INNER JOIN events AS e USING (event_id)
+		WHERE f.room_id = $1
+		ORDER BY e.depth DESC
+		LIMIT 10`, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("store: forward extremities of %s: %w", roomID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: forward extremities of %s: %w", roomID, err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// IsPartialStateRoom is is_partial_state_room.
+func (s *Store) IsPartialStateRoom(ctx context.Context, roomID string) (bool, error) {
+	ctx = dbtrace.WithQueryName(ctx, "is_partial_state_room")
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM partial_state_rooms WHERE room_id = $1`, roomID).Scan(&n); err != nil {
+		return false, fmt.Errorf("store: partial state room %s: %w", roomID, err)
+	}
+	return n > 0, nil
+}

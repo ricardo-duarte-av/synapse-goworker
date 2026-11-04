@@ -959,6 +959,13 @@ func (d *Destination) TakeCatchUpSkipped() int64 {
 // being brought forward room by room and a failure should cost one room's
 // progress rather than fifty.
 func (d *Destination) SendCatchUp(ctx context.Context, p PDU) error {
+	return d.SendCatchUpPDUs(ctx, []PDU{p}, p.StreamOrdering)
+}
+
+// SendCatchUpPDUs is SendCatchUp for the PDUs one owed room is caught up
+// with, which need not include the owed event; cursor, the owed event's
+// stream ordering, is what the destination's position advances to.
+func (d *Destination) SendCatchUpPDUs(ctx context.Context, pdus []PDU, cursor int64) error {
 	// The same one-transaction-at-a-time claim the live loop takes. Catch-up
 	// runs on its own goroutine, so without this it sends ALONGSIDE the
 	// transmission loop -- which puts PDUs on the wire out of order and makes
@@ -972,20 +979,20 @@ func (d *Destination) SendCatchUp(ctx context.Context, p PDU) error {
 	defer d.releaseClaim()
 
 	// Catch-up carries no EDUs at all, so there is nothing here that another
-	// goroutine could be mutating; the batch is built from one event.
-	if err := d.send(ctx, taken{pdus: []PDU{p}}); err != nil {
+	// goroutine could be mutating; the batch is built from one room.
+	if err := d.send(ctx, taken{pdus: pdus}); err != nil {
 		d.reportOutcome(err)
 		return err
 	}
 	d.reportOutcome(nil)
 	d.mu.Lock()
-	if p.StreamOrdering > d.lastSuccessfulStreamOrdering {
-		d.lastSuccessfulStreamOrdering = p.StreamOrdering
+	if cursor > d.lastSuccessfulStreamOrdering {
+		d.lastSuccessfulStreamOrdering = cursor
 		d.lastSuccessfulKnown = true
 	}
 	d.mu.Unlock()
 	if d.onSuccess != nil {
-		d.onSuccess(d.name, p.StreamOrdering)
+		d.onSuccess(d.name, cursor)
 	}
 	return nil
 }

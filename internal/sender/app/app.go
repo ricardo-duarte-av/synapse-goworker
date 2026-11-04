@@ -356,6 +356,7 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 		Store:        w.db,
 		Sticky:       w.writer,
 		ServerName:   scfg.ServerName,
+		Visible:      cfg.EventVisibleToServer,
 		Queues:       w.queues,
 		Log:          log,
 		ShouldHandle: w.shouldHandle,

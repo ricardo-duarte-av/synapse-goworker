@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -46,6 +47,8 @@ type CatchUpStore interface {
 	GetCatchUpRoomEventIDs(ctx context.Context, destination string, lastSuccessful int64, limit int) ([]string, error)
 	GetCatchUpOutstandingDestinations(ctx context.Context, after string, nowMS int64, limit int) ([]string, error)
 	GetEvents(ctx context.Context, ids []string) ([]store.Event, error)
+	GetPrevEventsForRoom(ctx context.Context, roomID string) ([]string, error)
+	IsPartialStateRoom(ctx context.Context, roomID string) (bool, error)
 }
 
 // StickyCatchUpStore records the sticky events a catch-up transaction skips.
@@ -70,6 +73,9 @@ type CatchUp struct {
 	// nil records nothing. serverName makes the local-sender pattern.
 	sticky     StickyCatchUpStore
 	serverName string
+	// visible is filter_events_for_server for one event; nil sends the
+	// owed event alone.
+	visible func(ctx context.Context, eventID, server string) (bool, error)
 
 	shouldHandle func(destination string) bool
 	due          func(destination string) bool
@@ -84,8 +90,12 @@ type CatchUpConfig struct {
 	// Sticky, when set, records the MSC4354 sticky events each catch-up
 	// transaction skips over as a backlog, as Synapse does whether or not
 	// MSC4354 is enabled. ServerName is ours.
-	Sticky       StickyCatchUpStore
-	ServerName   string
+	Sticky     StickyCatchUpStore
+	ServerName string
+	// Visible is filter_events_for_server for one local event (the
+	// federation reads' port). With it a room is caught up with its current
+	// extremities, as Synapse does; without it, with the owed event alone.
+	Visible      func(ctx context.Context, eventID, server string) (bool, error)
 	Queues       *queue.Manager
 	Log          zerolog.Logger
 	ShouldHandle func(destination string) bool
@@ -103,7 +113,7 @@ type CatchUpConfig struct {
 func NewCatchUp(cfg CatchUpConfig) *CatchUp {
 	return &CatchUp{
 		store: cfg.Store, queues: cfg.Queues, log: cfg.Log,
-		sticky: cfg.Sticky, serverName: cfg.ServerName,
+		sticky: cfg.Sticky, serverName: cfg.ServerName, visible: cfg.Visible,
 		shouldHandle: cfg.ShouldHandle, due: cfg.Due, active: cfg.Active,
 		concurrency: cfg.Concurrency,
 		kick:        make(chan struct{}, 1),
@@ -214,8 +224,8 @@ func (c *CatchUp) sweep(ctx context.Context) {
 
 // Destination brings one destination forward.
 //
-// This is Synapse's _catch_up_transmission_loop (per_destination_queue.py:473)
-// with one deliberate omission, noted below.
+// This is Synapse's _catch_up_transmission_loop (per_destination_queue.py,
+// v1.164.1).
 func (c *CatchUp) Destination(ctx context.Context, destination string) error {
 	// Self-guarding, so the exported method is safe to call from anywhere.
 	// The sweep already filters on this, but a catch-up that dialled a
@@ -273,26 +283,17 @@ func (c *CatchUp) Destination(ctx context.Context, destination string) error {
 			return err
 		}
 		for _, e := range events {
-			// Synapse substitutes the room's CURRENT forward extremities when
-			// the owed event is no longer one, so the destination arrives at
-			// the present in a single step instead of backfilling to it.
-			//
-			// Not done here on purpose: those extremities were never routed to
-			// this destination, so sending them would need
-			// filter_events_for_server -- history visibility and erased
-			// senders -- and skipping that filter could disclose an event the
-			// destination was not entitled to. The owed event WAS routed to it,
-			// so sending exactly that is safe, and the far side backfills.
-			body, ok := txn.SerialisePDU(e.JSON)
-			if !ok {
+			roomPDUs, err := c.roomCatchUpPDUs(ctx, destination, e, lastSuccessful)
+			if err != nil {
+				return err
+			}
+			if len(roomPDUs) == 0 {
 				// Unencodable, so it could never be delivered. Step over it
 				// rather than stalling the whole destination on one bad event.
 				lastSuccessful = e.StreamOrdering
 				continue
 			}
-			if err := d.SendCatchUp(ctx, queue.PDU{
-				EventID: e.EventID, StreamOrdering: e.StreamOrdering, JSON: body,
-			}); err != nil {
+			if err := d.SendCatchUpPDUs(ctx, roomPDUs, e.StreamOrdering); err != nil {
 				if errors.Is(err, queue.ErrBusy) {
 					// The live loop is sending to this destination. Stop here
 					// and let the next sweep pick up where the cursor left off:
@@ -308,13 +309,17 @@ func (c *CatchUp) Destination(ctx context.Context, destination string) error {
 				}
 				return err
 			}
+			sent := make([]int64, len(roomPDUs))
+			for i, p := range roomPDUs {
+				sent[i] = p.StreamOrdering
+			}
 			// Moving the cursor leaves a gap of unsent events in other rooms;
 			// this server's sticky events in it become a backlog
 			// (mark_backlogged_sticky_events_after_catchup_transaction).
 			if c.sticky != nil {
 				if err := c.sticky.MarkStickyBacklogAfterCatchUp(ctx, destination,
 					store.LocalUserPattern(c.serverName), lastSuccessful, e.StreamOrdering,
-					[]int64{e.StreamOrdering}); err != nil {
+					sent); err != nil {
 					return err
 				}
 				d.NotifyStickyBacklog()
@@ -325,4 +330,58 @@ func (c *CatchUp) Destination(ctx context.Context, destination string) error {
 		}
 	}
 	return ctx.Err()
+}
+
+// roomCatchUpPDUs is what an owed room is caught up with: the owed event
+// when it is still a forward extremity, or the room is partial-stated, or
+// there is no visibility filter; else the room's current extremities from
+// the destination's position on, those the destination may see
+// (filter_events_for_server, redact=False, erased senders out), and the
+// owed event when none is left. Unencodable events are left out.
+func (c *CatchUp) roomCatchUpPDUs(ctx context.Context, destination string, owed store.Event,
+	cursor int64) ([]queue.PDU, error) {
+
+	chosen := []store.Event{owed}
+	if c.visible != nil {
+		extrems, err := c.store.GetPrevEventsForRoom(ctx, owed.RoomID)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Contains(extrems, owed.EventID) {
+			partial, err := c.store.IsPartialStateRoom(ctx, owed.RoomID)
+			if err != nil {
+				return nil, err
+			}
+			if !partial {
+				events, err := c.store.GetEvents(ctx, extrems)
+				if err != nil {
+					return nil, err
+				}
+				var keep []store.Event
+				for _, p := range events {
+					// get_events_as_list leaves rejected events out.
+					if p.RejectionReason != "" || p.StreamOrdering < cursor {
+						continue
+					}
+					ok, err := c.visible(ctx, p.EventID, destination)
+					if err != nil {
+						return nil, err
+					}
+					if ok {
+						keep = append(keep, p)
+					}
+				}
+				if len(keep) > 0 {
+					chosen = keep
+				}
+			}
+		}
+	}
+	out := make([]queue.PDU, 0, len(chosen))
+	for _, e := range chosen {
+		if body, ok := txn.SerialisePDU(e.JSON); ok {
+			out = append(out, queue.PDU{EventID: e.EventID, StreamOrdering: e.StreamOrdering, JSON: body})
+		}
+	}
+	return out, nil
 }
