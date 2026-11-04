@@ -11,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/appservice"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
@@ -219,6 +220,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 			Modules:        cfg.Synapse.Current().Membership.Modules,
 			Pause:          500 * time.Millisecond,
 		}),
+		KeysQuery: handlers.KeysQuery(deps, keysDeps(cfg.Synapse.Current(), log)),
 	}
 	if s.sliding != nil {
 		s.routes.SlidingSync = handlers.SlidingSync(deps)
@@ -424,4 +426,21 @@ func (s *Sync) openSliding(ctx, openCtx context.Context) error {
 	})
 	s.log.Info().Msg("sync: sliding sync enabled")
 	return nil
+}
+
+// keysDeps reads what POST /keys/query needs from homeserver.yaml.
+func keysDeps(hs *synapsecfg.Config, log zerolog.Logger) handlers.KeysDeps {
+	k := handlers.KeysDeps{
+		MSC4263: hs.Flag("msc4263_limit_key_queries_to_users_who_share_rooms", false),
+		MSC3984: hs.Flag("msc3984_appservice_key_query", false),
+	}
+	if k.MSC3984 {
+		re, err := appservice.ExclusiveUsers(hs.AppServiceFiles)
+		if err != nil {
+			log.Warn().Err(err).Msg("sync: appservice namespaces unreadable; key queries go to Synapse")
+			k.ExclusiveUnknown = true
+		}
+		k.ExclusiveUsers = re
+	}
+	return k
 }

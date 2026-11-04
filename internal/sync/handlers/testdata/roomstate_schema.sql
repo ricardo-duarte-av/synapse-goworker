@@ -257,3 +257,43 @@ CREATE TABLE public.ratelimit_override (
     messages_per_second bigint,
     burst_count bigint
 );
+-- And what POST /keys/query reads.
+CREATE TABLE public.e2e_device_keys_json (
+    user_id text NOT NULL,
+    device_id text NOT NULL,
+    ts_added_ms bigint NOT NULL,
+    key_json text NOT NULL
+);
+CREATE TABLE public.e2e_cross_signing_keys (
+    user_id text NOT NULL,
+    keytype text NOT NULL,
+    keydata text NOT NULL,
+    stream_id bigint NOT NULL
+);
+CREATE TABLE public.e2e_cross_signing_signatures (
+    user_id text NOT NULL,
+    key_id text NOT NULL,
+    target_user_id text NOT NULL,
+    target_device_id text NOT NULL,
+    signature text NOT NULL
+);
+CREATE TABLE public.device_lists_remote_extremeties (
+    user_id text NOT NULL,
+    stream_id text NOT NULL
+);
+CREATE TABLE public.device_lists_remote_resync (
+    user_id text NOT NULL,
+    added_ts bigint NOT NULL
+);
+CREATE TABLE public.device_lists_remote_cache (
+    user_id text NOT NULL,
+    device_id text NOT NULL,
+    content text NOT NULL
+);
+CREATE TABLE public.destinations (
+    destination text NOT NULL,
+    retry_last_ts bigint,
+    retry_interval bigint,
+    failure_ts bigint,
+    last_successful_stream_ordering bigint
+);

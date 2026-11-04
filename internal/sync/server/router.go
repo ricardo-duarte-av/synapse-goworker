@@ -41,6 +41,8 @@ type Routes struct {
 	// Profile serves GET /profile/{userId}[/{field}]; PUT and DELETE are
 	// the event creator's.
 	Profile http.Handler
+	// KeysQuery serves POST /keys/query.
+	KeysQuery http.Handler
 }
 
 // slidingSyncPaths are the two paths MSC4186 defines.
@@ -112,6 +114,12 @@ func Register(mux *http.ServeMux, routes Routes, wrap func(http.Handler) http.Ha
 		}
 		// The handler serves this one only with MSC4133 enabled.
 		handle("GET", "/_matrix/client/unstable/uk.tcpip.msc4133/profile/{rest...}", routes.Profile)
+	}
+	if routes.KeysQuery != nil {
+		// client_patterns("/keys/query$"): r0, v3 and unstable.
+		for _, v := range []string{"r0", "v3", "unstable"} {
+			handle("POST", "/_matrix/client/"+v+"/keys/query", routes.KeysQuery)
+		}
 	}
 	if routes.SlidingSync != nil {
 		for _, path := range slidingSyncPaths {

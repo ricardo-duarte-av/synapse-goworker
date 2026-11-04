@@ -71,20 +71,34 @@ components:
     code: internal/sync
     synapse:
       - synapse/api/filtering.py
+      - synapse/api/ratelimiting.py
+      - synapse/handlers/e2e_keys.py
+      - synapse/handlers/events.py
       - synapse/handlers/initial_sync.py
+      - synapse/handlers/profile.py
+      - synapse/handlers/relations.py
       - synapse/handlers/sliding_sync/
       - synapse/handlers/sync.py
       - synapse/notifier.py
       - synapse/replication/tcp/handler.py
       - synapse/replication/tcp/streams/
       - synapse/rest/client/initial_sync.py
+      - synapse/rest/client/keys.py
+      - synapse/rest/client/profile.py
       - synapse/rest/client/room.py
       - synapse/rest/client/sync.py
       - synapse/storage/databases/main/cache.py
       - synapse/storage/databases/main/deviceinbox.py
+      - synapse/storage/databases/main/devices.py
+      - synapse/storage/databases/main/end_to_end_keys.py
       - synapse/storage/databases/main/events.py
+      - synapse/storage/databases/main/profile.py
       - synapse/storage/databases/main/receipts.py
+      - synapse/storage/databases/main/relations.py
+      - synapse/storage/databases/main/roommember.py
       - synapse/storage/databases/main/sliding_sync.py
+      - synapse/storage/databases/main/transactions.py
+      - synapse/util/retryutils.py
       - synapse/types/handlers/sliding_sync.py
       - synapse/types/rest/client/__init__.py
       - synapse/types/state.py
