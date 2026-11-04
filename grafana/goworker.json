@@ -2070,6 +2070,679 @@
     },
     {
       "type": "row",
+      "title": "Streams written",
+      "id": 291,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Lines published",
+      "description": "RDATA and POSITION this process published for the streams it writes. Empty while it writes none.",
+      "id": 292,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (stream, command) (rate(goworker_stream_writer_lines_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{stream}} {{command}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Position by stream",
+      "description": "How far each stream has been published. Typing starts again at 0 whenever this process becomes the writer.",
+      "id": 293,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 50,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (stream) (goworker_stream_writer_position{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "{{stream}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Announcements and dropped lines",
+      "description": "Positions announced (REPLICATE, our subscription back, a stream added, a dropped line) and lines dropped after every attempt failed. A dropped line is recovered by followers at the next POSITION.",
+      "id": 294,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 50,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason) (increase(goworker_stream_writer_announcements_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "announce: {{reason}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (stream) (increase(goworker_stream_writer_publish_failures_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "dropped: {{stream}}",
+          "range": true,
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Waits for a caller's streams",
+      "description": "Before a replication request is handled, the positions the caller wrote. unknown is a writer never heard from, not waited for; timeout went on after 5 s, as Synapse does.",
+      "id": 295,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 50,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (increase(goworker_replication_server_stream_waits_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Typing writer",
+      "id": 296,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Writing typing",
+      "description": "1 while stream_writers.typing names this process.",
+      "id": 297,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 3,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max(goworker_typing_writer{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "writer",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Typing serial",
+      "description": "The typing stream position.",
+      "id": 298,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 3,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max(goworker_typing_serial{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "serial",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Typing requests by outcome",
+      "description": "PUT /rooms/{roomId}/typing/{userId}. not_writer went to main: nginx sends typing here while homeserver.yaml names another writer.",
+      "id": 299,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 3,
+        "y": 59,
+        "w": 7,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(goworker_typing_requests_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Typing EDUs from other servers",
+      "description": "From inbound /send in this process, or fed_send_edu from another. The drops are the ones Synapse makes.",
+      "id": 300,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 59,
+        "w": 7,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(goworker_typing_edus_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Held",
+      "description": "Rooms with a serial (forgotten after 10 quiet minutes), users typing now, and timers.",
+      "id": 301,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 17,
+        "y": 59,
+        "w": 4,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (what) (goworker_typing_held{job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "{{what}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Timed out",
+      "description": "Typing notices that ran out.",
+      "id": 302,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 21,
+        "y": 59,
+        "w": 3,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(goworker_typing_timeouts_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "timed out",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
       "title": "Process & Go runtime",
       "id": 26,
       "collapsed": false,
@@ -2092,7 +2765,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 67,
         "w": 8,
         "h": 8
       },
@@ -2156,7 +2829,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 49,
+        "y": 67,
         "w": 8,
         "h": 8
       },
@@ -2220,7 +2893,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 49,
+        "y": 67,
         "w": 8,
         "h": 8
       },
@@ -2284,7 +2957,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 75,
         "w": 4,
         "h": 4
       },
@@ -2347,7 +3020,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 57,
+        "y": 75,
         "w": 4,
         "h": 4
       },
@@ -2410,7 +3083,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 57,
+        "y": 75,
         "w": 4,
         "h": 4
       },
@@ -2473,7 +3146,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 57,
+        "y": 75,
         "w": 4,
         "h": 4
       },
@@ -2537,7 +3210,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 57,
+        "y": 75,
         "w": 8,
         "h": 7
       },
@@ -2633,7 +3306,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 82,
         "w": 8,
         "h": 7
       },
@@ -2719,7 +3392,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 64,
+        "y": 82,
         "w": 8,
         "h": 7
       },
@@ -2802,7 +3475,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 64,
+        "y": 82,
         "w": 8,
         "h": 7
       },
@@ -2877,7 +3550,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 89,
         "w": 24,
         "h": 7
       },
@@ -2942,7 +3615,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -3026,7 +3699,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 78,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -3120,7 +3793,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 86,
+        "y": 104,
         "w": 8,
         "h": 7
       },
@@ -3190,7 +3863,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 93,
+        "y": 111,
         "w": 24,
         "h": 1
       },
@@ -3206,7 +3879,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 94,
+        "y": 112,
         "w": 4,
         "h": 4
       },
@@ -3270,7 +3943,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 94,
+        "y": 112,
         "w": 4,
         "h": 4
       },
@@ -3338,7 +4011,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 94,
+        "y": 112,
         "w": 4,
         "h": 4
       },
@@ -3401,7 +4074,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 94,
+        "y": 112,
         "w": 4,
         "h": 4
       },
@@ -3479,7 +4152,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 94,
+        "y": 112,
         "w": 4,
         "h": 4
       },
@@ -3557,7 +4230,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 94,
+        "y": 112,
         "w": 4,
         "h": 4
       },
@@ -3619,7 +4292,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 98,
+        "y": 116,
         "w": 12,
         "h": 8
       },
@@ -3691,7 +4364,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 98,
+        "y": 116,
         "w": 12,
         "h": 8
       },
@@ -3784,7 +4457,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 106,
+        "y": 124,
         "w": 24,
         "h": 1
       },
@@ -3800,7 +4473,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 107,
+        "y": 125,
         "w": 8,
         "h": 7
       },
@@ -3872,7 +4545,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 107,
+        "y": 125,
         "w": 8,
         "h": 7
       },
@@ -3944,7 +4617,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 107,
+        "y": 125,
         "w": 8,
         "h": 7
       },
@@ -4016,7 +4689,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 114,
+        "y": 132,
         "w": 12,
         "h": 8
       },
@@ -4069,7 +4742,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 114,
+        "y": 132,
         "w": 12,
         "h": 8
       },
@@ -4138,7 +4811,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 122,
+        "y": 140,
         "w": 24,
         "h": 1
       },
@@ -4154,7 +4827,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 123,
+        "y": 141,
         "w": 4,
         "h": 4
       },
@@ -4217,7 +4890,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 123,
+        "y": 141,
         "w": 4,
         "h": 4
       },
@@ -4281,7 +4954,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 123,
+        "y": 141,
         "w": 4,
         "h": 4
       },
@@ -4349,7 +5022,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 123,
+        "y": 141,
         "w": 12,
         "h": 8
       },
@@ -4421,7 +5094,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 127,
+        "y": 145,
         "w": 4,
         "h": 4
       },
@@ -4484,7 +5157,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 127,
+        "y": 145,
         "w": 4,
         "h": 4
       },
@@ -4548,7 +5221,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 127,
+        "y": 145,
         "w": 4,
         "h": 4
       },
@@ -4612,7 +5285,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 131,
+        "y": 149,
         "w": 8,
         "h": 8
       },
@@ -4684,7 +5357,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 131,
+        "y": 149,
         "w": 8,
         "h": 8
       },
@@ -4768,7 +5441,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 131,
+        "y": 149,
         "w": 8,
         "h": 8
       },
@@ -4849,7 +5522,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 139,
+        "y": 157,
         "w": 24,
         "h": 1
       },
@@ -4865,7 +5538,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 140,
+        "y": 158,
         "w": 4,
         "h": 4
       },
@@ -4928,7 +5601,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 140,
+        "y": 158,
         "w": 20,
         "h": 4
       },
@@ -4996,7 +5669,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 144,
+        "y": 162,
         "w": 24,
         "h": 1
       },
@@ -5012,7 +5685,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 145,
+        "y": 163,
         "w": 4,
         "h": 4
       },
@@ -5075,7 +5748,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 145,
+        "y": 163,
         "w": 4,
         "h": 4
       },
@@ -5139,7 +5812,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 145,
+        "y": 163,
         "w": 4,
         "h": 4
       },
@@ -5203,7 +5876,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 145,
+        "y": 163,
         "w": 4,
         "h": 4
       },
@@ -5270,7 +5943,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 145,
+        "y": 163,
         "w": 4,
         "h": 4
       },
@@ -5341,7 +6014,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 145,
+        "y": 163,
         "w": 4,
         "h": 4
       },
@@ -5404,7 +6077,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 149,
+        "y": 167,
         "w": 12,
         "h": 8
       },
@@ -5476,7 +6149,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 149,
+        "y": 167,
         "w": 12,
         "h": 8
       },
@@ -5560,7 +6233,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 157,
+        "y": 175,
         "w": 8,
         "h": 7
       },
@@ -5631,7 +6304,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 157,
+        "y": 175,
         "w": 8,
         "h": 7
       },
@@ -5703,7 +6376,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 157,
+        "y": 175,
         "w": 8,
         "h": 7
       },
@@ -5772,7 +6445,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 164,
+        "y": 182,
         "w": 24,
         "h": 1
       },
@@ -5788,7 +6461,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 165,
+        "y": 183,
         "w": 4,
         "h": 4
       },
@@ -5852,7 +6525,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 165,
+        "y": 183,
         "w": 4,
         "h": 4
       },
@@ -5916,7 +6589,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 165,
+        "y": 183,
         "w": 4,
         "h": 4
       },
@@ -5979,7 +6652,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 165,
+        "y": 183,
         "w": 4,
         "h": 4
       },
@@ -6043,7 +6716,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 165,
+        "y": 183,
         "w": 4,
         "h": 4
       },
@@ -6106,7 +6779,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 165,
+        "y": 183,
         "w": 4,
         "h": 4
       },
@@ -6169,7 +6842,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 169,
+        "y": 187,
         "w": 8,
         "h": 8
       },
@@ -6241,7 +6914,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 169,
+        "y": 187,
         "w": 8,
         "h": 8
       },
@@ -6313,7 +6986,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 169,
+        "y": 187,
         "w": 8,
         "h": 8
       },
@@ -6385,7 +7058,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 177,
+        "y": 195,
         "w": 24,
         "h": 8
       },
@@ -6453,7 +7126,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 185,
+        "y": 203,
         "w": 24,
         "h": 1
       },
@@ -6469,7 +7142,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 186,
+        "y": 204,
         "w": 12,
         "h": 8
       },
@@ -6589,7 +7262,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 186,
+        "y": 204,
         "w": 12,
         "h": 8
       },
@@ -6685,7 +7358,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 194,
+        "y": 212,
         "w": 8,
         "h": 8
       },
@@ -6769,7 +7442,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 194,
+        "y": 212,
         "w": 8,
         "h": 8
       },
@@ -6853,7 +7526,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 194,
+        "y": 212,
         "w": 8,
         "h": 8
       },
@@ -6933,7 +7606,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 202,
+        "y": 220,
         "w": 24,
         "h": 1
       },
@@ -6949,7 +7622,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 203,
+        "y": 221,
         "w": 12,
         "h": 8
       },
@@ -7021,7 +7694,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 203,
+        "y": 221,
         "w": 12,
         "h": 8
       },
@@ -7105,7 +7778,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 211,
+        "y": 229,
         "w": 12,
         "h": 8
       },
@@ -7201,7 +7874,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 211,
+        "y": 229,
         "w": 12,
         "h": 8
       },
@@ -7297,7 +7970,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 219,
+        "y": 237,
         "w": 12,
         "h": 8
       },
@@ -7381,7 +8054,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 219,
+        "y": 237,
         "w": 12,
         "h": 8
       },
@@ -7450,7 +8123,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 227,
+        "y": 245,
         "w": 24,
         "h": 1
       },
@@ -7466,7 +8139,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 228,
+        "y": 246,
         "w": 12,
         "h": 8
       },
@@ -7544,7 +8217,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 228,
+        "y": 246,
         "w": 12,
         "h": 8
       },
@@ -7613,7 +8286,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 236,
+        "y": 254,
         "w": 12,
         "h": 8
       },
@@ -7691,7 +8364,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 236,
+        "y": 254,
         "w": 12,
         "h": 8
       },
@@ -7757,7 +8430,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 244,
+        "y": 262,
         "w": 24,
         "h": 1
       },
@@ -7774,7 +8447,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 245,
+        "y": 263,
         "w": 8,
         "h": 8
       },
@@ -7848,7 +8521,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 245,
+        "y": 263,
         "w": 8,
         "h": 8
       },
@@ -7906,7 +8579,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 253,
+        "y": 271,
         "w": 24,
         "h": 1
       },
@@ -7923,7 +8596,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 254,
+        "y": 272,
         "w": 4,
         "h": 4
       },
@@ -7985,7 +8658,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 254,
+        "y": 272,
         "w": 4,
         "h": 4
       },
@@ -8047,7 +8720,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 254,
+        "y": 272,
         "w": 4,
         "h": 4
       },
@@ -8113,7 +8786,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 254,
+        "y": 272,
         "w": 4,
         "h": 4
       },
@@ -8175,7 +8848,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 258,
+        "y": 276,
         "w": 24,
         "h": 1
       },
@@ -8192,7 +8865,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 259,
+        "y": 277,
         "w": 12,
         "h": 8
       },
@@ -8256,7 +8929,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 259,
+        "y": 277,
         "w": 12,
         "h": 8
       },
@@ -8327,7 +9000,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 267,
+        "y": 285,
         "w": 24,
         "h": 1
       },
@@ -8344,7 +9017,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 268,
+        "y": 286,
         "w": 12,
         "h": 8
       },
@@ -8408,7 +9081,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 268,
+        "y": 286,
         "w": 12,
         "h": 8
       },
@@ -8472,7 +9145,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 276,
+        "y": 294,
         "w": 8,
         "h": 8
       },
@@ -8547,7 +9220,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 276,
+        "y": 294,
         "w": 8,
         "h": 8
       },
@@ -8611,7 +9284,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 276,
+        "y": 294,
         "w": 8,
         "h": 8
       },
@@ -8682,7 +9355,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 284,
+        "y": 302,
         "w": 24,
         "h": 1
       },
@@ -8699,7 +9372,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 285,
+        "y": 303,
         "w": 8,
         "h": 8
       },
@@ -8759,7 +9432,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 293,
+        "y": 311,
         "w": 24,
         "h": 1
       },
@@ -8776,7 +9449,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 294,
+        "y": 312,
         "w": 8,
         "h": 8
       },
@@ -8840,7 +9513,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 294,
+        "y": 312,
         "w": 8,
         "h": 8
       },
@@ -8926,7 +9599,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 294,
+        "y": 312,
         "w": 8,
         "h": 8
       },
@@ -9023,7 +9696,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 302,
+        "y": 320,
         "w": 8,
         "h": 8
       },
@@ -9094,7 +9767,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 310,
+        "y": 328,
         "w": 24,
         "h": 1
       },
@@ -9111,7 +9784,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 311,
+        "y": 329,
         "w": 6,
         "h": 8
       },
@@ -9208,7 +9881,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 311,
+        "y": 329,
         "w": 6,
         "h": 8
       },
@@ -9273,7 +9946,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 311,
+        "y": 329,
         "w": 6,
         "h": 8
       },
@@ -9334,7 +10007,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 319,
+        "y": 337,
         "w": 24,
         "h": 1
       },
@@ -9351,7 +10024,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 320,
+        "y": 338,
         "w": 8,
         "h": 8
       },
@@ -9415,7 +10088,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 320,
+        "y": 338,
         "w": 8,
         "h": 8
       },
@@ -9490,7 +10163,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 320,
+        "y": 338,
         "w": 8,
         "h": 8
       },
@@ -9561,7 +10234,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 328,
+        "y": 346,
         "w": 24,
         "h": 1
       },
@@ -9578,7 +10251,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 329,
+        "y": 347,
         "w": 8,
         "h": 8
       },
@@ -9642,7 +10315,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 329,
+        "y": 347,
         "w": 8,
         "h": 8
       },
@@ -9706,7 +10379,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 329,
+        "y": 347,
         "w": 8,
         "h": 8
       },
@@ -9766,7 +10439,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 337,
+        "y": 355,
         "w": 24,
         "h": 1
       },
@@ -9783,7 +10456,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 338,
+        "y": 356,
         "w": 8,
         "h": 8
       },
@@ -9880,7 +10553,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 338,
+        "y": 356,
         "w": 12,
         "h": 8
       },
@@ -9943,7 +10616,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 346,
+        "y": 364,
         "w": 8,
         "h": 8
       },
@@ -10003,7 +10676,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 346,
+        "y": 364,
         "w": 8,
         "h": 8
       },
@@ -10063,7 +10736,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 346,
+        "y": 364,
         "w": 8,
         "h": 8
       },
@@ -10131,7 +10804,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 354,
+        "y": 372,
         "w": 24,
         "h": 1
       },
@@ -10147,7 +10820,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 355,
+        "y": 373,
         "w": 4,
         "h": 4
       },
@@ -10210,7 +10883,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 355,
+        "y": 373,
         "w": 4,
         "h": 4
       },
@@ -10281,7 +10954,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 355,
+        "y": 373,
         "w": 4,
         "h": 4
       },
@@ -10352,7 +11025,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 355,
+        "y": 373,
         "w": 4,
         "h": 4
       },
@@ -10419,7 +11092,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 355,
+        "y": 373,
         "w": 4,
         "h": 4
       },
@@ -10482,7 +11155,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 359,
+        "y": 377,
         "w": 12,
         "h": 8
       },
@@ -10546,7 +11219,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 359,
+        "y": 377,
         "w": 12,
         "h": 8
       },
@@ -10629,7 +11302,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 367,
+        "y": 385,
         "w": 24,
         "h": 1
       },
@@ -10645,7 +11318,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 368,
+        "y": 386,
         "w": 12,
         "h": 8
       },
@@ -10709,7 +11382,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 368,
+        "y": 386,
         "w": 12,
         "h": 8
       },
@@ -10773,7 +11446,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 376,
+        "y": 394,
         "w": 12,
         "h": 8
       },
@@ -10825,7 +11498,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 376,
+        "y": 394,
         "w": 12,
         "h": 8
       },
@@ -10901,7 +11574,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 384,
+        "y": 402,
         "w": 6,
         "h": 5
       },
@@ -10964,7 +11637,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 384,
+        "y": 402,
         "w": 18,
         "h": 5
       },
@@ -11032,7 +11705,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 389,
+        "y": 407,
         "w": 24,
         "h": 1
       },
@@ -11048,7 +11721,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 390,
+        "y": 408,
         "w": 4,
         "h": 4
       },
@@ -11111,7 +11784,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 390,
+        "y": 408,
         "w": 4,
         "h": 4
       },
@@ -11178,7 +11851,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 390,
+        "y": 408,
         "w": 12,
         "h": 8
       },
@@ -11233,7 +11906,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 398,
+        "y": 416,
         "w": 12,
         "h": 4
       },
@@ -11311,7 +11984,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 398,
+        "y": 416,
         "w": 12,
         "h": 8
       },
@@ -11372,7 +12045,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 406,
+        "y": 424,
         "w": 12,
         "h": 8
       },
@@ -11444,7 +12117,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 414,
+        "y": 432,
         "w": 24,
         "h": 1
       },
@@ -11461,7 +12134,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 415,
+        "y": 433,
         "w": 4,
         "h": 4
       },
@@ -11523,7 +12196,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 415,
+        "y": 433,
         "w": 4,
         "h": 4
       },
@@ -11585,7 +12258,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 415,
+        "y": 433,
         "w": 4,
         "h": 4
       },
@@ -11647,7 +12320,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 415,
+        "y": 433,
         "w": 4,
         "h": 4
       },
@@ -11709,7 +12382,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 415,
+        "y": 433,
         "w": 4,
         "h": 4
       },
@@ -11771,7 +12444,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 415,
+        "y": 433,
         "w": 4,
         "h": 4
       },
@@ -11834,7 +12507,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 419,
+        "y": 437,
         "w": 12,
         "h": 8
       },
@@ -11922,7 +12595,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 419,
+        "y": 437,
         "w": 12,
         "h": 8
       },
@@ -12021,7 +12694,7 @@
       "description": "Full spread of what remote servers waited for. A bimodal picture means cache hits and misses are resolving very differently -- expected on /state_ids, where a cold large room is orders of magnitude slower than a warm one.",
       "gridPos": {
         "x": 0,
-        "y": 427,
+        "y": 445,
         "w": 12,
         "h": 8
       },
@@ -12073,7 +12746,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 427,
+        "y": 445,
         "w": 12,
         "h": 8
       },
@@ -12142,7 +12815,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 435,
+        "y": 453,
         "w": 24,
         "h": 1
       },
@@ -12158,7 +12831,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 436,
+        "y": 454,
         "w": 4,
         "h": 4
       },
@@ -12229,7 +12902,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 436,
+        "y": 454,
         "w": 4,
         "h": 4
       },
@@ -12292,7 +12965,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 436,
+        "y": 454,
         "w": 4,
         "h": 4
       },
@@ -12354,7 +13027,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 436,
+        "y": 454,
         "w": 4,
         "h": 4
       },
@@ -12416,7 +13089,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 436,
+        "y": 454,
         "w": 4,
         "h": 4
       },
@@ -12479,7 +13152,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 436,
+        "y": 454,
         "w": 4,
         "h": 4
       },
@@ -12550,7 +13223,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 440,
+        "y": 458,
         "w": 12,
         "h": 8
       },
@@ -12625,7 +13298,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 440,
+        "y": 458,
         "w": 12,
         "h": 8
       },
@@ -12697,7 +13370,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 448,
+        "y": 466,
         "w": 24,
         "h": 1
       },
@@ -12713,7 +13386,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 449,
+        "y": 467,
         "w": 5,
         "h": 4
       },
@@ -12784,7 +13457,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 449,
+        "y": 467,
         "w": 5,
         "h": 4
       },
@@ -12847,7 +13520,7 @@
       },
       "gridPos": {
         "x": 10,
-        "y": 449,
+        "y": 467,
         "w": 5,
         "h": 4
       },
@@ -12909,7 +13582,7 @@
       },
       "gridPos": {
         "x": 15,
-        "y": 449,
+        "y": 467,
         "w": 5,
         "h": 4
       },
@@ -12976,7 +13649,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 449,
+        "y": 467,
         "w": 4,
         "h": 4
       },
@@ -13038,7 +13711,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 453,
+        "y": 471,
         "w": 12,
         "h": 8
       },
@@ -13104,7 +13777,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 453,
+        "y": 471,
         "w": 12,
         "h": 8
       },
@@ -13179,7 +13852,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 461,
+        "y": 479,
         "w": 12,
         "h": 7
       },
@@ -13254,7 +13927,7 @@
       "description": "Share of /event's filtered state-group lookups answered from cache rather than a recursive walk of state_groups_state. 'filtered_cache' is the per-(group,filter) cache; 'state_cache' means the whole map happened to be resident.",
       "gridPos": {
         "x": 12,
-        "y": 461,
+        "y": 479,
         "w": 6,
         "h": 4
       },
@@ -13327,7 +14000,7 @@
       "description": "Filtered state-group resolutions by query kind and source. 'database' means a recursive CTE over state_groups_state; 'cache' means the whole map was already resolved.",
       "gridPos": {
         "x": 0,
-        "y": 468,
+        "y": 486,
         "w": 18,
         "h": 4
       },
@@ -13379,7 +14052,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 472,
+        "y": 490,
         "w": 24,
         "h": 1
       },
@@ -13395,7 +14068,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 473,
+        "y": 491,
         "w": 4,
         "h": 4
       },
@@ -13478,7 +14151,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 473,
+        "y": 491,
         "w": 4,
         "h": 4
       },
@@ -13541,7 +14214,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 473,
+        "y": 491,
         "w": 4,
         "h": 4
       },
@@ -13608,7 +14281,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 473,
+        "y": 491,
         "w": 12,
         "h": 8
       },
@@ -13663,7 +14336,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 481,
+        "y": 499,
         "w": 12,
         "h": 4
       },
@@ -13719,7 +14392,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 481,
+        "y": 499,
         "w": 6,
         "h": 4
       },
@@ -13778,7 +14451,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 485,
+        "y": 503,
         "w": 24,
         "h": 1
       },
@@ -13794,7 +14467,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 486,
+        "y": 504,
         "w": 8,
         "h": 8
       },
@@ -13854,7 +14527,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 486,
+        "y": 504,
         "w": 8,
         "h": 8
       },
@@ -13914,7 +14587,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 486,
+        "y": 504,
         "w": 8,
         "h": 8
       },
@@ -13971,7 +14644,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 494,
+        "y": 512,
         "w": 24,
         "h": 1
       },
@@ -13988,7 +14661,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 495,
+        "y": 513,
         "w": 4,
         "h": 4
       },
@@ -14062,7 +14735,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 495,
+        "y": 513,
         "w": 4,
         "h": 4
       },
@@ -14136,7 +14809,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 495,
+        "y": 513,
         "w": 4,
         "h": 4
       },
@@ -14210,7 +14883,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 495,
+        "y": 513,
         "w": 4,
         "h": 4
       },
@@ -14268,7 +14941,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 495,
+        "y": 513,
         "w": 4,
         "h": 4
       },
@@ -14330,7 +15003,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 495,
+        "y": 513,
         "w": 4,
         "h": 4
       },
@@ -14384,7 +15057,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 499,
+        "y": 517,
         "w": 24,
         "h": 1
       },
@@ -14401,7 +15074,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 500,
+        "y": 518,
         "w": 12,
         "h": 8
       },
@@ -14475,7 +15148,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 500,
+        "y": 518,
         "w": 12,
         "h": 8
       },
@@ -14539,7 +15212,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 508,
+        "y": 526,
         "w": 12,
         "h": 8
       },
@@ -14668,7 +15341,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 508,
+        "y": 526,
         "w": 12,
         "h": 8
       },
@@ -14728,7 +15401,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 516,
+        "y": 534,
         "w": 24,
         "h": 1
       },
@@ -14745,7 +15418,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 517,
+        "y": 535,
         "w": 12,
         "h": 9
       },
@@ -14829,7 +15502,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 517,
+        "y": 535,
         "w": 12,
         "h": 9
       },
@@ -14924,7 +15597,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 526,
+        "y": 544,
         "w": 8,
         "h": 8
       },
@@ -15008,7 +15681,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 526,
+        "y": 544,
         "w": 8,
         "h": 8
       },
@@ -15092,7 +15765,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 526,
+        "y": 544,
         "w": 8,
         "h": 8
       },
@@ -15156,7 +15829,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 534,
+        "y": 552,
         "w": 24,
         "h": 7
       },
@@ -15277,7 +15950,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 541,
+        "y": 559,
         "w": 24,
         "h": 1
       },
@@ -15294,7 +15967,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 542,
+        "y": 560,
         "w": 12,
         "h": 8
       },
@@ -15378,7 +16051,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 542,
+        "y": 560,
         "w": 12,
         "h": 8
       },
@@ -15442,7 +16115,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 550,
+        "y": 568,
         "w": 8,
         "h": 7
       },
@@ -15506,7 +16179,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 550,
+        "y": 568,
         "w": 8,
         "h": 7
       },
@@ -15570,7 +16243,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 550,
+        "y": 568,
         "w": 8,
         "h": 7
       },
@@ -15630,7 +16303,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 557,
+        "y": 575,
         "w": 24,
         "h": 1
       },
@@ -15647,7 +16320,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 558,
+        "y": 576,
         "w": 12,
         "h": 8
       },
@@ -15707,7 +16380,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 566,
+        "y": 584,
         "w": 24,
         "h": 1
       },
@@ -15724,7 +16397,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 567,
+        "y": 585,
         "w": 12,
         "h": 8
       },
@@ -15788,7 +16461,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 567,
+        "y": 585,
         "w": 12,
         "h": 8
       },
@@ -15848,7 +16521,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 575,
+        "y": 593,
         "w": 24,
         "h": 1
       },
@@ -15865,7 +16538,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 576,
+        "y": 594,
         "w": 12,
         "h": 8
       },
@@ -15929,7 +16602,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 576,
+        "y": 594,
         "w": 12,
         "h": 8
       },
@@ -15993,7 +16666,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 584,
+        "y": 602,
         "w": 8,
         "h": 7
       },
@@ -16057,7 +16730,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 584,
+        "y": 602,
         "w": 8,
         "h": 7
       },
@@ -16141,7 +16814,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 584,
+        "y": 602,
         "w": 8,
         "h": 7
       },
@@ -16211,7 +16884,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 591,
+        "y": 609,
         "w": 24,
         "h": 1
       },
@@ -16228,7 +16901,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 592,
+        "y": 610,
         "w": 8,
         "h": 8
       },
@@ -16313,7 +16986,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 592,
+        "y": 610,
         "w": 8,
         "h": 8
       },
@@ -16373,7 +17046,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 592,
+        "y": 610,
         "w": 8,
         "h": 8
       },
@@ -16434,7 +17107,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 600,
+        "y": 618,
         "w": 8,
         "h": 8
       },
@@ -16492,7 +17165,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 608,
+        "y": 626,
         "w": 24,
         "h": 1
       },
@@ -16509,7 +17182,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 609,
+        "y": 627,
         "w": 4,
         "h": 4
       },
@@ -16571,7 +17244,7 @@
       },
       "gridPos": {
         "x": 4,
-        "y": 609,
+        "y": 627,
         "w": 4,
         "h": 4
       },
@@ -16637,7 +17310,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 609,
+        "y": 627,
         "w": 4,
         "h": 4
       },
@@ -16699,7 +17372,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 609,
+        "y": 627,
         "w": 4,
         "h": 4
       },
@@ -16761,7 +17434,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 613,
+        "y": 631,
         "w": 12,
         "h": 8
       },
@@ -16821,7 +17494,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 613,
+        "y": 631,
         "w": 12,
         "h": 8
       },
@@ -16877,7 +17550,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 621,
+        "y": 639,
         "w": 24,
         "h": 1
       },
@@ -16894,7 +17567,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 622,
+        "y": 640,
         "w": 8,
         "h": 8
       },
@@ -16954,7 +17627,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 622,
+        "y": 640,
         "w": 8,
         "h": 8
       },
@@ -17011,7 +17684,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 622,
+        "y": 640,
         "w": 8,
         "h": 8
       },
@@ -17068,7 +17741,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 630,
+        "y": 648,
         "w": 8,
         "h": 8
       },
@@ -17128,7 +17801,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 630,
+        "y": 648,
         "w": 8,
         "h": 8
       },
@@ -17199,7 +17872,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 630,
+        "y": 648,
         "w": 8,
         "h": 8
       },
@@ -17266,7 +17939,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 638,
+        "y": 656,
         "w": 24,
         "h": 1
       },
@@ -17283,7 +17956,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 639,
+        "y": 657,
         "w": 8,
         "h": 8
       },
@@ -17354,7 +18027,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 639,
+        "y": 657,
         "w": 8,
         "h": 8
       },
@@ -17425,7 +18098,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 639,
+        "y": 657,
         "w": 8,
         "h": 8
       },
@@ -17481,7 +18154,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 647,
+        "y": 665,
         "w": 24,
         "h": 1
       },
@@ -17498,7 +18171,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 648,
+        "y": 666,
         "w": 12,
         "h": 8
       },
@@ -17558,7 +18231,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 648,
+        "y": 666,
         "w": 12,
         "h": 8
       },

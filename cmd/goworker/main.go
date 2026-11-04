@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,6 +37,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/edutype"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
@@ -43,10 +45,12 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/typing"
 )
 
 // Stamped by the build. The same three names as the workers this replaces.
@@ -130,7 +134,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	log.Info().Str("database", redactDSN(dsn)).Msg("connecting every pool as homeserver.yaml does")
 	// The one subscription to Synapse's replication stream; every part
 	// reads it through a consumer of its own.
-	var stream *bus.Bus
+	var (
+		stream    *bus.Bus
+		streams   *streamwriter.Writer
+		positions *replserver.Tracker
+		// Their views of the bus: REPLICATE, and every writer's positions.
+		streamsBus, positionsBus *bus.Consumer
+	)
 	consumer := func(name string) *bus.Consumer { return nil }
 	if hs.Redis.Enabled {
 		stream = bus.New(bus.Config{
@@ -141,6 +151,23 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Channel:  hs.ServerName,
 		}, componentLogger(log, cfg.Log, "bus"))
 		consumer = func(name string) *bus.Consumer { return stream.Consumer(name, 0) }
+		// What this process writes, it publishes on a connection of its own
+		// (platform/streamwriter); the first stream is typing.
+		pub := bus.NewPublisher(bus.Config{
+			Address:  redisAddress(hs.Redis),
+			Username: hs.Redis.Username,
+			Password: hs.Redis.Password,
+			DB:       hs.Redis.DBID,
+			Channel:  hs.ServerName,
+		})
+		streams = streamwriter.New(streamwriter.Options{
+			Instance:  cfg.InstanceName,
+			Publisher: pub,
+			Log:       componentLogger(log, cfg.Log, "replication"),
+		})
+		positions = replserver.NewTracker()
+		streamsBus, positionsBus = consumer("stream_writer"), consumer("replication_server")
+		defer func() { _ = pub.Close() }()
 	} else {
 		log.Warn().Msg("homeserver.yaml has no redis: nothing wakes long-polls, invalidates caches or shows the sender new events")
 	}
@@ -243,6 +270,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	closers = append(closers, reads.Close)
 
+	// The typing writer, built after the sender it feeds; inbound hands it
+	// typing EDUs through LocalEDU once it exists.
+	var typer *typing.App
+
 	inbound, err := inboundapp.New(ctx, inboundapp.Settings{
 		InstanceName:   cfg.InstanceName,
 		Synapse:        hs,
@@ -257,7 +288,14 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Replication:    consumer("inbound"),
 		States:         states,
 		Keys:           keys,
-		Log:            componentLogger(log, cfg.Log, "inbound"),
+		// A typing EDU for the typing writer, when that is us.
+		LocalEDU: func(ctx context.Context, eduType, origin string, content json.RawMessage) (bool, error) {
+			if eduType != edutype.Typing || typer == nil {
+				return false, nil
+			}
+			return true, typer.ReceiveEDU(ctx, origin, content)
+		},
+		Log: componentLogger(log, cfg.Log, "inbound"),
 	})
 	var send http.Handler
 	if err != nil {
@@ -313,8 +351,34 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	closers = append(closers, sender.Close)
 
+	// The typing writer: it writes while stream_writers.typing names us.
+	if streams == nil {
+		log.Warn().Msg("the typing writer needs homeserver.yaml's redis; typing requests are proxied to main")
+	} else if tdb, err := typing.Open(ctx, dsn, pools.Typing, db.ConnectTimeout()); err != nil {
+		degraded.WithLabelValues("typing").Set(1)
+		log.Warn().Err(err).Msg("typing writer unavailable; typing requests are proxied to main")
+	} else {
+		closers = append(closers, tdb.Close)
+		var pres typing.Presence
+		if pc := clientSync.Presence(); pc != nil {
+			pres = pc
+		}
+		typer = typing.New(typing.Options{
+			Instance: cfg.InstanceName,
+			Synapse:  src.Current,
+			Auth:     clientAuth,
+			Store:    tdb,
+			Presence: pres,
+			Writer:   streams,
+			OnRow:    func(r typing.Row) { sender.TypingRow(r.Token, r.RoomID, r.Users) },
+			Fallback: fallback(upstream),
+			Log:      componentLogger(log, cfg.Log, "typing"),
+		})
+	}
+
 	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
+		log.Info().Bool("writing_typing", typer != nil && typer.Writing()).Msg("typing writer")
 		log.Info().Bool("sending_federation", sender.Active()).
 			Msg("configuration, homeserver.yaml and database access are usable")
 		return nil
@@ -354,6 +418,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		PingMatch:    fedping.Match,
 		Creator:      createEvents,
 		CreatorMatch: creatorapp.Match,
+		TypingMatch:  typing.Match,
 		Client:       client,
 		Fallback:     fallback(upstream),
 	}
@@ -375,10 +440,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if ping != nil {
 		router.Ping = ping
 	}
+	if typer != nil {
+		router.Typing = typer.Handler()
+	}
 
 	// The replication listener, where other Synapse processes reach this
-	// one at its instance_map address. Nothing is registered on it yet: the
-	// parts that write a stream will register what its writer serves.
+	// one at its instance_map address: get_repl_stream_updates for the
+	// streams this process writes, and what each writer serves.
 	var (
 		replSrv      *http.Server
 		replListener net.Listener
@@ -390,11 +458,26 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		if replListener, err = httpserve.Listen(replSpec); err != nil {
 			return err
 		}
-		repl := replserver.New(replserver.Options{
+		ropts := replserver.Options{
 			Instance: cfg.InstanceName,
 			Secret:   func() string { return src.Current().ReplicationSecret },
 			Log:      componentLogger(log, cfg.Log, "replication"),
-		})
+		}
+		if streams != nil {
+			ropts.Waiter = positions
+			ropts.Positions = streams.Positions
+		}
+		repl := replserver.New(ropts)
+		if streams != nil {
+			if err := repl.Register(streams.Endpoint()); err != nil {
+				return err
+			}
+		}
+		if typer != nil {
+			if err := typer.Register(repl); err != nil {
+				return err
+			}
+		}
 		replSrv = &http.Server{
 			Handler: repl,
 			// Synapse's processes only, on the inside: a request may wait on
@@ -413,6 +496,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if stream != nil {
 		g.Go(func() error { stream.Run(gctx); return gctx.Err() })
 	}
+	if streams != nil {
+		g.Go(func() error { streams.Run(gctx, streamsBus); return gctx.Err() })
+		g.Go(func() error { positions.Run(gctx, positionsBus); return gctx.Err() })
+	}
+	if typer != nil {
+		g.Go(func() error { return typer.Run(gctx) })
+	}
 	g.Go(func() error { clientAuth.Run(gctx); return gctx.Err() })
 	g.Go(func() error { return clientSync.Run(gctx) })
 	g.Go(func() error { return reads.Run(gctx) })
@@ -423,6 +513,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	g.Go(func() error {
 		watchHomeserver(gctx, src, sender, upstream, log, func(scfg *synapsecfg.Config) {
 			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
+			if typer != nil {
+				typer.SetSynapse(scfg)
+			}
 		})
 		return gctx.Err()
 	})

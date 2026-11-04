@@ -38,12 +38,13 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, five components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `replserver` (the replication listener: what other Synapse processes call at our `instance_map` address; no endpoint yet), `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `pushcheck` (the push evaluator), `e2ekeys` (local users' end-to-end keys, for client and federation key queries), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `replserver` (the replication listener: what other Synapse processes call at our `instance_map` address, and the tracker of their stream positions), `streamwriter` (publishing the streams we write: RDATA, POSITION, the REPLICATE answer, get_repl_stream_updates), `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `pushcheck` (the push evaluator), `e2ekeys` (local users' end-to-end keys, for client and federation key queries), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
 | `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go`, `roomevent.go`, `profile.go`, `keysquery.go`), which hand back to main what they do not reproduce, a federation query included (`Deps.Fallback`) |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
 | `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |
 | `internal/creator` | goevent-creator, as `app.New` + `Handler` + `Run`; its writes matched on the escaped path ahead of the client mux (`app.Match`); `docs/creator.md` holds its notes |
+| `internal/typing` | the typing writer (`TypingWriterHandler`): PUT `.../typing/`, typing EDUs (in-process from inbound, `fed_send_edu` from others), the typing stream; writes while `stream_writers.typing` names `instance_name` |
 | `internal/fedping` | MSC4524 ping/pong (not in Synapse; main's 404 is its "disabled"); started from the metrics listener's `/debug/federation/ping` |
 | `cmd/goevent-e2e` | the creator's live suite, in its test rooms only |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
@@ -160,6 +161,18 @@ Still per component, on purpose:
   what changed.
 - **instance_name is new, not an old worker's.** Two processes publishing
   caches rows under one name interleave stream IDs; see docs/cutover.md.
+- **The typing writer** (2026-11-04). goworker's first stream: in memory,
+  as Synapse's, so it starts at 0 whenever this process becomes the writer
+  (start, or a re-read that names it), which followers take for a writer
+  restart. Its rows reach our sender in-process (`senderapp.TypingRow`):
+  the sender drops our own echo on the bus by instance name, and must keep
+  doing so (inbound publishes caches rows under the same name). gosync, which
+  drops nothing, reads them from the bus like any Python worker, which makes
+  it a live check of what we publish. Positions a caller sends
+  (`_INT_STREAM_POS`) are waited for only from writers the bus has shown us
+  since start: Synapse knows the rest from the database, and waiting 5 s on
+  each would make every call slow. Checked against a throwaway Synapse
+  1.164.1 main following us (catch-up after its restart, reset after ours).
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

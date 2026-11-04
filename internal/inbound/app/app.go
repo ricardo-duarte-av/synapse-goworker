@@ -13,6 +13,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -75,6 +76,11 @@ type Settings struct {
 	// Replication is this path's view of the worker's one subscription, on
 	// which it answers REPLICATE for the caches rows it publishes.
 	Replication *bus.Consumer
+	// LocalEDU handles an EDU in this process when the router picks this
+	// process for it (the typing writer, when it is us), instead of a
+	// replication call to ourselves. handled false sends it on as usual.
+	// Its error fails the transaction, as Synapse's on_edu raising does.
+	LocalEDU func(ctx context.Context, eduType, origin string, content json.RawMessage) (handled bool, err error)
 
 	Log zerolog.Logger
 }
@@ -150,7 +156,11 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		return fail(err)
 	}
 	acls := acl.NewChecker(db, 0)
-	processor := edu.NewProcessor(router, acls, repl, hs.TrackPresence, log)
+	var sendEDU edu.Sender = repl
+	if cfg.LocalEDU != nil {
+		sendEDU = localFirst{instance: cfg.InstanceName, local: cfg.LocalEDU, next: repl}
+	}
+	processor := edu.NewProcessor(router, acls, sendEDU, hs.TrackPresence, log)
 
 	log.Info().
 		Str("server_name", hs.ServerName).
@@ -330,3 +340,20 @@ var authExpiredKey = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "goinbound_auth_expired_key_total",
 	Help: "Requests rejected because the origin's published key was past its valid_until_ts.",
 })
+
+// localFirst delivers an EDU in this process when it is the instance the
+// router chose and the handler takes it.
+type localFirst struct {
+	instance string
+	local    func(ctx context.Context, eduType, origin string, content json.RawMessage) (bool, error)
+	next     edu.Sender
+}
+
+func (l localFirst) SendEDU(ctx context.Context, instance, eduType, origin string, content json.RawMessage) error {
+	if instance == l.instance {
+		if handled, err := l.local(ctx, eduType, origin, content); handled {
+			return err
+		}
+	}
+	return l.next.SendEDU(ctx, instance, eduType, origin, content)
+}

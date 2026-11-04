@@ -12,26 +12,27 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/originup"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // openOriginUp builds the resetter for origins in backoff, on the write
 // role and homeserver.yaml's replication bus.
-func openOriginUp(ctx context.Context, instance string, hs *synapsecfg.Config, wdb *inbound.DB, log zerolog.Logger) (*originup.Bus, *originup.Resetter, error) {
+func openOriginUp(ctx context.Context, instance string, hs *synapsecfg.Config, wdb *inbound.DB, log zerolog.Logger) (*bus.Publisher, *originup.Resetter, error) {
 	if !hs.Redis.Enabled {
 		return nil, nil, errors.New("homeserver.yaml has no redis, so nothing can be told the origin is up")
 	}
-	bus := originup.NewBus(hs.Redis, hs.ServerName, log)
+	pub := originup.NewBus(hs.Redis, hs.ServerName)
 	pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := bus.Ping(pctx); err != nil {
-		bus.Close()
+	if err := pub.Ping(pctx); err != nil {
+		_ = pub.Close()
 		return nil, nil, fmt.Errorf("replication bus: %w", err)
 	}
-	r := originup.New(originup.Options{Store: wdb, Publisher: bus, Instance: instance, Log: log})
+	r := originup.New(originup.Options{Store: wdb, Publisher: pub, Instance: instance, Log: log})
 	log.Info().Str("instance", instance).Msg("Origins in backoff are served here and marked as up")
-	return bus, r, nil
+	return pub, r, nil
 }
 
 // persister sends events to the room's event persister.

@@ -24,7 +24,7 @@ func TestBusEndToEnd(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	bus := NewBus(synapsecfg.Redis{Addr: addr}, "hs.test", zerolog.Nop())
+	bus := NewBus(synapsecfg.Redis{Addr: addr}, "hs.test")
 	defer bus.Close()
 
 	// A Synapse process listening on the channel.

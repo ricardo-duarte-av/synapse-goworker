@@ -14,8 +14,8 @@
 // Dropped, Connected -- which is what a slow reader of its own connection
 // would have got from Redis disconnecting it.
 //
-// Nothing here publishes. Publishing needs a connection that is not
-// subscribed; the inbound path keeps its own client for that.
+// Publishing needs a connection that is not subscribed: Publisher, in
+// publish.go, is that connection.
 package bus
 
 import (

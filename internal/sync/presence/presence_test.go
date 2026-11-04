@@ -283,3 +283,41 @@ func TestNilClientIsInert(t *testing.T) {
 		t.Error("nil client reported tracked devices")
 	}
 }
+
+// A bump is bump_presence_active_time with Synapse's body, and shares the
+// set_state throttle: within the interval of a relayed "online" it is
+// skipped; after another state it goes through.
+func TestBump(t *testing.T) {
+	c, cap, clock := newTestClient(t)
+	ctx := context.Background()
+
+	if err := c.Bump(ctx, "@a:e.com", "DEV1"); err != nil {
+		t.Fatal(err)
+	}
+	if cap.n() != 1 || cap.paths[0] != "/_synapse/replication/bump_presence_active_time/@a:e.com" ||
+		cap.calls[0]["device_id"] != "DEV1" || len(cap.calls[0]) != 1 {
+		t.Fatalf("got %v %v", cap.paths, cap.calls)
+	}
+	*clock = clock.Add(5 * time.Second)
+	_ = c.Bump(ctx, "@a:e.com", "DEV1")
+	_ = c.SetState(ctx, "@a:e.com", "DEV1", StateOnline, true) // a sync: also throttled
+	if cap.n() != 1 {
+		t.Fatalf("made %d calls inside the interval, want 1", cap.n())
+	}
+	// An idle device: the bump goes through, to bring it back.
+	_ = c.SetState(ctx, "@a:e.com", "DEV1", StateUnavailable, true)
+	_ = c.Bump(ctx, "@a:e.com", "DEV1")
+	if cap.n() != 3 || cap.paths[2] != "/_synapse/replication/bump_presence_active_time/@a:e.com" {
+		t.Fatalf("after unavailable: %v", cap.paths)
+	}
+	// No device: null.
+	_ = c.Bump(ctx, "@b:e.com", "")
+	if v, ok := cap.calls[3]["device_id"]; !ok || v != nil {
+		t.Fatalf("no device: %v", cap.calls[3])
+	}
+	// A nil client is presence switched off.
+	var none *Client
+	if err := none.Bump(ctx, "@a:e.com", "D"); err != nil {
+		t.Fatal(err)
+	}
+}

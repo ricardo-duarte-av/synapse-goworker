@@ -302,3 +302,12 @@ func (h *handler) OnReplicate() {
 		(*f)()
 	}
 }
+
+// TypingRow is one row of the typing stream written in this process
+// (internal/typing). It reaches the sender here and not from the bus, where
+// this process's own lines are dropped as echoes. The diff is the one bus
+// rows go through, in the order the writer produced them; whether anything
+// is sent follows the role and the shard, as for every row.
+func (w *Worker) TypingRow(token int64, roomID string, users []string) {
+	w.typing.HandleRows(token, []sender.TypingRow{{RoomID: roomID, UserIDs: users}})
+}

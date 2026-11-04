@@ -93,6 +93,35 @@ Each step is independent and reversible by undoing it.
    To move it back, point the locations at main (or start goevent-creator
    again and point them at it).
 
+6. **Typing** (the first stream goworker writes). Unlike everything above,
+   this changes what every Synapse process believes, so it takes a restart
+   of all of them, and so does moving it back.
+   - Give goworker its replication listener (`listen.replication`, a socket
+     under `/var/sockets` that Synapse's uid can open) and deploy it. Check
+     its log: "the replication listener is open, and instance_map does not
+     name this process" is expected at this point.
+   - homeserver.yaml: add goworker to `instance_map` (`path:` that socket)
+     and set `stream_writers.typing: [<goworker's instance_name>]`.
+   - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+     included). Main's REPLICATE makes goworker re-read the file and start
+     writing ("writing the typing stream" in its log,
+     `goworker_typing_writer` 1); point nginx's
+     `rooms/.*/typing` location at goworker and reload straight after.
+     Between the restart and the reload, typing requests fail with 500, as
+     they do on any Synapse instance that is not the writer.
+   - Restart goworker once more: inbound's EDU routing is read at start, and
+     until then it hands remote typing to the old writer, which forwards it.
+   - Check: "Streams written" and "Typing writer" on the dashboard (RDATA
+     published, requests `started`/`stopped`, EDUs `applied`); a Python
+     sync worker and goworker's own sync both show typing; main's log has
+     no "Failed to fetch" for typing.
+
+   Clients holding a sync token from the old writer miss typing for at most
+   one sync: Synapse replaces the typing key with the new writer's serial.
+
+   To move it back, set `stream_writers.typing` to the old writer, restart
+   every Synapse process and goworker, and point the location back.
+
 ## Afterwards
 
 - Remove the old containers.

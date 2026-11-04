@@ -304,6 +304,59 @@ func (c *Client) SetState(ctx context.Context, userID, deviceID, state string, i
 	return nil
 }
 
+// Bump is bump_presence_active_time on a worker (handlers/presence.py:836):
+// the user did something that shows they are at the app, which the writer
+// takes as activity and as bringing an idle device back online.
+//
+// It shares SetState's throttle, as Synapse's _last_sent_presence is one map
+// for both: a bump within the relay interval of a relayed "online" (from a
+// sync or an earlier bump) is skipped, since the device cannot have gone idle
+// since; after any other state it goes through, as it may un-idle the device.
+// A failed bump is not remembered as sent, as SetState's is not.
+func (c *Client) Bump(ctx context.Context, userID, deviceID string) error {
+	if c == nil {
+		return nil
+	}
+	k := key{userID, deviceID}
+	now := c.now()
+	c.mu.Lock()
+	if prev, ok := c.last[k]; ok && prev.state == StateOnline && now.Sub(prev.when) < c.relay {
+		c.mu.Unlock()
+		metrics.PresenceRelaysSuppressed.Inc()
+		return nil
+	}
+	c.last[k] = sent{state: StateOnline, when: now}
+	c.mu.Unlock()
+
+	var dev *string
+	if deviceID != "" {
+		dev = &deviceID
+	}
+	body, err := json.Marshal(struct {
+		DeviceID *string `json:"device_id"`
+	}{dev})
+	if err != nil {
+		return fmt.Errorf("presence: encode: %w", err)
+	}
+	start := c.now()
+	err = c.call(ctx, c.current.Load(), "bump_presence_active_time", userID, body)
+	metrics.PresenceRelayDuration.Observe(c.now().Sub(start).Seconds())
+	if err != nil && c.reresolve(failureReason(err)) {
+		start = c.now()
+		err = c.call(ctx, c.current.Load(), "bump_presence_active_time", userID, body)
+		metrics.PresenceRelayDuration.Observe(c.now().Sub(start).Seconds())
+	}
+	if err != nil {
+		c.mu.Lock()
+		delete(c.last, k)
+		c.mu.Unlock()
+		metrics.PresenceRelayFailures.WithLabelValues(failureReason(err)).Inc()
+		return err
+	}
+	metrics.PresenceRelays.Inc()
+	return nil
+}
+
 // Forget drops a device's throttle entry.
 func (c *Client) Forget(userID, deviceID string) {
 	if c == nil {
@@ -346,11 +399,15 @@ func (c *Client) post(ctx context.Context, userID, deviceID, state string, isSyn
 	if err != nil {
 		return fmt.Errorf("presence: encode: %w", err)
 	}
+	return c.call(ctx, t, "presence_set_state", userID, body)
+}
 
+// call POSTs body to one of the writer's replication endpoints, for userID.
+func (c *Client) call(ctx context.Context, t *target, endpoint, userID string, body []byte) error {
 	// The user ID goes in the path and contains a colon and an @, both legal
 	// in a path segment; Synapse's own client does not escape them and its
 	// route regex expects them raw.
-	url := t.baseURL + "/_synapse/replication/presence_set_state/" + userID
+	url := t.baseURL + "/_synapse/replication/" + endpoint + "/" + userID
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -363,7 +420,7 @@ func (c *Client) post(ctx context.Context, userID, deviceID, state string, isSyn
 
 	resp, err := t.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("presence: set state: %w", err)
+		return fmt.Errorf("presence: %s: %w", endpoint, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

@@ -2,47 +2,22 @@ package originup
 
 import (
 	"context"
-	"strings"
-
-	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
-// Bus publishes on Synapse's replication bus: one Redis channel, named
-// server_name, carrying one command per message (replication/tcp/redis.py).
-// It never subscribes -- a subscribed Redis connection cannot publish -- and
-// reads nothing; the worker's one subscription is package bus.
-type Bus struct {
-	client  *redis.Client
-	channel string
-	log     zerolog.Logger
-}
-
-// NewBus connects as homeserver.yaml's redis section says.
-func NewBus(cfg synapsecfg.Redis, channel string, log zerolog.Logger) *Bus {
-	opts := &redis.Options{
-		Addr:     cfg.Addr,
-		Username: cfg.Username,
-		Password: cfg.Password,
-		DB:       cfg.DBID,
-	}
+// NewBus is the replication bus's publisher, connected as homeserver.yaml's
+// redis section says.
+func NewBus(cfg synapsecfg.Redis, channel string) *bus.Publisher {
+	addr := cfg.Addr
 	if cfg.Socket != "" {
-		opts.Network = "unix"
-		opts.Addr = cfg.Socket
+		addr = cfg.Socket
 	}
-	return &Bus{client: redis.NewClient(opts), channel: channel, log: log}
+	return bus.NewPublisher(bus.Config{
+		Address: addr, Username: cfg.Username, Password: cfg.Password, DB: cfg.DBID, Channel: channel,
+	})
 }
-
-// Publish sends one command line, as _async_send_command does.
-func (b *Bus) Publish(ctx context.Context, line string) error {
-	return b.client.Publish(ctx, b.channel, line).Err()
-}
-
-// Ping checks the bus can be reached.
-func (b *Bus) Ping(ctx context.Context) error { return b.client.Ping(ctx).Err() }
 
 // Listen calls onReplicate for every REPLICATE on the worker's one
 // subscription until ctx ends. Nothing else is read.
@@ -52,12 +27,8 @@ func Listen(ctx context.Context, c *bus.Consumer, onReplicate func()) {
 		if !ok {
 			return
 		}
-		// "REPLICATE " + to_line(), which is empty.
-		if ev.Kind == bus.Message && strings.TrimSpace(ev.Line) == "REPLICATE" {
+		if ev.Kind == bus.Message && bus.IsReplicate(ev.Line) {
 			onReplicate()
 		}
 	}
 }
-
-// Close closes the connection.
-func (b *Bus) Close() error { return b.client.Close() }

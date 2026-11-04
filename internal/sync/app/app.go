@@ -79,7 +79,14 @@ type Sync struct {
 	sliding *slidingstore.Store
 	sub     *replication.Subscriber
 	routes  server.Routes
+	// presence relays to the presence writer; nil with presence off.
+	presence *presence.Client
 }
+
+// Presence is the relay to the presence writer, which the typing writer
+// bumps through as well: one throttle for the process, as one Synapse
+// process has one _last_sent_presence. Nil when presence is off.
+func (s *Sync) Presence() *presence.Client { return s.presence }
 
 // New connects and assembles the sync path.
 func New(ctx context.Context, cfg Settings) (*Sync, error) {
@@ -158,6 +165,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		s.Close()
 		return nil, err
 	}
+	s.presence = presenceClient
 
 	notif := notifier.New()
 	s.sub = s.subscribe(ctx, notif)

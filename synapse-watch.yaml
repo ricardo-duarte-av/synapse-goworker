@@ -53,8 +53,11 @@ components:
       - synapse/push/bulk_push_rule_evaluator.py
       - synapse/replication/http/_base.py
       - synapse/replication/http/send_events.py
+      - synapse/replication/http/streams.py
       - synapse/replication/tcp/client.py
+      - synapse/replication/tcp/handler.py
       - synapse/replication/tcp/redis.py
+      - synapse/replication/tcp/resource.py
       - synapse/state/__init__.py
       - synapse/state/v1.py
       - synapse/state/v2.py
@@ -108,6 +111,23 @@ components:
       - synapse/types/state.py
       - synapse/util/caches/stream_change_cache.py
       - synapse/visibility.py
+
+  typing:
+    code: internal/typing
+    synapse:
+      - synapse/api/auth/base.py
+      - synapse/handlers/presence.py
+      - synapse/handlers/typing.py
+      - synapse/http/servlet.py
+      - synapse/replication/http/federation.py
+      - synapse/replication/http/presence.py
+      - synapse/replication/tcp/streams/_base.py
+      - synapse/rest/client/room.py
+      - synapse/storage/controllers/state.py
+      - synapse/storage/databases/main/room.py
+      - synapse/storage/databases/main/roommember.py
+      - synapse/types/__init__.py
+      - synapse/util/wheel_timer.py
 
   inbound:
     code: internal/inbound

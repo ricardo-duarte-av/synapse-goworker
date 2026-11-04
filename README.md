@@ -53,10 +53,20 @@ serves `/metrics`, `/health` and `/debug/pprof`.
 `listen.replication`, when set, opens a third listener: the address
 homeserver.yaml's `instance_map` gives `instance_name`, where other Synapse
 processes call this one over HTTP replication (`/_synapse/replication/...`,
-checked against `worker_replication_secret`, and `/health`). Nothing is
-served on it yet; it is where Synapse's processes will reach the streams
-this worker comes to write. Keep it off nginx. At start and on every re-read
-of homeserver.yaml the worker logs where the two disagree.
+checked against `worker_replication_secret`, and `/health`): for the
+streams this worker writes, `get_repl_stream_updates`, and for typing,
+`fed_send_edu`. Keep it off nginx. At start and on every re-read of
+homeserver.yaml the worker logs where the two disagree.
+
+### Typing
+
+While homeserver.yaml's `stream_writers.typing` names `instance_name`, the
+worker is Synapse's typing writer: it serves
+`PUT /_matrix/client/*/rooms/{roomId}/typing/{userId}`, takes typing EDUs
+from other servers, and publishes the typing stream every Synapse process
+follows. It needs redis, the replication listener, and an `instance_map`
+entry. A typing request while it is not the writer goes to main. See
+docs/cutover.md.
 
 ### Federation ping (MSC4524)
 
