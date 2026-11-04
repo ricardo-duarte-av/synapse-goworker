@@ -39,6 +39,13 @@ const (
 // wrong.
 var ErrUnknownPosition = errors.New("slidingstore: unknown connection position")
 
+// UnknownPositionError is ErrUnknownPosition with the message Synapse gives
+// for it, where that is not "Unknown position".
+type UnknownPositionError struct{ Message string }
+
+func (e UnknownPositionError) Error() string        { return e.Message }
+func (e UnknownPositionError) Is(target error) bool { return target == ErrUnknownPosition }
+
 // Config describes how to reach the database as the sliding sync role.
 type Config struct {
 	// DSN is a libpq connection string. Through pgcat it is Synapse's own

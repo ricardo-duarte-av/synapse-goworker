@@ -288,6 +288,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 
 	fd := inbound.NewFrontDoor(inbound.FrontDoorDeps{
 		Store: pst, Verifier: pv, ACL: acls, Policy: asker, Processor: proc, Server: hs.ServerName, Keys: keys,
+		MSC4242: hs.Flag("msc4242_enabled", false),
 	})
 	opts.PDUServer, opts.Responses = frontDoor{fd}, wdb
 	// An event left to Synapse needs a Synapse process sweeping staged

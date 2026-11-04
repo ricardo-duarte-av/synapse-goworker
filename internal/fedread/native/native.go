@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/tidwall/gjson"
+
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
 )
 
@@ -49,6 +51,17 @@ type MissingEventsRequest struct {
 	LatestEvents   []string `json:"latest_events"`
 	Limit          *int     `json:"limit"`
 }
+
+// NotReproduced is an answer left to Synapse on purpose, by reason. It
+// falls back as any error does, but is not a fault.
+type NotReproduced struct{ Reason string }
+
+func (e NotReproduced) Error() string { return "left to Synapse: " + e.Reason }
+
+// stateDagField is StateDag.GET_MISSING_EVENTS_FIELD (MSC4242): a body
+// setting it to anything Python finds true makes Synapse walk the state DAG
+// (on_get_missing_events_state_dag) instead, whatever the room and config.
+const stateDagField = "org.matrix.msc4242.state_dag"
 
 // Meta carries facts about how an answer was produced that its body cannot
 // express.
@@ -88,6 +101,9 @@ func Answer(ctx context.Context, r Resolver, serverName string, request Request)
 			if err := json.Unmarshal(request.Body, &body); err != nil {
 				return matrixErrorMeta(matrixstate.ErrBadJSON())
 			}
+		}
+		if pyTrue(gjson.GetBytes(request.Body, gjson.Escape(stateDagField))) {
+			return nil, 0, Meta{}, NotReproduced{Reason: "state_dag"}
 		}
 		limit := 10
 		if body.Limit != nil {
@@ -141,4 +157,22 @@ func matrixError(err error) ([]byte, int, error) {
 func matrixErrorMeta(err error) ([]byte, int, Meta, error) {
 	body, status, internal := matrixError(err)
 	return body, status, Meta{}, internal
+}
+
+// pyTrue is bool() of a JSON value: false for missing, null, false, 0, "",
+// [] and {}.
+func pyTrue(v gjson.Result) bool {
+	switch v.Type {
+	case gjson.Null, gjson.False:
+		return false
+	case gjson.Number:
+		return v.Float() != 0
+	case gjson.String:
+		return v.Str != ""
+	case gjson.JSON:
+		empty := true
+		v.ForEach(func(_, _ gjson.Result) bool { empty = false; return false })
+		return !empty
+	}
+	return true
 }

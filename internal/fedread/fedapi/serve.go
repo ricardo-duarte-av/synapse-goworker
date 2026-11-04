@@ -100,7 +100,12 @@ func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, 
 		// ours. On this deployment that is the common case, not the rare one:
 		// Tuwunel-style servers hang up on /state_ids constantly.
 		reason := "error"
+		var left native.NotReproduced
 		switch {
+		case errors.As(err, &left):
+			// Not a defect: Synapse answers this one.
+			nativeFallback.WithLabelValues(endpoint, left.Reason).Inc()
+			return nativeResult{Reason: left.Reason, Spent: time.Since(attemptStart)}
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			reason = "timeout"
 		case errors.Is(ctx.Err(), context.Canceled):

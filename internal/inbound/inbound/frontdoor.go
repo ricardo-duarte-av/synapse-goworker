@@ -41,7 +41,14 @@ type FrontDoorDeps struct {
 	// Keys, when set, finds keys Synapse does not hold yet, as its Keyring
 	// would; without it such a transaction is Synapse's.
 	Keys *keyring.Keyring
+	// MSC4242 is experimental msc4242_enabled: Synapse then knows the state
+	// DAG room version, and a PDU in such a room is its to process.
+	MSC4242 bool
 }
+
+// msc4242RoomVersion is RoomVersions.MSC4242v12, known to Synapse only with
+// msc4242_enabled.
+const msc4242RoomVersion = "org.matrix.msc4242.12"
 
 // FrontDoor plans and runs transactions' PDUs.
 type FrontDoor struct{ d FrontDoorDeps }
@@ -95,6 +102,10 @@ func (f *FrontDoor) PlanPDUs(ctx context.Context, origin string, pdus []json.Raw
 			return nil, "pdu_db_error"
 		}
 		rv, ok := pdu.LookupRoomVersion(rvID)
+		if !ok && rvID == msc4242RoomVersion && f.d.MSC4242 {
+			// Known to Synapse, not to pdu: its PDUs are processed there.
+			return nil, "pdu_msc4242_room"
+		}
 		if !ok {
 			// UnsupportedRoomVersionError: ignored.
 			continue

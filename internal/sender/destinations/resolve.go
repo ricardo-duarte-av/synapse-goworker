@@ -111,6 +111,18 @@ func (r *Resolver) Resolve(ctx context.Context, eventJSON []byte, authEvents fun
 		hosts, approximate, fallback = partial, true, FallbackPartialState
 	} else {
 		prevIDs := prevEventIDs(ev)
+		// MSC4242 (Synapse v1.164, #20133): an event of a state DAG room is
+		// routed by the hosts at its prev_state_events. Only such a room's
+		// events carry the field, and the sender sends only local events,
+		// which are built by room version.
+		if ps := ev.Get("prev_state_events"); ps.IsArray() {
+			prevIDs = prevIDs[:0]
+			for _, id := range ps.Array() {
+				if id.Str != "" {
+					prevIDs = append(prevIDs, id.Str)
+				}
+			}
+		}
 		hosts, approximate, fallback, err = r.hostsBeforeEvent(ctx, roomID, prevIDs)
 		if err != nil {
 			return Result{}, err

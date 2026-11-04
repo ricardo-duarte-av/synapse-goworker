@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -236,7 +237,7 @@ func slidingSyncOnce(r *http.Request, d Deps, verdict clientauth.Verdict,
 			// A malformed `pos` is the client's, so it is told to start over
 			// rather than given a 500.
 			metrics.SlidingSyncResponses.WithLabelValues("unknown_pos").Inc()
-			return unknownPos(), false, http.StatusBadRequest, nil
+			return unknownPos("Unknown position"), false, http.StatusBadRequest, nil
 		}
 		connectionPos = parsed.ConnectionPosition
 		tok := parsed.StreamToken
@@ -268,7 +269,12 @@ func slidingSyncOnce(r *http.Request, d Deps, verdict clientauth.Verdict,
 		// Not a failure: the connection state is gone, and the client is told
 		// to start a fresh one. See internal/slidingstore.
 		metrics.SlidingSyncResponses.WithLabelValues("unknown_pos").Inc()
-		return unknownPos(), false, http.StatusBadRequest, nil
+		msg := "Unknown position"
+		var withMsg slidingstore.UnknownPositionError
+		if errors.As(err, &withMsg) {
+			msg = withMsg.Message
+		}
+		return unknownPos(msg), false, http.StatusBadRequest, nil
 	}
 	if err != nil {
 		return nil, false, http.StatusInternalServerError, internalError(d, "sliding sync", err)
@@ -285,12 +291,12 @@ func slidingSyncOnce(r *http.Request, d Deps, verdict clientauth.Verdict,
 	return body, res.HasUpdates(), http.StatusOK, nil
 }
 
-func unknownPos() []byte {
-	body, _ := json.Marshal(map[string]string{
-		"errcode": "M_UNKNOWN_POS",
-		"error":   "Unknown position",
-	})
-	return body
+func unknownPos(msg string) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(map[string]string{"errcode": "M_UNKNOWN_POS", "error": msg})
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 }
 
 func (d Deps) slidingDeps() slidingsync.Deps {

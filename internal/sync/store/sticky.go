@@ -16,10 +16,17 @@ const StickyMaxEventsInSync = 100
 // stream order, and the stream position the response should report.
 //
 // Bounds are (from, to], as everywhere else. The returned position is the
-// subtle part, and it works like the to-device one: when the limit truncates
+// subtle part, and it is Synapse v1.163's (#20186): when the limit truncates
 // the result, the caller's now token must be wound back to the LAST ROW
-// RETURNED so the next sync resumes there. Reporting `to` instead silently
-// skips whatever the limit cut off.
+// RETURNED so the next sync resumes there (reporting `to` instead silently
+// skips whatever the limit cut off); otherwise the whole range was read and
+// it is `to`, never behind `from` (copy_and_advance); with no limit at all,
+// `from`.
+//
+// One integer, not Synapse's sharded MultiWriterStreamToken: exact while
+// sticky_events has one writer (the one events writer each host has). A
+// second events writer needs sharded tokens throughout sync, the room key
+// first, not here alone.
 //
 // Two filters come from Synapse's query and neither is optional. Expired
 // events are skipped -- `expires_at` is what makes a sticky event stop being
@@ -29,8 +36,11 @@ const StickyMaxEventsInSync = 100
 func (s *Store) StickyEvents(ctx context.Context, roomIDs []string,
 	from, to, nowMS int64, limit int) (int64, map[string][]string, error) {
 
-	if len(roomIDs) == 0 || from >= to || limit <= 0 {
-		return to, nil, nil
+	if limit <= 0 {
+		return from, nil, nil
+	}
+	if len(roomIDs) == 0 || to <= from {
+		return max(from, to), nil, nil
 	}
 
 	// internal_metadata is cast to jsonb here, which event_json.json never can
@@ -56,6 +66,7 @@ func (s *Store) StickyEvents(ctx context.Context, roomIDs []string,
 	var (
 		byRoom = map[string][]string{}
 		last   int64
+		n      int
 	)
 	for rows.Next() {
 		var (
@@ -66,17 +77,35 @@ func (s *Store) StickyEvents(ctx context.Context, roomIDs []string,
 			return 0, nil, fmt.Errorf("store: sticky events: %w", err)
 		}
 		last = streamID
+		n++
 		byRoom[roomID] = append(byRoom[roomID], eventID)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, nil, fmt.Errorf("store: sticky events: %w", err)
 	}
 
-	if len(byRoom) == 0 {
-		return to, nil, nil
+	if n == limit {
+		// advance_multiwriter_sharded_token_after_partial_read, one writer.
+		return last, byRoom, nil
 	}
-	// Synapse takes the last row's position unconditionally when there were
-	// any rows, not only when the limit was hit -- the rows are ordered
-	// ascending, so the last one is the highest either way.
-	return last, byRoom, nil
+	if len(byRoom) == 0 {
+		byRoom = nil
+	}
+	return max(from, to), byRoom, nil
+}
+
+// StickyMaxAllocated is the sticky events id generator's
+// get_max_allocated_token: the sequence's last value, less one if none was
+// ever taken.
+func (s *Store) StickyMaxAllocated(ctx context.Context) (int64, error) {
+	var last int64
+	var called bool
+	if err := s.queryRow(ctx, "StickyMaxAllocated",
+		`SELECT last_value, is_called FROM sticky_events_sequence`).Scan(&last, &called); err != nil {
+		return 0, fmt.Errorf("store: sticky events sequence: %w", err)
+	}
+	if !called {
+		last--
+	}
+	return last, nil
 }

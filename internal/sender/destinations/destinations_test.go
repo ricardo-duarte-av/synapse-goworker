@@ -315,3 +315,23 @@ func TestFullStateRoomIsUnaffectedByThePartialCheck(t *testing.T) {
 		t.Error("a fully-stated room was treated as partial")
 	}
 }
+
+// MSC4242: a state DAG room's event is routed at its prev_state_events.
+func TestStateDagEventUsesPrevStateEvents(t *testing.T) {
+	calls := 0
+	h := fakeHosts{
+		hosts:      []string{"current.example"},
+		groups:     map[string]int64{"$state": 7},
+		exactHosts: []string{"at-state.example"},
+		exactCalls: &calls,
+	}
+	ev := `{"room_id":"!r:a.example","type":"m.room.message","sender":"@u:a.example",
+		"prev_events":["$prev"],"prev_state_events":["$state"]}`
+	res, err := NewResolver(h, "a.example", nil).Resolve(context.Background(), []byte(ev), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Approximate || calls != 1 || len(res.Destinations) != 1 || res.Destinations[0] != "at-state.example" {
+		t.Fatalf("%+v (calls %d)", res, calls)
+	}
+}

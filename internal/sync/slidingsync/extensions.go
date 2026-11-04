@@ -1001,6 +1001,14 @@ type stickyRoomJSON struct {
 	Events []json.RawMessage `json:"events"`
 }
 
+// stickyFutureToken is Synapse's SlidingSyncUnknownPosition message for it.
+const stickyFutureToken = "The `org.matrix.msc4354.sticky_events` extension `since` token is considered " +
+	"invalid because it includes stream positions greater than the furthest " +
+	"persisted position across all of the workers. This indicates either a Synapse " +
+	"programming error (as we should never hand out invalid future tokens), database " +
+	"was rolled back, or a fabricated `from` token. If you've modified the token, " +
+	"you can try paginating from the beginning again."
+
 // stickyEventsExtension serves events that linger for a while.
 //
 // Two things separate it from the room-scoped extensions. It is scoped to every
@@ -1033,6 +1041,18 @@ func stickyEventsExtension(
 			return nil, fmt.Errorf("sticky events since token %q: %w", req.Since, err)
 		}
 		from = n
+	}
+	// A since past this worker's position is a lagging worker or a token
+	// from the future; past everything allocated, the latter, and the
+	// connection is reset (#20186).
+	if from > in.Now.StickyEvents {
+		allocated, err := d.Store.StickyMaxAllocated(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if allocated < from {
+			return nil, slidingstore.UnknownPositionError{Message: stickyFutureToken}
+		}
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > stickyMaxEventsInSync {
