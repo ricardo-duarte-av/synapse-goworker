@@ -50,6 +50,14 @@ One socket serves both client and federation paths; point nginx's
 it is proxied to `upstream` (Synapse's main process). The metrics listener
 serves `/metrics`, `/health` and `/debug/pprof`.
 
+`listen.replication`, when set, opens a third listener: the address
+homeserver.yaml's `instance_map` gives `instance_name`, where other Synapse
+processes call this one over HTTP replication (`/_synapse/replication/...`,
+checked against `worker_replication_secret`, and `/health`). Nothing is
+served on it yet; it is where Synapse's processes will reach the streams
+this worker comes to write. Keep it off nginx. At start and on every re-read
+of homeserver.yaml the worker logs where the two disagree.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)

@@ -133,3 +133,32 @@ func TestLogLevelPerComponent(t *testing.T) {
 		}
 	}
 }
+
+func TestReplicationListener(t *testing.T) {
+	c, err := Parse([]byte(minimal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Listen.Replication.Enabled() {
+		t.Fatal("a replication listener without being asked for one")
+	}
+	c, err = Parse([]byte(strings.Replace(minimal, "listen: { socket: /tmp/goworker.sock }",
+		"listen: { socket: /tmp/goworker.sock, replication: { socket: /tmp/goworker-repl.sock, socket_mode: '0666' } }", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode, _ := c.Listen.Replication.ParsedSocketMode(); !c.Listen.Replication.Enabled() || mode != 0o666 {
+		t.Fatalf("got %+v", c.Listen.Replication)
+	}
+	for _, listen := range []string{
+		"listen: { socket: /tmp/goworker.sock, replication: { socket: /tmp/r.sock, addr: ':9093' } }",
+		"listen: { socket: /tmp/goworker.sock, replication: { socket: /tmp/goworker.sock } }",
+		"listen: { addr: ':8080', replication: { addr: ':8080' } }",
+		"listen: { socket: /tmp/goworker.sock, metrics: { addr: ':9200' }, replication: { addr: ':9200' } }",
+		"listen: { socket: /tmp/goworker.sock, replication: { socket: /tmp/r.sock, socket_mode: 'rw' } }",
+	} {
+		if _, err := Parse([]byte(strings.Replace(minimal, "listen: { socket: /tmp/goworker.sock }", listen, 1))); err == nil {
+			t.Errorf("accepted %s", listen)
+		}
+	}
+}

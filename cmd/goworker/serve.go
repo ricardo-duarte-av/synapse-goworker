@@ -112,8 +112,10 @@ const homeserverSettle = 2 * time.Second
 // told to stop. SIGHUP applies it at once, for when no restart is coming.
 //
 // A restart may also be an upgrade, so each trigger asks main its version
-// again, for the User-Agent our requests send (useragent).
-func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *senderapp.Worker, upstream *proxy.Proxy, log zerolog.Logger) {
+// again, for the User-Agent our requests send (useragent). onApply is
+// called with each copy applied, after the sender has it.
+func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *senderapp.Worker, upstream *proxy.Proxy,
+	log zerolog.Logger, onApply func(*synapsecfg.Config)) {
 	path := src.Path()
 	trigger := make(chan string, 1)
 	fire := func(why string) {
@@ -170,6 +172,7 @@ func watchHomeserver(ctx context.Context, src *synapsecfg.Source, sender *sender
 		log.Info().Str("trigger", why).Msg("applied the changed homeserver.yaml")
 		useragent.SetSuffix(scfg.UserAgentSuffix)
 		sender.SetSynapse(scfg)
+		onApply(scfg)
 	}
 }
 

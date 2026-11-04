@@ -17,6 +17,13 @@ listen:
   metrics:
     addr: ":9200"              # /metrics, /health, /debug/pprof, POST /debug/federation/ping -- internal only
     pprof: true
+  # Where other Synapse processes reach this one over HTTP replication: the
+  # address homeserver.yaml's instance_map gives instance_name (a path: for a
+  # socket, or a host and port). Off the reverse proxy; worker_replication_secret
+  # is the only check on callers. Unset: no listener.
+  # replication:
+  #   socket: /var/sockets/goworker-replication.sock
+  #   socket_mode: "0660"
 
 upstream:
   # Synapse's main process: the fallback for everything not answered here.

@@ -45,6 +45,8 @@ components:
       - synapse/federation/federation_base.py
       - synapse/handlers/event_auth.py
       - synapse/http/client.py
+      - synapse/http/server.py
+      - synapse/http/servlet.py
       - synapse/http/federation/matrix_federation_agent.py
       - synapse/http/matrixfederationclient.py
       - synapse/http/site.py
@@ -58,6 +60,7 @@ components:
       - synapse/state/v2.py
       - synapse/storage/controllers/state.py
       - synapse/storage/databases/main/client_ips.py
+      - synapse/util/caches/response_cache.py
       - synapse/storage/databases/main/event_federation.py
       - synapse/storage/databases/main/event_push_actions.py
       - synapse/storage/databases/main/events_worker.py

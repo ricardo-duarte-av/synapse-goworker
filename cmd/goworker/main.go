@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,6 +41,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
@@ -311,6 +313,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	closers = append(closers, sender.Close)
 
+	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
 		log.Info().Bool("sending_federation", sender.Active()).
 			Msg("configuration, homeserver.yaml and database access are usable")
@@ -372,6 +375,34 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if ping != nil {
 		router.Ping = ping
 	}
+
+	// The replication listener, where other Synapse processes reach this
+	// one at its instance_map address. Nothing is registered on it yet: the
+	// parts that write a stream will register what its writer serves.
+	var (
+		replSrv      *http.Server
+		replListener net.Listener
+		replSpec     httpserve.ListenSpec
+	)
+	if rc := cfg.Listen.Replication; rc.Enabled() {
+		rmode, _ := rc.ParsedSocketMode() // validated at load
+		replSpec = httpserve.ListenSpec{Socket: rc.Socket, Addr: rc.Addr, SocketMode: rmode}
+		if replListener, err = httpserve.Listen(replSpec); err != nil {
+			return err
+		}
+		repl := replserver.New(replserver.Options{
+			Instance: cfg.InstanceName,
+			Secret:   func() string { return src.Current().ReplicationSecret },
+			Log:      componentLogger(log, cfg.Log, "replication"),
+		})
+		replSrv = &http.Server{
+			Handler: repl,
+			// Synapse's processes only, on the inside: a request may wait on
+			// a stream or a cached sibling, so no write timeout.
+			ReadHeaderTimeout: 20 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+	}
 	var debugPing http.Handler
 	if ping != nil {
 		debugPing = ping.DebugHandler()
@@ -390,7 +421,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		g.Go(func() error { return creator.Run(gctx) })
 	}
 	g.Go(func() error {
-		watchHomeserver(gctx, src, sender, upstream, log)
+		watchHomeserver(gctx, src, sender, upstream, log, func(scfg *synapsecfg.Config) {
+			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
+		})
 		return gctx.Err()
 	})
 	g.Go(func() error {
@@ -400,6 +433,15 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		}
 		return nil
 	})
+	if replSrv != nil {
+		g.Go(func() error {
+			log.Info().Str("listen", httpserve.Describe(replSpec)).Msg("serving replication")
+			if err := replSrv.Serve(replListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("replication listener: %w", err)
+			}
+			return nil
+		})
+	}
 	if metricsSrv != nil {
 		g.Go(func() error {
 			log.Info().Str("addr", metricsSrv.Addr).Msg("serving metrics")
@@ -416,6 +458,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		defer cancel()
 		if metricsSrv != nil {
 			_ = metricsSrv.Shutdown(shutdownCtx)
+		}
+		if replSrv != nil {
+			_ = replSrv.Shutdown(shutdownCtx)
 		}
 		return srv.Shutdown(shutdownCtx)
 	})

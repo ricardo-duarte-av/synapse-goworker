@@ -59,6 +59,33 @@ type Listen struct {
 	// Metrics serves /metrics, /health and, with PProf, /debug/pprof. It is
 	// unauthenticated: keep it off the reverse proxy.
 	Metrics Metrics `yaml:"metrics"`
+	// Replication is where other Synapse processes reach this one: the
+	// address homeserver.yaml's instance_map gives instance_name. Unset, no
+	// replication listener is opened, which is right while nothing names
+	// this process in instance_map.
+	Replication Replication `yaml:"replication"`
+}
+
+// Replication is the replication listener: at most one of Socket or Addr.
+// It serves only /_synapse/replication and /health, and only to Synapse's
+// processes: keep it off the reverse proxy. worker_replication_secret, when
+// homeserver.yaml sets one, is the only check on who calls it.
+type Replication struct {
+	Socket     string `yaml:"socket"`
+	Addr       string `yaml:"addr"`
+	SocketMode string `yaml:"socket_mode"`
+}
+
+// Enabled reports whether a replication listener is configured.
+func (r Replication) Enabled() bool { return r.Socket != "" || r.Addr != "" }
+
+// ParsedSocketMode returns the replication socket's permission bits.
+func (r Replication) ParsedSocketMode() (os.FileMode, error) {
+	n, err := strconv.ParseUint(r.SocketMode, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("config: listen.replication.socket_mode %q is not an octal mode: %w", r.SocketMode, err)
+	}
+	return os.FileMode(n), nil
 }
 
 // Metrics is the scrape listener.
@@ -208,8 +235,9 @@ func Parse(data []byte) (*Config, error) {
 	cfg := &Config{
 		HomeserverYAML: "/etc/synapse/homeserver.yaml",
 		Listen: Listen{
-			SocketMode: "0660",
-			Metrics:    Metrics{Addr: ":9200", PProf: true},
+			SocketMode:  "0660",
+			Metrics:     Metrics{Addr: ":9200", PProf: true},
+			Replication: Replication{SocketMode: "0660"},
 		},
 		// A remote join the event creator hands to main can take minutes.
 		Upstream: proxy.Config{TimeoutSeconds: 300},
@@ -249,6 +277,17 @@ func (c *Config) validate() error {
 	}
 	if _, err := c.Listen.ParsedSocketMode(); err != nil {
 		return err
+	}
+	if r := c.Listen.Replication; r.Socket != "" && r.Addr != "" {
+		return fmt.Errorf("config: listen.replication: at most one of socket or addr may be set")
+	}
+	if _, err := c.Listen.Replication.ParsedSocketMode(); err != nil {
+		return err
+	}
+	if r := c.Listen.Replication; r.Enabled() && (r.Socket == c.Listen.Socket && r.Socket != "" ||
+		r.Addr == c.Listen.Addr && r.Addr != "" || r.Addr != "" && r.Addr == c.Listen.Metrics.Addr) {
+		return fmt.Errorf("config: listen.replication must be its own socket or port, not the one nginx " +
+			"or the metrics scraper reaches")
 	}
 	if len(c.Upstream.Sockets) == 0 && len(c.Upstream.Addrs) == 0 {
 		return fmt.Errorf("config: upstream: at least one of sockets or addrs must be set; " +
