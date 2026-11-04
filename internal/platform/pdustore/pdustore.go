@@ -19,6 +19,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 )
 
 // Tables is every table this package reads.
@@ -84,6 +85,33 @@ func (s *Store) CachedDevices(ctx context.Context, userID string) (map[string][]
 // Store reads PDUs and state.
 type Store struct {
 	pool *pgxpool.Pool
+	// states is the worker's one state cache, when shared (SetStateCache).
+	states *statecache.Cache
+}
+
+// SetStateCache shares the worker's state cache, for CachedStateForGroup.
+func (s *Store) SetStateCache(c *statecache.Cache) { s.states = c }
+
+// CachedStateForGroup is StateForGroup through the shared state cache: the
+// group whole, or rebuilt from its cached prev group and delta. The map may
+// be shared: never modify it. Without a cache it is StateForGroup.
+func (s *Store) CachedStateForGroup(ctx context.Context, group int64) (pdu.StateMap, error) {
+	if s.states == nil {
+		return s.StateForGroup(ctx, group)
+	}
+	m, _, err := s.states.Load(ctx, group, stateLoader{s})
+	return m, err
+}
+
+// stateLoader reads groups for the cache.
+type stateLoader struct{ s *Store }
+
+func (l stateLoader) Delta(ctx context.Context, g int64) (int64, bool, statecache.Map, error) {
+	return l.s.StateDelta(ctx, g)
+}
+
+func (l stateLoader) Full(ctx context.Context, g int64) (statecache.Map, error) {
+	return l.s.StateForGroup(ctx, g)
 }
 
 // Open connects. The DSN's role needs SELECT on Tables.

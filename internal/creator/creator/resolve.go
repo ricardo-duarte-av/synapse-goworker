@@ -48,7 +48,7 @@ func (c *Creator) resolveStateBefore(ctx context.Context, roomID string, rv *pdu
 		}
 	}
 	if len(groups) == 1 {
-		state, err := c.o.Store.StateForGroup(ctx, groups[0])
+		state, err := c.o.Store.CachedStateForGroup(ctx, groups[0])
 		if err != nil {
 			return nil, fb("db_error")
 		}
@@ -65,7 +65,7 @@ func (c *Creator) resolveStateBefore(ctx context.Context, roomID string, rv *pdu
 	slices.Sort(groups)
 	sets := make([]pdu.StateMap, len(groups))
 	for i, g := range groups {
-		s, err := c.o.Store.StateForGroup(ctx, g)
+		s, err := c.o.Store.CachedStateForGroup(ctx, g)
 		if err != nil {
 			return nil, fb("db_error")
 		}

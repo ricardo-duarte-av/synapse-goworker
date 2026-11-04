@@ -145,7 +145,7 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 		if err != nil {
 			return res.fail(OutcomeSkipped, "no state group for the event")
 		}
-		if before, err = s.st.StateForGroup(ctx, g); err != nil {
+		if before, err = s.st.CachedStateForGroup(ctx, g); err != nil {
 			return res.fail(OutcomeError, err.Error())
 		}
 	}

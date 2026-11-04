@@ -80,14 +80,14 @@ func (c *Creator) check(v pending) {
 			e.AnErr("err", err).Bool("has_prev", hasPrev).Int64("prev", prev).Int("delta", len(delta))
 		})
 		// The room's current state now holds the event.
-		cur, err := c.o.Store.StateForGroup(ctx, p.after)
+		cur, err := c.o.Store.CachedStateForGroup(ctx, p.after)
 		record("state_after", err == nil && cur[p.ev.Key()] == p.ev.ID && len(cur) == len(p.before)+boolInt(p.replaces == ""),
 			func(e *zerolog.Event) { e.AnErr("err", err).Int("entries", len(cur)).Int("before", len(p.before)) })
 	}
 
 	if p.sb.group == 0 {
 		// The group stored for resolved state holds exactly it.
-		st, err := c.o.Store.StateForGroup(ctx, p.group)
+		st, err := c.o.Store.CachedStateForGroup(ctx, p.group)
 		same := err == nil && len(st) == len(p.before)
 		for k, v := range p.before {
 			if !same {

@@ -275,6 +275,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ReadMaxConns:   pools.CreatorRead,
 		WriteMaxConns:  pools.CreatorWrite,
 		ConnectTimeout: db.ConnectTimeout(),
+		States:         states,
 		Log:            componentLogger(log, cfg.Log, "creator"),
 	})
 	var createEvents http.Handler

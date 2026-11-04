@@ -92,7 +92,9 @@ type Store interface {
 	RoomMaxStream(ctx context.Context, roomID string) (int64, error)
 	Depths(ctx context.Context, ids []string) (map[string]int64, error)
 	StateGroupForEvent(ctx context.Context, id string) (int64, error)
-	StateForGroup(ctx context.Context, group int64) (pdu.StateMap, error)
+	// CachedStateForGroup is a group's full state, through the shared
+	// state cache: never modify the map.
+	CachedStateForGroup(ctx context.Context, group int64) (pdu.StateMap, error)
 	StateDelta(ctx context.Context, group int64) (prev int64, hasPrev bool, delta pdu.StateMap, err error)
 	GetStoredEvents(ctx context.Context, ids []string) (map[string]*pdustore.StoredEvent, map[string]error, error)
 	RejectionColumn(ctx context.Context, eventID string) (*string, error)

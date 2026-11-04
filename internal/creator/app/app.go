@@ -35,6 +35,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
@@ -65,6 +66,9 @@ type Settings struct {
 	DSN                         string
 	ReadMaxConns, WriteMaxConns int32
 	ConnectTimeout              time.Duration
+	// States is the worker's one state cache, shared with the federation
+	// reads and inbound.
+	States *statecache.Cache
 
 	Log zerolog.Logger
 }
@@ -105,6 +109,7 @@ func New(ctx context.Context, s Settings) (*App, error) {
 		return fail(fmt.Errorf("creator: %w", err))
 	}
 	a.closers = append(a.closers, db.Close)
+	db.SetStateCache(s.States)
 	w, err := writer.Open(openCtx, s.DSN, s.WriteMaxConns)
 	if err != nil {
 		return fail(fmt.Errorf("creator: %w", err))

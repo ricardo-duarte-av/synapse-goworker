@@ -201,7 +201,7 @@ func (f *fakeRoom) StateGroupForEvent(_ context.Context, id string) (int64, erro
 	}
 	return 7, nil
 }
-func (f *fakeRoom) StateForGroup(_ context.Context, g int64) (pdu.StateMap, error) {
+func (f *fakeRoom) CachedStateForGroup(_ context.Context, g int64) (pdu.StateMap, error) {
 	if s, ok := f.groups[g]; ok {
 		return s, nil
 	}
