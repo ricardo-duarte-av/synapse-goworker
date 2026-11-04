@@ -88,6 +88,9 @@ func (s *Store) StateGroupsForEvents(ctx context.Context, eventIDs []string) (ma
 // visibility and one user's membership -- and resolving the whole map to get
 // them would mean reading every state event in the room, which is over a
 // hundred thousand in the largest room on this server, for a single event.
+//
+// Only the history visibility row is cast to jsonb: a cast fails on an
+// escaped NUL, which member events (a display name) can hold.
 const stateGroupFilteredQuery = `
 	WITH RECURSIVE sgs(state_group) AS (
 		VALUES($1::bigint)
@@ -98,7 +101,8 @@ const stateGroupFilteredQuery = `
 	SELECT DISTINCT ON (sgs2.type, sgs2.state_key)
 	       sgs2.type, sgs2.state_key, sgs2.event_id,
 	       COALESCE(m.membership, ''),
-	       COALESCE(ej.json::jsonb -> 'content' ->> 'history_visibility', '')
+	       COALESCE(CASE WHEN sgs2.type = 'm.room.history_visibility'
+	            THEN ej.json::jsonb -> 'content' ->> 'history_visibility' END, '')
 	  FROM state_groups_state sgs2
 	  INNER JOIN sgs USING (state_group)
 	  LEFT JOIN room_memberships m ON m.event_id = sgs2.event_id
@@ -207,7 +211,8 @@ const stateGroupTypeFilteredQuery = `
 	SELECT DISTINCT ON (sgs2.type, sgs2.state_key)
 	       sgs2.type, sgs2.state_key, sgs2.event_id,
 	       COALESCE(m.membership, ''),
-	       COALESCE(ej.json::jsonb -> 'content' ->> 'history_visibility', '')
+	       COALESCE(CASE WHEN sgs2.type = 'm.room.history_visibility'
+	            THEN ej.json::jsonb -> 'content' ->> 'history_visibility' END, '')
 	  FROM state_groups_state sgs2
 	  INNER JOIN sgs USING (state_group)
 	  LEFT JOIN room_memberships m ON m.event_id = sgs2.event_id

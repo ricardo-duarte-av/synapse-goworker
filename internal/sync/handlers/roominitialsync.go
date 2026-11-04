@@ -32,6 +32,8 @@ type Deps struct {
 	Log   zerolog.Logger
 	// MSC4354Enabled mirrors Synapse's experimental.msc4354_enabled.
 	MSC4354Enabled bool
+	// MSC2815Enabled mirrors Synapse's experimental.msc2815_enabled.
+	MSC2815Enabled bool
 	// MSC3391Enabled mirrors Synapse's experimental.msc3391_enabled.
 	MSC3391Enabled bool
 	// PushRuleFeatures gates individual base push rules.

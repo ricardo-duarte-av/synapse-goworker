@@ -1,5 +1,6 @@
 // Package app assembles client sync: /sync, simplified sliding sync
-// (MSC4186), /events, /initialSync and /rooms/{id}/initialSync.
+// (MSC4186), /events, /initialSync and /rooms/{id}/initialSync; and the
+// client reads: room state, one event.
 package app
 
 import (
@@ -184,6 +185,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Log:                 log,
 		MSC4354Enabled:      flag("msc4354_enabled", false),
 		MSC3391Enabled:      flag("msc3391_enabled", false),
+		MSC2815Enabled:      flag("msc2815_enabled", false),
 		MSC3773Enabled:      flag("msc3773_enabled", false),
 		MSC3874Enabled:      flag("msc3874_enabled", false),
 		FilterTimelineLimit: cfg.Sync.TimelineLimitCap(),
@@ -208,6 +210,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Events:          handlers.Events(deps),
 		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
 		RoomState:       handlers.RoomState(deps),
+		RoomEvent:       handlers.RoomEvent(deps),
 	}
 	if s.sliding != nil {
 		s.routes.SlidingSync = handlers.SlidingSync(deps)

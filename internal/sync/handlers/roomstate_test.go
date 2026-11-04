@@ -36,6 +36,10 @@ var roomStateSchema string
 type stateFixture struct {
 	h        http.Handler
 	handedIn []string
+	// deps are the handlers' Deps; ev and exec add to the database.
+	deps Deps
+	ev   func(room, id, typ, stateKey, sender, content string)
+	exec func(sql string, args ...any)
 }
 
 func newStateFixture(t *testing.T) *stateFixture {
@@ -66,7 +70,7 @@ func newStateFixture(t *testing.T) *stateFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = conn.Close(ctx) }()
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 	if _, err := conn.Exec(ctx, roomStateSchema); err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +204,8 @@ func newStateFixture(t *testing.T) *stateFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(auth.Close)
-	f := &stateFixture{}
-	f.h = RoomState(Deps{
+	f := &stateFixture{ev: ev, exec: exec}
+	f.deps = Deps{
 		Store:      st,
 		Auth:       auth,
 		Log:        zerolog.Nop(),
@@ -210,16 +214,23 @@ func newStateFixture(t *testing.T) *stateFixture {
 			f.handedIn = append(f.handedIn, r.URL.Path)
 			w.WriteHeader(299)
 		}),
-	})
+	}
+	f.h = RoomState(f.deps)
 	return f
 }
 
 func (f *stateFixture) get(t *testing.T, user, path string) (int, []byte) {
 	t.Helper()
+	return serve(f.h, user, path)
+}
+
+func serve(h http.Handler, user, path string) (int, []byte) {
 	r := httptest.NewRequest(http.MethodGet, path, nil)
-	r.Header.Set("Authorization", "Bearer "+user+"_tok")
+	if user != "" {
+		r.Header.Set("Authorization", "Bearer "+user+"_tok")
+	}
 	w := httptest.NewRecorder()
-	f.h.ServeHTTP(w, r)
+	h.ServeHTTP(w, r)
 	return w.Code, w.Body.Bytes()
 }
 

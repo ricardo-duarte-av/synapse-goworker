@@ -143,6 +143,14 @@ func ForClient(ctx context.Context, db *store.Store, roomID, userID string,
 		}
 	}
 
+	// Call invites in a public room are dropped after the decision, as
+	// Synapse does since v1.144 (#17782): they would ring everyone in it.
+	// The join rule is read only for the state groups of call invites.
+	publicGroups, err := publicCallInviteGroups(ctx, db, events, groups)
+	if err != nil {
+		return Result{}, err
+	}
+
 	kept := make([]store.TimelineEvent, 0, len(events))
 	memberships := make([]string, 0, len(events))
 	var pruned []string
@@ -179,6 +187,15 @@ func ForClient(ctx context.Context, db *store.Store, roomID, userID string,
 		}
 		if !verdict.Visible {
 			continue
+		}
+		if isCallInvite(ev) {
+			// Synapse asserts the state is there: a call invite is never an
+			// outlier. Without it there is no join rule to go by, so it is
+			// dropped rather than rung.
+			group, ok := groups[ev.EventID]
+			if !ok || publicGroups[group] {
+				continue
+			}
 		}
 		if verdict.Pruned {
 			// The sender has been erased and the caller was not joined at the
@@ -241,4 +258,50 @@ func policyServerSpammy(internalMetadata []byte) bool {
 		return false
 	}
 	return gjson.GetBytes(internalMetadata, "policy_server_spammy").Bool()
+}
+
+// isCallInvite is EventTypes.CallInvite and not a state event.
+func isCallInvite(ev store.TimelineEvent) bool {
+	return ev.Type == "m.call.invite" && !ev.IsState
+}
+
+// publicCallInviteGroups reports, for the state groups of the call invites
+// among events, which have a public join rule. Nil when there are none.
+func publicCallInviteGroups(ctx context.Context, db *store.Store, events []store.TimelineEvent,
+	groups map[string]int64) (map[int64]bool, error) {
+
+	var out map[int64]bool
+	joinRules := []store.StateKey{{Type: "m.room.join_rules", StateKey: ""}}
+	for _, ev := range events {
+		if !isCallInvite(ev) {
+			continue
+		}
+		group, ok := groups[ev.EventID]
+		if !ok {
+			continue
+		}
+		if out == nil {
+			out = map[int64]bool{}
+		}
+		if _, done := out[group]; done {
+			continue
+		}
+		state, err := db.FilteredStateForGroup(ctx, group, joinRules)
+		if err != nil {
+			return nil, err
+		}
+		out[group] = false
+		id := state[joinRules[0]].EventID
+		if id == "" {
+			continue
+		}
+		loaded, err := db.EventsByID(ctx, []string{id}, ev.RoomVersion)
+		if err != nil {
+			return nil, err
+		}
+		if jr, ok := loaded[id]; ok {
+			out[group] = gjson.GetBytes(jr.JSON, "content.join_rule").Str == "public"
+		}
+	}
+	return out, nil
 }

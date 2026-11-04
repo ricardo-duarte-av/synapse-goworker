@@ -220,3 +220,27 @@ CREATE TABLE public.room_ban_redactions (
 );
 ALTER TABLE ONLY public.room_ban_redactions
     ADD CONSTRAINT room_ban_redaction_uniqueness UNIQUE (room_id, user_id);
+-- What GET /rooms/{id}/event/{id} reads as well: visibility's extras and
+-- the bundled aggregations.
+CREATE TABLE public.account_data (
+    user_id text NOT NULL,
+    account_data_type text NOT NULL,
+    stream_id bigint NOT NULL,
+    content text NOT NULL,
+    instance_name text
+);
+CREATE TABLE public.erased_users (
+    user_id text NOT NULL
+);
+CREATE TABLE public.room_retention (
+    room_id text NOT NULL,
+    event_id text NOT NULL,
+    min_lifetime bigint,
+    max_lifetime bigint
+);
+CREATE TABLE public.event_relations (
+    event_id text NOT NULL,
+    relates_to_id text NOT NULL,
+    relation_type text NOT NULL,
+    aggregation_key text
+);
