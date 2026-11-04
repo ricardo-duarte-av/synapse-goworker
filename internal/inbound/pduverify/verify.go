@@ -15,6 +15,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pushcheck"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
 )
@@ -78,7 +79,7 @@ type Verifier struct {
 	st     *pdustore.Store
 	groups *groupCache
 	opts   stateres.Options
-	push   *PushConfig
+	push   *pushcheck.Evaluator
 }
 
 // New builds a Verifier over st.

@@ -9,7 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 	"maunium.net/go/mautrix/crypto/canonicaljson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pushcalc"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pushcheck"
 )
 
 // pending is a native event to verify.
@@ -115,11 +115,11 @@ func (c *Creator) check(v pending) {
 	}
 
 	if c.o.Push != nil {
-		pv := c.o.Push.Check(ctx, p.ev.ID, p.before, p.maxStream, p.push)
+		pv := c.o.Push.Check(ctx, p.ev.ID, p.before, pushcheck.CheckOptions{MaxStream: p.maxStream, Given: p.push})
 		switch pv.Outcome {
-		case pushcalc.OutcomeMatch:
+		case pushcheck.OutcomeMatch:
 			record("push", true, nil)
-		case pushcalc.OutcomeMismatch:
+		case pushcheck.OutcomeMismatch:
 			record("push", false, func(e *zerolog.Event) { e.Strs("diff", pv.Diff) })
 		default:
 			results["push"] = pv.Outcome + ": " + pv.Reason

@@ -41,13 +41,13 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/build"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pushcalc"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/route"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/writer"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/appservice"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pushcheck"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
@@ -165,7 +165,7 @@ type Options struct {
 	Writer     Writer
 	Persister  Persister
 	Key        *build.Key
-	Push       *pushcalc.Calculator
+	Push       *pushcheck.Evaluator
 	ServerName string
 	// Auth identifies requesters.
 	Auth Authenticator
@@ -729,7 +729,7 @@ type prepared struct {
 	before    pdu.StateMap
 	replaces  string
 	maxStream int64
-	push      map[string]pushcalc.Row
+	push      map[string]pushcheck.Row
 	// after is the state group after the event, once stored.
 	after int64
 	// answer is the event ID the request was answered with.
@@ -909,7 +909,7 @@ func (c *Creator) prepare(ctx context.Context, req route.Request, rq *requester,
 		}
 	}
 
-	var rows map[string]pushcalc.Row
+	var rows map[string]pushcheck.Row
 	if c.o.Push != nil {
 		if rows, err = c.o.Push.Rows(ctx, ev, before); err != nil {
 			return nil, "", fb("push")

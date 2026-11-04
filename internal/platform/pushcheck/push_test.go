@@ -1,4 +1,4 @@
-package pushcalc
+package pushcheck
 
 import (
 	"encoding/json"

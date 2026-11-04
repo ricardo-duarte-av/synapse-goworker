@@ -37,7 +37,7 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, five components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `pushcheck` (the push evaluator), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
 | `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go`, `roomevent.go`, `profile.go`, `keysquery.go`), which hand back to main what they do not reproduce, a federation query included (`Deps.Fallback`) |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
@@ -70,7 +70,16 @@ inbound and the creator had each copied (`pdu`, `pdustore`, `stateres`,
 `push`, `acl`, `appservice`, `fedclient`, `replication`): the copies had
 diverged both ways (the creator's exact auth error texts, inbound's
 canonical escapes and key fixes), and two `pdustore`s registered the same
-metrics.
+metrics. Since 2026-11-04 also the push evaluator (`platform/pushcheck`:
+inbound checks received events against a snapshot, the creator computes
+rows for an event it builds, `CheckOptions` the difference), the
+appservice registrations (`platform/appservice`, the one strict parser;
+clientauth's RE2 handling is its `Unsupported`), the creator's state-group
+reads (`pdustore.CachedStateForGroup`, through `platform/statecache`), and
+the federation IP filter (`platform/fedclient` `AllowIP`/`DialControl`:
+Synapse's `federation_ip_range_blocklist` for every client, the sender's
+dialer and .well-known lookups; mautrix's default was not that list, and
+the sender had none).
 
 Still per component, on purpose:
 
@@ -94,12 +103,6 @@ Still per component, on purpose:
   the sender's). Each read pool is sized on its own (`database.pools.
   sync_read`, `federation_reads_read`, `sender_read`, `creator_read`; unset
   takes `read`).
-- **Push evaluation**: inbound's `pduverify` checks persisted events against
-  a snapshot, the creator's `pushcalc` computes rows for an event it builds.
-  Same algorithm, different framing; not merged yet (TODO.md). A change to
-  `bulk_push_rule_evaluator` goes into both.
-- **clientauth's registration parser**: its own, with the RE2 quirks
-  (`quoteSafe`); `platform/appservice` is the creator's and inbound's.
 
 ## Decisions that are easy to undo by accident
 

@@ -28,12 +28,12 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/build"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/creator"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/fedclient"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pushcalc"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/route"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/writer"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/appservice"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pushcheck"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
@@ -124,7 +124,7 @@ func New(ctx context.Context, s Settings) (*App, error) {
 	if err != nil {
 		return fail(fmt.Errorf("creator: %w", err))
 	}
-	pushCfg, err := pushcalc.ConfigFor(hs)
+	pushCfg, err := pushcheck.ConfigFor(hs)
 	if err != nil {
 		return fail(fmt.Errorf("creator: %w", err))
 	}
@@ -151,7 +151,7 @@ func New(ctx context.Context, s Settings) (*App, error) {
 		Policy:         fed,
 		Delayed:        hs.Delayed,
 		Key:            key,
-		Push:           pushcalc.New(db, pushCfg),
+		Push:           pushcheck.New(db, pushCfg),
 		ServerName:     hs.ServerName,
 		EventsWriter:   hs.Writers.EventsWriter,
 		Sticky:         hs.Flag("msc4354_enabled", false),

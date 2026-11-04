@@ -1,4 +1,4 @@
-package pushcalc
+package pushcheck
 
 import (
 	"context"
@@ -49,15 +49,11 @@ type pushRow struct {
 
 // Check reproduces BulkPushRuleEvaluator._action_for_event_by_user
 // (bulk_push_rule_evaluator.py) for a persisted event and compares the rows
-// with those Synapse stored in event_push_actions. given, when not nil, are
-// rows to compare instead of computing them: write mode's own.
+// with those Synapse stored in event_push_actions.
 //
 // before is the state before the event; nil falls back to the event's own
-// state group, which is the state before a non-state event. maxStream is the
-// room's stream position read before the event was created, 0 for unknown:
-// who is in the room, and their display names, are read from current state,
-// so the check is skipped when any member event has been persisted since.
-func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, maxStream int64, given map[string]Row) Verdict {
+// state group, which is the state before a non-state event. o frames it.
+func (s *Evaluator) Check(ctx context.Context, id string, before pdu.StateMap, o CheckOptions) Verdict {
 	res := &Verdict{}
 	if s.cfg == nil {
 		return res.fail(OutcomeSkipped, "push not configured")
@@ -74,6 +70,7 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 		return res.fail(OutcomeSkipped, "not found")
 	}
 	ev := se.Event
+	res.RoomID, res.Type, res.Version = ev.RoomID, ev.Type, ev.Room.ID
 	switch {
 	case se.Outlier:
 		return res.fail(OutcomeSkipped, "outlier")
@@ -81,6 +78,8 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 		return res.fail(OutcomeSkipped, "rejected")
 	case se.StreamOrdering <= 0:
 		return res.fail(OutcomeSkipped, "backfilled")
+	case o.EventPresent:
+		return res.fail(OutcomeSkipped, "snapshot taken after the event")
 	case time.Since(time.UnixMilli(se.ReceivedTS)) > 20*time.Hour:
 		// Rows a day old are deleted once summarised
 		// (_remove_old_push_actions_that_have_rotated).
@@ -99,8 +98,8 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 	}
 
 	after := se.StreamOrdering
-	if maxStream > 0 {
-		after = maxStream
+	if o.MaxStream > 0 {
+		after = o.MaxStream
 	}
 	n, err := s.st.MemberEventsAfter(ctx, ev.RoomID, after, id)
 	if err != nil {
@@ -145,7 +144,11 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 		if err != nil {
 			return res.fail(OutcomeSkipped, "no state group for the event")
 		}
-		if before, err = s.st.CachedStateForGroup(ctx, g); err != nil {
+		load := o.LoadGroup
+		if load == nil {
+			load = s.st.CachedStateForGroup
+		}
+		if before, err = load(ctx, g); err != nil {
 			return res.fail(OutcomeError, err.Error())
 		}
 	}
@@ -155,12 +158,16 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 		return res.fail(OutcomeError, err.Error())
 	}
 	ours := map[string]pushRow{}
-	if given != nil {
-		ours = toPushRows(given)
+	if o.Given != nil {
+		ours = toPushRows(o.Given)
 	} else if !softFailed {
 		// filter_event_for_clients_with_state shows a soft-failed event
 		// to nobody, so it has no rows.
-		ours, err = s.pushRows(ctx, ev, before)
+		prior := before
+		if o.Current != nil {
+			prior = o.Current
+		}
+		ours, err = s.pushRows(ctx, ev, before, prior)
 		if err != nil {
 			var re *pdu.RaiseError
 			if errors.As(err, &re) {
@@ -212,6 +219,11 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 	}
 
 	res.Rows = len(storedRows)
+	for _, r := range storedRows {
+		if r.notif {
+			res.Notify++
+		}
+	}
 	res.Diff = diffPush(ours, storedRows)
 	if len(res.Diff) > 0 {
 		res.Outcome = OutcomeMismatch
@@ -222,7 +234,9 @@ func (s *Calculator) Check(ctx context.Context, id string, before pdu.StateMap, 
 }
 
 // pushRows is _action_for_event_by_user up to add_push_actions_to_staging.
-func (s *Calculator) pushRows(ctx context.Context, ev *pdu.Event, before pdu.StateMap) (map[string]pushRow, error) {
+// pushRows is _action_for_event_by_user; prior is where an invite
+// target's membership before the event is read.
+func (s *Evaluator) pushRows(ctx context.Context, ev *pdu.Event, before, prior pdu.StateMap) (map[string]pushRow, error) {
 	cfg := s.cfg
 	countAsUnread := cfg.UnreadCounts && shouldCountAsUnread(ev)
 
@@ -237,7 +251,7 @@ func (s *Calculator) pushRows(ctx context.Context, ev *pdu.Event, before pdu.Sta
 		sk := *ev.StateKey
 		if ev.Sender != sk && domain(sk) == cfg.ServerName {
 			key := pdu.StateKey{Type: "m.room.member", StateKey: sk}
-			target.priorID = before[key]
+			target.priorID = prior[key]
 			if target.priorID != "" {
 				prior, err := s.st.GetEvents(ctx, []string{target.priorID})
 				if err != nil {
@@ -404,7 +418,7 @@ func (s *Calculator) pushRows(ctx context.Context, ev *pdu.Event, before pdu.Sta
 }
 
 // rulesFor is bulk_get_push_rules then _load_rules, per user.
-func (s *Calculator) rulesFor(ctx context.Context, users []string) (map[string]*push.Filtered, error) {
+func (s *Evaluator) rulesFor(ctx context.Context, users []string) (map[string]*push.Filtered, error) {
 	rows, err := s.st.PushRules(ctx, users)
 	if err != nil {
 		return nil, err
@@ -443,7 +457,7 @@ func (s *Calculator) rulesFor(ctx context.Context, users []string) (map[string]*
 
 // powerLevels is _get_power_levels_and_sender_level plus the notification
 // levels' coercion in _action_for_event_by_user.
-func (s *Calculator) powerLevels(ctx context.Context, ev *pdu.Event, before pdu.StateMap) (map[string]int64, *int64, error) {
+func (s *Evaluator) powerLevels(ctx context.Context, ev *pdu.Event, before pdu.StateMap) (map[string]int64, *int64, error) {
 	plKey, createKey := pdu.StateKey{Type: "m.room.power_levels"}, pdu.StateKey{Type: "m.room.create"}
 	ids := []string{before[createKey]}
 	if id := before[plKey]; id != "" {
@@ -506,7 +520,7 @@ func (s *Calculator) powerLevels(ctx context.Context, ev *pdu.Event, before pdu.
 }
 
 // relatedEvents is _related_events (MSC3664).
-func (s *Calculator) relatedEvents(ctx context.Context, ev *pdu.Event) (map[string]push.Flat, error) {
+func (s *Evaluator) relatedEvents(ctx context.Context, ev *pdu.Event) (map[string]push.Flat, error) {
 	out := map[string]push.Flat{}
 	if !s.cfg.Flags.MSC3664 {
 		return out, nil
@@ -562,7 +576,7 @@ func (s *Calculator) relatedEvents(ctx context.Context, ev *pdu.Event) (map[stri
 
 // flatRelated is get_event(id, allow_none=True), flattened: nil when the
 // event is not held or was rejected.
-func (s *Calculator) flatRelated(ctx context.Context, id string) (push.Flat, error) {
+func (s *Evaluator) flatRelated(ctx context.Context, id string) (push.Flat, error) {
 	evs, err := s.asSynapseReads(ctx, []string{id})
 	if err != nil {
 		return nil, err
@@ -577,7 +591,7 @@ func (s *Calculator) flatRelated(ctx context.Context, id string) (push.Flat, err
 // asSynapseReads loads events as get_events returns them: an event whose
 // redaction Synapse honours (RedactedOnLoad, MSC4293's included) in its
 // redacted form.
-func (s *Calculator) asSynapseReads(ctx context.Context, ids []string) (map[string]*pdu.Event, error) {
+func (s *Evaluator) asSynapseReads(ctx context.Context, ids []string) (map[string]*pdu.Event, error) {
 	evs, err := s.st.GetEvents(ctx, ids)
 	if err != nil {
 		return nil, err
@@ -612,7 +626,7 @@ var visibilityPriority = []string{"world_readable", "shared", "invited", "joined
 
 // visibleTo is filter_event_for_clients_with_state for a non-soft-failed,
 // non-outlier event, as push evaluation calls it.
-func (s *Calculator) visibleTo(ctx context.Context, ev *pdu.Event, before pdu.StateMap, users map[string][]json.RawMessage) (map[string]bool, error) {
+func (s *Evaluator) visibleTo(ctx context.Context, ev *pdu.Event, before pdu.StateMap, users map[string][]json.RawMessage) (map[string]bool, error) {
 	allowed := map[string]bool{}
 	// _check_filter_send_to_client. Retention is not enabled here.
 	if ev.Type == "org.matrix.dummy_event" || ev.Type == "m.room.aliases" {

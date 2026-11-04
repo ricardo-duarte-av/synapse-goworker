@@ -1,4 +1,4 @@
-package pushcalc
+package pushcheck
 
 import (
 	"context"
@@ -20,7 +20,7 @@ const (
 // inviter) == InviteRule.ALLOW (storage/invite_rule.py): an MSC4380 config
 // first (block, or allow), then with msc4155_enabled an MSC4155 one, else
 // everything is allowed.
-func (s *Calculator) inviteAllowed(ctx context.Context, invitee, inviter string) (bool, error) {
+func (s *Evaluator) inviteAllowed(ctx context.Context, invitee, inviter string) (bool, error) {
 	data, ok, err := s.st.AccountData(ctx, invitee, invitePermissionConfig)
 	if err != nil {
 		return false, err

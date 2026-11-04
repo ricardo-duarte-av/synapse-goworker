@@ -14,6 +14,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pushcheck"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyset"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/stateres"
 )
@@ -220,7 +221,7 @@ type Decision struct {
 	// persisted: an encrypted event from a device or key we do not hold.
 	ResyncDevices string
 	// pushRows are Push, for the decide check.
-	pushRows map[string]pushRow
+	pushRows map[string]pushcheck.Row
 	// pushSkipped says Synapse computes no rows (min depth).
 	pushSkipped bool
 }
@@ -600,7 +601,7 @@ func (s *Verifier) decidePush(ctx context.Context, ev *pdu.Event, d *Decision, s
 	if err == nil && d.SoftFailed {
 		// filter_event_for_clients_with_state shows it to nobody; the
 		// rules ran first, and could raise.
-		rows = map[string]pushRow{}
+		rows = map[string]pushcheck.Row{}
 	}
 	if err != nil {
 		var re *pdu.RaiseError
@@ -614,7 +615,7 @@ func (s *Verifier) decidePush(ctx context.Context, ev *pdu.Event, d *Decision, s
 	d.pushRows = rows
 	out := make([]PushRow, 0, len(rows))
 	for u, r := range rows {
-		out = append(out, PushRow{UserID: u, Actions: r.column, Notif: r.notif, Highlight: r.highlight, Unread: r.unread, ThreadID: r.thread})
+		out = append(out, PushRow{UserID: u, Actions: r.Actions, Notif: r.Notif, Highlight: r.Highlight, Unread: r.Unread, ThreadID: r.ThreadID})
 	}
 	slices.SortFunc(out, func(a, b PushRow) int { return strings.Compare(a.UserID, b.UserID) })
 	return out, "", nil
