@@ -297,3 +297,17 @@ CREATE TABLE public.destinations (
     failure_ts bigint,
     last_successful_stream_ordering bigint
 );
+-- And what profile updates in sync read.
+CREATE TABLE public.profile_updates (
+    stream_id bigint NOT NULL PRIMARY KEY,
+    instance_name text NOT NULL,
+    user_id text NOT NULL,
+    action text NOT NULL,
+    affected_fields jsonb,
+    inserted_ts bigint NOT NULL
+);
+CREATE TABLE public.profile_updates_per_user (
+    stream_id bigint NOT NULL,
+    user_id text NOT NULL,
+    inserted_ts bigint NOT NULL
+);

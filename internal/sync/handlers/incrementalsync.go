@@ -338,6 +338,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 	}
 
 	invitedRooms := map[string]any{}
+	var inviteSenders []string
 	lastChange := map[string]store.MembershipChange{}
 	for _, c := range changes {
 		lastChange[c.RoomID] = c
@@ -367,6 +368,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		invitedRooms[roomID] = map[string]any{
 			"invite_state": map[string]any{"events": events},
 		}
+		inviteSenders = append(inviteSenders, c.Sender)
 	}
 
 	// Rooms the caller left or was banned from during the window, and rooms
@@ -413,6 +415,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 			knockedRooms[roomID] = map[string]any{
 				"knock_state": map[string]any{"events": events},
 			}
+			inviteSenders = append(inviteSenders, c.Sender)
 		}
 	}
 
@@ -630,6 +633,15 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 	}
 	if len(roomsOut) > 0 {
 		resp["rooms"] = roomsOut
+	}
+
+	profiles, err := syncProfileUpdates(ctx, d, f, verdict.UserID, verdict.DeviceID, &since, now,
+		joinedRooms, archivedRooms, inviteSenders)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "profile updates", err)
+	}
+	if profiles != nil {
+		resp[profileUsersKey] = profiles
 	}
 
 	body, err := json.Marshal(resp)

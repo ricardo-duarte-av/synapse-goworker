@@ -241,6 +241,11 @@ type Collection struct {
 	EventFields  []string
 	EventFormat  string
 
+	// ProfileFields is MSC4429's org.matrix.msc4429.profile_fields ids, read
+	// only under include_profile_updates_in_sync (Features.MSC4429). Empty
+	// means no profile updates.
+	ProfileFields []string
+
 	raw json.RawMessage
 }
 
@@ -332,7 +337,8 @@ type Features struct {
 	MSC3773 bool
 	// MSC3874 enables the `rel_types` fields, which filter /messages.
 	MSC3874 bool
-	// MSC4429 enables profile-field filtering.
+	// MSC4429 enables profile-field filtering: homeserver.yaml's
+	// include_profile_updates_in_sync.
 	MSC4429 bool
 }
 
@@ -444,7 +450,61 @@ func parseCollection(doc json.RawMessage, feat Features, validateIDs bool) (*Col
 			return nil, err
 		}
 	}
+	if err := parseProfileFields(root.Get(`org\.matrix\.msc4429\.profile_fields`), feat, validateIDs, c); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// parseProfileFields is FilterCollection's profile_fields:
+// set(filter.get("ids", [])) when the value is an object, nothing
+// otherwise. The schema (profile_fields_filter: ids an array of strings)
+// is applied where filters are validated, to an inline one.
+func parseProfileFields(v gjson.Result, feat Features, validate bool, c *Collection) error {
+	if validate && v.Exists() {
+		if !v.IsObject() {
+			return fmt.Errorf("org.matrix.msc4429.profile_fields must be an object")
+		}
+		if ids := v.Get("ids"); ids.Exists() {
+			if !ids.IsArray() {
+				return fmt.Errorf("org.matrix.msc4429.profile_fields.ids must be an array")
+			}
+			for _, id := range ids.Array() {
+				if id.Type != gjson.String {
+					return fmt.Errorf("org.matrix.msc4429.profile_fields.ids must hold strings")
+				}
+			}
+		}
+	}
+	if !feat.MSC4429 || !v.IsObject() {
+		return nil
+	}
+	seen := map[string]bool{}
+	add := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			c.ProfileFields = append(c.ProfileFields, s)
+		}
+	}
+	ids := v.Get("ids")
+	switch {
+	case ids.IsArray():
+		for _, id := range ids.Array() {
+			// A stored filter is not validated; a non-string id matches no
+			// field name.
+			if id.Type == gjson.String {
+				add(id.Str)
+			}
+		}
+	case ids.Type == gjson.String:
+		// set() of a string is its characters.
+		for _, r := range ids.Str {
+			add(string(r))
+		}
+	case ids.IsObject():
+		ids.ForEach(func(k, _ gjson.Result) bool { add(k.Str); return true })
+	}
+	return nil
 }
 
 // parseOpts carries the two things that differ between call sites: whether IDs

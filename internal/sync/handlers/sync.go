@@ -244,6 +244,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 	// Invites and knocks first, and sequentially: there are few of them and
 	// each is one event, so there is nothing to parallelise.
 	var toBuild, toArchive []store.RoomForUser
+	var inviteSenders []string
 	for _, room := range rooms {
 		// A filter naming no rooms drops the whole section, which is cheaper
 		// than building it and discarding every entry.
@@ -270,6 +271,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 			invitedRooms[room.RoomID] = map[string]any{
 				"invite_state": map[string]any{"events": events},
 			}
+			inviteSenders = append(inviteSenders, room.Sender)
 		case "knock":
 			knock, err := d.Store.InviteEvent(ctx, room.EventID, room.RoomID, room.RoomVersion)
 			if err != nil {
@@ -289,6 +291,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 			knockedRooms[room.RoomID] = map[string]any{
 				"knock_state": map[string]any{"events": events},
 			}
+			inviteSenders = append(inviteSenders, room.Sender)
 		case "leave", "ban":
 			if !enumeratesArchived(room.Membership, room.Sender, verdict.UserID, f.IncludeLeave) {
 				continue
@@ -447,6 +450,16 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 	}
 	if len(roomsOut) > 0 {
 		resp["rooms"] = roomsOut
+	}
+
+	// After the rooms: a lazy-loading sync names the users they mention.
+	profiles, err := syncProfileUpdates(ctx, d, f, verdict.UserID, verdict.DeviceID, nil, now,
+		joinedRooms, archivedRooms, inviteSenders)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "profile updates", err)
+	}
+	if profiles != nil {
+		resp[profileUsersKey] = profiles
 	}
 
 	body, err := json.Marshal(resp)
@@ -1126,6 +1139,7 @@ const maxSyncTimeout = 5 * time.Minute
 func isEmptySync(body []byte) bool {
 	for _, section := range []string{
 		"rooms", "presence", "account_data", "to_device", "device_lists",
+		`org\.matrix\.msc4429\.users`,
 	} {
 		if gjson.GetBytes(body, section).Exists() {
 			return false

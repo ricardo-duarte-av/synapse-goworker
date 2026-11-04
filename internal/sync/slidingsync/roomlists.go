@@ -98,6 +98,9 @@ type Deps struct {
 
 	MSC3391Enabled bool
 	MSC4308Enabled bool
+	// ProfileUpdatesInSync is include_profile_updates_in_sync: the MSC4262
+	// profiles extension is served.
+	ProfileUpdatesInSync bool
 	// PushRuleFeatures gates individual base push rules, for the synthesised
 	// m.push_rules account data event.
 	PushRuleFeatures pushrules.Features

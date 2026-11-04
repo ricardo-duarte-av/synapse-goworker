@@ -305,5 +305,7 @@ func (d Deps) slidingDeps() slidingsync.Deps {
 		MSC3391Enabled:   d.MSC3391Enabled,
 		MSC4308Enabled:   d.MSC4308Enabled,
 		PushRuleFeatures: d.PushRuleFeatures,
+
+		ProfileUpdatesInSync: d.ProfileUpdatesInSync,
 	}
 }

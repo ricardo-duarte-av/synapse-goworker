@@ -22,9 +22,9 @@ import (
 
 // The extension section: the parts of a sync that are not rooms.
 //
-// Ported from SlidingSyncExtensionHandler. Seven are implemented, which is
-// every one Synapse implements -- docs/decisions.md records why MSC4262
-// (profiles) and MSC4360 (threads) are not among them.
+// Ported from SlidingSyncExtensionHandler. Eight are implemented, which is
+// every one Synapse implements; MSC4262 (profiles) only under
+// include_profile_updates_in_sync, as Synapse.
 //
 // Every extension is OFF unless the request enables it. That is the MSC's
 // design and it is what makes the endpoint cheap: a client that only wants a
@@ -153,6 +153,19 @@ func buildExtensions(
 				return nil, false, err
 			}
 			news = news || stickyEventsIsNews(v)
+		}
+	}
+	if ext.Profiles != nil && d.ProfileUpdatesInSync {
+		v, err := profilesExtension(ctx, d, in, ext.Profiles)
+		if err != nil {
+			return nil, false, err
+		}
+		// Present, and news, only with users in it.
+		if v != nil {
+			if err := set(out, "org.matrix.msc4262.profiles", v); err != nil {
+				return nil, false, err
+			}
+			news = true
 		}
 	}
 	return out, news, nil

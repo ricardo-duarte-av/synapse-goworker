@@ -97,6 +97,7 @@ func (d Deps) filterFeatures() filter.Features {
 	return filter.Features{
 		MSC3773: d.MSC3773Enabled,
 		MSC3874: d.MSC3874Enabled,
+		MSC4429: d.ProfileUpdatesInSync,
 	}
 }
 

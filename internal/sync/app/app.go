@@ -179,23 +179,26 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Store:   s.db,
 		Sliding: s.sliding,
 		// Synapse's msc3575_enabled defaults to TRUE, unlike its neighbours.
-		MSC3575Enabled:      flag("msc3575_enabled", true),
-		MSC4308Enabled:      flag("msc4308_enabled", false),
-		ServerName:          cfg.Synapse.Current().ServerName,
-		Auth:                cfg.Auth,
-		Fallback:            cfg.Fallback,
-		Log:                 log,
-		MSC4354Enabled:      flag("msc4354_enabled", false),
-		MSC3391Enabled:      flag("msc3391_enabled", false),
-		MSC2815Enabled:      flag("msc2815_enabled", false),
-		MSC3773Enabled:      flag("msc3773_enabled", false),
-		MSC3874Enabled:      flag("msc3874_enabled", false),
-		FilterTimelineLimit: cfg.Sync.TimelineLimitCap(),
-		Replication:         s.sub,
-		Notifier:            notif,
-		LazyLoad:            lazyload.New(c.LazyLoadMembersCacheSize, c.LazyLoadMembersCacheTTL),
-		Inbox:               s.inbox,
-		Presence:            presenceClient,
+		MSC3575Enabled: flag("msc3575_enabled", true),
+		MSC4308Enabled: flag("msc4308_enabled", false),
+		ServerName:     cfg.Synapse.Current().ServerName,
+		Auth:           cfg.Auth,
+		Fallback:       cfg.Fallback,
+		Log:            log,
+		MSC4354Enabled: flag("msc4354_enabled", false),
+		MSC3391Enabled: flag("msc3391_enabled", false),
+		MSC2815Enabled: flag("msc2815_enabled", false),
+		// include_profile_updates_in_sync: MSC4429 and MSC4262.
+		ProfileUpdatesInSync: cfg.Synapse.Current().IncludeProfileUpdatesInSync,
+		ProfileFieldsSent:    lazyload.New(lazyload.DefaultMaxPerDevice, lazyload.DefaultTTL),
+		MSC3773Enabled:       flag("msc3773_enabled", false),
+		MSC3874Enabled:       flag("msc3874_enabled", false),
+		FilterTimelineLimit:  cfg.Sync.TimelineLimitCap(),
+		Replication:          s.sub,
+		Notifier:             notif,
+		LazyLoad:             lazyload.New(c.LazyLoadMembersCacheSize, c.LazyLoadMembersCacheTTL),
+		Inbox:                s.inbox,
+		Presence:             presenceClient,
 		PushRuleFeatures: pushrules.Features{
 			MSC1767Enabled:             flag("msc1767_enabled", false),
 			MSC3381PollsEnabled:        flag("msc3381_polls_enabled", false),
@@ -340,6 +343,9 @@ func (s *Sync) subscribe(ctx context.Context, notif *notifier.Notifier) *replica
 	// it. Both read every row; see streamfeed.go for why they cannot share a
 	// reading of one.
 	sub.AddListener(&streamFeeder{db: db})
+	if s.cfg.Synapse.Current().IncludeProfileUpdatesInSync {
+		sub.AddListener(&profileWaker{ctx: ctx, db: db, notif: notif, log: log})
+	}
 	metrics.RegisterStreamPositions(sub.Positions)
 
 	// The state caches hold data that is immutable but not permanent: a

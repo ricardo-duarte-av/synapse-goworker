@@ -32,6 +32,11 @@ type Deps struct {
 	Log   zerolog.Logger
 	// MSC4354Enabled mirrors Synapse's experimental.msc4354_enabled.
 	MSC4354Enabled bool
+	// ProfileUpdatesInSync is include_profile_updates_in_sync: profile
+	// updates for a client that asks (MSC4429 in /sync, MSC4262 in sliding
+	// sync); ProfileFieldsSent is what lazy loading has sent each device.
+	ProfileUpdatesInSync bool
+	ProfileFieldsSent    *lazyload.Cache
 	// MSC2815Enabled mirrors Synapse's experimental.msc2815_enabled.
 	MSC2815Enabled bool
 	// MSC3391Enabled mirrors Synapse's experimental.msc3391_enabled.
