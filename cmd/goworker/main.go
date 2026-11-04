@@ -103,6 +103,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		return err
 	}
 	hs := src.Current()
+	// Every federation client's IP filter, from the current copy.
+	fedclient.SetIPRanges(func() synapsecfg.IPRanges { return src.Current().FederationIPRanges })
 	log.Info().Str("version", tag).Str("commit", commit).
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")

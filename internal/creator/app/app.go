@@ -131,7 +131,7 @@ func New(ctx context.Context, s Settings) (*App, error) {
 	if hs.DomainWhitelist != nil {
 		allow = func(server string) bool { return hs.DomainWhitelist[server] }
 	}
-	fed, err := fedclient.New(hs.ServerName, line, allow, hs.FederationIPRanges)
+	fed, err := fedclient.New(hs.ServerName, line, allow)
 	if err != nil {
 		return fail(fmt.Errorf("creator: %w", err))
 	}

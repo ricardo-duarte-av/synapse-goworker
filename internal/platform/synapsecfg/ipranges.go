@@ -9,7 +9,7 @@ import (
 )
 
 // defaultIPRangeBlocklist is DEFAULT_IP_RANGE_BLOCKLIST (config/server.py,
-// v1.163.0).
+// v1.164.1).
 var defaultIPRangeBlocklist = []string{
 	"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
 	"192.0.0.0/24", "169.254.0.0/16", "192.88.99.0/24", "198.18.0.0/15", "192.0.2.0/24",
@@ -41,6 +41,12 @@ type ipRangesRaw struct {
 	Blacklist           *[]string `yaml:"ip_range_blacklist"`
 	Whitelist           []string  `yaml:"ip_range_whitelist"`
 	FederationBlacklist *[]string `yaml:"federation_ip_range_blacklist"`
+}
+
+// DefaultFederationIPRanges is the ranges with nothing configured.
+func DefaultFederationIPRanges() IPRanges {
+	r, _ := federationIPRanges([]byte("{}"))
+	return r
 }
 
 // federationIPRanges is federation_ip_range_blocklist and its allow list:

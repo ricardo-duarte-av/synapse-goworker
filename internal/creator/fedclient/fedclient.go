@@ -2,16 +2,14 @@
 // profile, which update_membership_locked adds to an invite
 // (handlers/profile.py, get_displayname and get_avatar_url), and a room's
 // policy server's signature. The client is the worker's
-// (platform/fedclient: mautrix's discovery and X-Matrix signing); the IP
-// ranges are Synapse's federation_ip_range_blocklist.
+// (platform/fedclient: mautrix's discovery and X-Matrix signing, Synapse's
+// federation_ip_range_blocklist).
 package fedclient
 
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -22,7 +20,6 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pyjson"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
 // queryTimeout is make_query's timeout=10000.
@@ -36,16 +33,12 @@ type Client struct {
 // New builds a client signing as serverName with a Synapse-format key line
 // ("ed25519 <version> <seed>"). allow, when not nil, is
 // federation_domain_whitelist: Synapse refuses any other destination.
-func New(serverName, keyLine string, allow func(string) bool, ranges synapsecfg.IPRanges) (*Client, error) {
+func New(serverName, keyLine string, allow func(string) bool) (*Client, error) {
 	// The longest request's timeout: each request bounds itself with its
-	// context.
+	// context. The IP filter is the platform client's.
 	c, err := fedclient.New(serverName, keyLine, allow, policyTimeout)
 	if err != nil {
 		return nil, err
-	}
-	c.AllowIP = func(ip net.IP) bool {
-		a, ok := netip.AddrFromSlice(ip)
-		return ok && !ranges.Blocked(a)
 	}
 	return &Client{fed: c}, nil
 }

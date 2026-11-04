@@ -82,7 +82,8 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 		cfg.MaxDelay = 60 * time.Second
 	}
 
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	// Synapse's federation_ip_range_blocklist, on the address dialled.
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: fedclient.DialControl}
 	// The process's one resolution cache rather than mautrix's default. Both
 	// keep resolutions in memory; the difference is the TTL, and mautrix keeps
 	// every resolution for 24 hours however it was reached -- including one
@@ -118,6 +119,7 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 	// idle connection to one server is headroom, not throughput.
 	transport.Transport.MaxIdleConns = 512
 	transport.Transport.MaxIdleConnsPerHost = 2
+	fedclient.FilterWellKnown(transport)
 	useragent.Resolving(transport)
 
 	return &HTTP{
