@@ -23,6 +23,9 @@ type appService struct {
 
 	// ipRanges is ip_range_whitelist; nil means any address.
 	ipRanges []netip.Prefix
+
+	// unlimited is rate_limited: false. Anything but a boolean is true.
+	unlimited bool
 }
 
 // interestedInUser is is_interested_in_user: the sender, or any user
@@ -119,6 +122,9 @@ func parseAppService(serverName string, b []byte) (*appService, string, error) {
 		id:     info["id"].(string),
 		token:  info["as_token"].(string),
 		sender: "@" + localpart + ":" + serverName,
+	}
+	if rl, ok := info["rate_limited"].(bool); ok && !rl {
+		as.unlimited = true
 	}
 
 	namespaces, ok := info["namespaces"].(map[string]any)

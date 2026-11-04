@@ -67,6 +67,9 @@ type Verdict struct {
 
 	// AppServiceID is set for an appservice's request.
 	AppServiceID string
+	// AppServiceUnlimited is its registration's rate_limited: false, which
+	// exempts it from every ratelimiter (api/ratelimiting.py).
+	AppServiceUnlimited bool
 	// Entity is Synapse's authenticated_entity: the token's own user,
 	// UserID's puppeteer for a puppet token. Empty in /whoami's verdicts,
 	// which do not say.
@@ -468,7 +471,8 @@ func (a *Authenticator) appServiceUser(ctx context.Context, as *appService, q ur
 					deviceID, userID), nil)}, nil
 		}
 	}
-	return Verdict{Valid: true, UserID: userID, DeviceID: deviceID, AppServiceID: as.id, Entity: userID, Source: SourceNative}, nil
+	return Verdict{Valid: true, UserID: userID, DeviceID: deviceID, AppServiceID: as.id,
+		AppServiceUnlimited: as.unlimited, Entity: userID, Source: SourceNative}, nil
 }
 
 // record is _record_request: USER_IP for the entity that authenticated, and

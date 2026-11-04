@@ -13,10 +13,10 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/route"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/ratelimit"
 )
 
 // Membership: RoomMembershipRestServlet and JoinRoomAliasServlet

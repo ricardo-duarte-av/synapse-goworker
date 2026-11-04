@@ -159,6 +159,9 @@ type Config struct {
 	// Delayed is delayed events' settings.
 	Delayed Delayed
 
+	// Profile is what a profile lookup reads.
+	Profile Profile
+
 	signingKey, signingKeyPath string
 }
 
@@ -337,6 +340,9 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.Delayed, err = delayedSettings(b, cfg.Experimental); err != nil {
+		return nil, err
+	}
+	if cfg.Profile, err = profileSettings(b); err != nil {
 		return nil, err
 	}
 

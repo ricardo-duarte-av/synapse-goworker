@@ -244,3 +244,16 @@ CREATE TABLE public.event_relations (
     relation_type text NOT NULL,
     aggregation_key text
 );
+-- And what GET /profile reads.
+CREATE TABLE public.profiles (
+    user_id text NOT NULL,
+    displayname text,
+    avatar_url text,
+    full_user_id text,
+    fields jsonb
+);
+CREATE TABLE public.ratelimit_override (
+    user_id text NOT NULL,
+    messages_per_second bigint,
+    burst_count bigint
+);

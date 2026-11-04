@@ -1,6 +1,6 @@
 // Package app assembles client sync: /sync, simplified sliding sync
 // (MSC4186), /events, /initialSync and /rooms/{id}/initialSync; and the
-// client reads: room state, one event.
+// client reads: room state, one event, profiles.
 package app
 
 import (
@@ -14,6 +14,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/config"
@@ -211,6 +212,13 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
 		RoomState:       handlers.RoomState(deps),
 		RoomEvent:       handlers.RoomEvent(deps),
+		Profile: handlers.Profile(deps, handlers.ProfileDeps{
+			Settings:       cfg.Synapse.Current().Profile,
+			Limiter:        ratelimit.New(cfg.Synapse.Current().Profile.Rc, nil),
+			MSC4133Enabled: flag("msc4133_enabled", false),
+			Modules:        cfg.Synapse.Current().Membership.Modules,
+			Pause:          500 * time.Millisecond,
+		}),
 	}
 	if s.sliding != nil {
 		s.routes.SlidingSync = handlers.SlidingSync(deps)

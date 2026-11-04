@@ -38,6 +38,9 @@ type Routes struct {
 	RoomState http.Handler
 	// RoomEvent serves GET /rooms/{roomId}/event/{eventId}.
 	RoomEvent http.Handler
+	// Profile serves GET /profile/{userId}[/{field}]; PUT and DELETE are
+	// the event creator's.
+	Profile http.Handler
 }
 
 // slidingSyncPaths are the two paths MSC4186 defines.
@@ -102,6 +105,13 @@ func Register(mux *http.ServeMux, routes Routes, wrap func(http.Handler) http.Ha
 		for _, v := range legacyVersions {
 			handle("GET", "/_matrix/client/"+v+"/rooms/{roomId}/event/{rest...}", routes.RoomEvent)
 		}
+	}
+	if routes.Profile != nil {
+		for _, v := range legacyVersions {
+			handle("GET", "/_matrix/client/"+v+"/profile/{rest...}", routes.Profile)
+		}
+		// The handler serves this one only with MSC4133 enabled.
+		handle("GET", "/_matrix/client/unstable/uk.tcpip.msc4133/profile/{rest...}", routes.Profile)
 	}
 	if routes.SlidingSync != nil {
 		for _, path := range slidingSyncPaths {

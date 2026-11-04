@@ -1,4 +1,4 @@
-// Package ratelimit is Synapse's Ratelimiter (api/ratelimiting.py, v1.163.0):
+// Package ratelimit is Synapse's Ratelimiter (api/ratelimiting.py, v1.164.1):
 // a leaky bucket per key, held in the process's memory as Synapse holds it in
 // each worker's. The ratelimit_override exemption is the caller's to apply.
 package ratelimit

@@ -14,9 +14,9 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/writer"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/ratelimit"
 )
 
 // Delayed events (MSC4140): DelayedEventsHandler.add (handlers/
