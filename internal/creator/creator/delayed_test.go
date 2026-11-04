@@ -154,3 +154,65 @@ func TestDelayedSuspended(t *testing.T) {
 		t.Errorf("%+v %d %s", out, rec.Code, rec.Body)
 	}
 }
+
+// RoomDelayedEventRestServlet (v1.164): the delay and the content in the
+// body, the strict model's types, and the rest as a delayed send.
+func TestRoomDelayedEventServlet(t *testing.T) {
+	put := func(h *harness, typ, txn, query, body string) (*httptest.ResponseRecorder, Outcome) {
+		t.Helper()
+		path := "/_matrix/client/unstable/org.matrix.msc4140/rooms/" + room + "/delayed_event/" + typ + "/" + txn
+		req := route.Classify(http.MethodPut, path)
+		if req.Endpoint != route.DelayedEvent || !req.Write || req.Room != room || req.Action != typ || req.TxnID != txn {
+			t.Fatalf("classified %+v", req)
+		}
+		r := httptest.NewRequest(http.MethodPut, path+query, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer tok")
+		rec := httptest.NewRecorder()
+		return rec, h.c.Serve(rec, r, req)
+	}
+
+	h := newHarness(t)
+	rec, out := put(h, "m.room.topic", "t1", "", `{"delay_ms":5000,"content":{"topic":"later"},"state_key":""}`)
+	if out.Result != "delayed" || !strings.HasPrefix(gjson.Get(rec.Body.String(), "delay_id").Str, "syd_") {
+		t.Fatalf("%+v %s", out, rec.Body)
+	}
+	if row := h.w.delayed[0]; row.DelayMS != 5000 || row.StateKey == nil || *row.StateKey != "" ||
+		row.Content != `{"topic":"later"}` || row.EventType != "m.room.topic" {
+		t.Errorf("%+v", row)
+	}
+
+	h = newHarness(t)
+	h.c.o.Sticky = true
+	if _, out := put(h, "m.room.message", "s1", "", `{"delay_ms":1,"content":{"msgtype":"m.text","body":"x"},"org.matrix.msc4354.sticky_duration_ms":60000}`); out.Result != "delayed" ||
+		h.w.delayed[0].StickyDurationMS == nil || *h.w.delayed[0].StickyDurationMS != 60000 || h.w.delayed[0].StateKey != nil {
+		t.Errorf("sticky: %+v %+v", out, h.w.delayed)
+	}
+	for name, tc := range map[string]struct{ query, body, want string }{
+		"conflicting sticky": {"?org.matrix.msc4354.sticky_duration_ms=5", `{"delay_ms":1,"content":{},"org.matrix.msc4354.sticky_duration_ms":6}`,
+			`400 {"errcode":"M_INVALID_PARAM","error":"Conflicting values given for org.matrix.msc4354.sticky_duration_ms"}`},
+		"sticky state": {"", `{"delay_ms":1,"content":{},"state_key":"","org.matrix.msc4354.sticky_duration_ms":6}`,
+			`400 {"errcode":"M_INVALID_PARAM","error":"Sticky state events are not allowed. Cannot specify both ` + "`state_key` and `sticky_duration_ms`" + `"}`},
+		"sticky not positive": {"?org.matrix.msc4354.sticky_duration_ms=-5", `{"delay_ms":1,"content":{}}`,
+			`400 {"errcode":"M_INVALID_PARAM","error":"org.matrix.msc4354.sticky_duration_ms must be strictly positive"}`},
+	} {
+		h := newHarness(t)
+		h.c.o.Sticky = true
+		rec, out := put(h, "m.room.message", "r", tc.query, tc.body)
+		if got := itoaStatus(rec.Code) + " " + rec.Body.String(); out.Refused == "" || got != tc.want {
+			t.Errorf("%s: %+v %s", name, out, got)
+		}
+	}
+	// What the strict model refuses is Synapse's: its message is pydantic's.
+	for _, body := range []string{`{"content":{}}`, `{"delay_ms":0,"content":{}}`, `{"delay_ms":"5","content":{}}`,
+		`{"delay_ms":5.0,"content":{}}`, `{"delay_ms":5,"content":[]}`, `{"delay_ms":5,"content":{},"state_key":1}`} {
+		h := newHarness(t)
+		if _, out := put(h, "m.room.message", "b", "", body); out.Fallback != "delayed_body" {
+			t.Errorf("%s: %+v", body, out)
+		}
+	}
+	h = newHarness(t)
+	h.c.o.Delayed.MaxDelayMS = 0
+	if rec, out := put(h, "m.room.message", "d", "", `not even json`); out.Refused != "delayed_disabled" || rec.Code != 403 {
+		t.Errorf("disabled: %+v %d", out, rec.Code)
+	}
+}

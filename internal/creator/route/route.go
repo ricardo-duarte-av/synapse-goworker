@@ -33,12 +33,15 @@ const (
 	Knock Endpoint = "knock"
 	// Profile is everything under profile/.
 	Profile Endpoint = "profile"
+	// DelayedEvent is PUT unstable/org.matrix.msc4140/rooms/{room}/
+	// delayed_event/{type}/{txn} (RoomDelayedEventRestServlet, v1.164).
+	DelayedEvent Endpoint = "delayed_event"
 	// Other matches nothing above.
 	Other Endpoint = "other"
 )
 
 // Endpoints is every endpoint that has a mode, in a stable order.
-var Endpoints = []Endpoint{Send, State, Redact, Membership, Join, Knock, Profile}
+var Endpoints = []Endpoint{Send, State, Redact, Membership, Join, Knock, Profile, DelayedEvent}
 
 // Request is what a path says about the request.
 type Request struct {
@@ -116,6 +119,14 @@ func Classify(method, escapedPath string) Request {
 			r.FieldPath, r.User, r.Action = true, parts[1], parts[2]
 		}
 		return r
+
+	case "org.matrix.msc4140":
+		// client_patterns(releases=(), unstable=True): unstable only.
+		if version == "unstable" && method == http.MethodPut && len(parts) == 6 &&
+			parts[1] == "rooms" && parts[3] == "delayed_event" {
+			return Request{Endpoint: DelayedEvent, Write: true, Room: parts[2], Action: parts[4], TxnID: parts[5]}
+		}
+		return other
 
 	case "join", "knock":
 		ep := Join

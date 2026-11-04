@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -263,7 +264,7 @@ func fallback(reason string) Outcome { return Outcome{Fallback: reason} }
 // Serves reports whether an endpoint can be native.
 func Serves(ep route.Endpoint) bool {
 	switch ep {
-	case route.Send, route.State, route.Redact, route.Membership, route.Join, route.Knock:
+	case route.Send, route.State, route.Redact, route.Membership, route.Join, route.Knock, route.DelayedEvent:
 		return true
 	}
 	return false
@@ -364,6 +365,10 @@ func (c *Creator) serve(w http.ResponseWriter, r *http.Request, req route.Reques
 			writeJSON(w, []byte(body))
 			return Outcome{Result: "txn_cached"}
 		}
+	}
+	if req.Endpoint == route.DelayedEvent && !c.o.Delayed.Enabled() {
+		// _do refuses before it reads the body.
+		return c.end(w, forbidden("delayed_disabled", "Sending delayed events is disabled on this homeserver").stop())
 	}
 	body, st := parseJSONObject(body, false)
 	if st != nil {
@@ -506,6 +511,8 @@ func (c *Creator) parse(ctx context.Context, req route.Request, rq *requester, b
 		}
 	}
 	switch req.Endpoint {
+	case route.DelayedEvent:
+		return c.parseDelayedEvent(rq, body, q, in)
 	case route.Send:
 		if c.o.Sticky {
 			if v, ok := q[StickyParam]; ok && len(v) > 0 {
@@ -1453,4 +1460,80 @@ func (l *roomLocks) lock(room string) func() {
 		}
 		l.mu.Unlock()
 	}
+}
+
+// parseDelayedEvent is RoomDelayedEventRestServlet._do up to
+// DelayedEventsHandler.add: refused when delayed events are off, then the
+// body as the strict model reads it (DelayedEventBodyModel, and
+// StickyDelayedEventBodyModel under MSC4354: delay_ms a positive integer,
+// content an object, state_key a string, the sticky duration from the
+// query or the body), then the appservice's ts. A body the model refuses is
+// Synapse's: its message is pydantic's.
+func (c *Creator) parseDelayedEvent(rq *requester, body []byte, q map[string][]string, in *input) (*input, *stop) {
+	if !c.o.Delayed.Enabled() {
+		return nil, forbidden("delayed_disabled", "Sending delayed events is disabled on this homeserver").stop()
+	}
+	root := gjson.ParseBytes(body)
+	delay, content := root.Get("delay_ms"), root.Get("content")
+	if !strictInt(delay) || delay.Int() <= 0 || !content.IsObject() {
+		return nil, fb("delayed_body")
+	}
+	if sk := root.Get("state_key"); sk.Exists() {
+		if sk.Type != gjson.String {
+			return nil, fb("delayed_body")
+		}
+		key := sk.Str
+		in.stateKey = &key
+	}
+	if c.o.Sticky {
+		var sticky *int64
+		if v, ok := q[StickyParam]; ok && len(v) > 0 {
+			n, st := parseSignedIntegerParam(StickyParam, v[0])
+			if st != nil {
+				return nil, st
+			}
+			sticky = &n
+		}
+		if b := root.Get(gjson.Escape(StickyParam)); b.Exists() {
+			if !strictInt(b) {
+				return nil, fb("delayed_body")
+			}
+			n := b.Int()
+			switch {
+			case sticky == nil:
+				sticky = &n
+			case *sticky != n:
+				return nil, badRequest("bad_param", "Conflicting values given for "+StickyParam, "M_INVALID_PARAM").stop()
+			}
+		}
+		if sticky != nil && *sticky <= 0 {
+			return nil, badRequest("bad_param", StickyParam+" must be strictly positive", "M_INVALID_PARAM").stop()
+		}
+		if sticky != nil && in.stateKey != nil {
+			return nil, badRequest("sticky_state",
+				"Sticky state events are not allowed. Cannot specify both `state_key` and `sticky_duration_ms`", "M_INVALID_PARAM").stop()
+		}
+		in.sticky = sticky
+	}
+	if st := appserviceTS(rq, q, in); st != nil {
+		return nil, st
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(content.Raw)); err != nil {
+		return nil, fb("delayed_body")
+	}
+	in.content, in.txn = compact.Bytes(), ""
+	n := delay.Int()
+	in.delayMS = &n
+	return in, nil
+}
+
+// strictInt is a JSON integer as pydantic's strict int takes it: no
+// fraction or exponent, and within int64.
+func strictInt(v gjson.Result) bool {
+	if v.Type != gjson.Number || strings.ContainsAny(v.Raw, ".eE") {
+		return false
+	}
+	_, err := strconv.ParseInt(v.Raw, 10, 64)
+	return err == nil
 }

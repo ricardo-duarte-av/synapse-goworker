@@ -66,7 +66,10 @@ upstream goworker {
 #   # servlet patterns and forwards anything else, reads included, to main
 #   # or its own client routes. A remote join it hands to main can take
 #   # minutes: upstream.timeout_seconds (300) bounds it.
-#   location ~ ^/_matrix/client/(api/v1|r0|v3|unstable)/(rooms/[^/]+/(send|redact|join|invite|leave|ban|unban|kick)|join/|knock/|profile/) {
+#   #
+#   # MSC4140's room delayed-event servlet (Synapse 1.164) is the
+#   # creator's too: unstable/org.matrix.msc4140/rooms/{id}/delayed_event/.
+#   location ~ ^/_matrix/client/((api/v1|r0|v3|unstable)/(rooms/[^/]+/(send|redact|join|invite|leave|ban|unban|kick)|join/|knock/|profile/)|unstable/org\.matrix\.msc4140/rooms/[^/]+/delayed_event/) {
 #       include /data/nginx/custom/matrix-config.conf;
 #       proxy_pass http://goworker;
 #       proxy_http_version 1.1;
