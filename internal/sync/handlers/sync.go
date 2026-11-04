@@ -56,9 +56,8 @@ func Sync(d Deps) http.Handler {
 			refuse(w, ann, http.StatusBadRequest, *presErr)
 			return
 		}
-		// full_state is validated as Synapse validates it; what it asks for
-		// is not served yet (TODO.md).
-		if _, boolErr := parseBoolean(r, "full_state"); boolErr != nil {
+		fullState, boolErr := parseBoolean(r, "full_state")
+		if boolErr != nil {
 			refuse(w, ann, http.StatusBadRequest, *boolErr)
 			return
 		}
@@ -90,7 +89,7 @@ func Sync(d Deps) http.Handler {
 			if tok, err := streamtoken.Parse(since); err == nil {
 				deleteAcknowledgedToDevice(r.Context(), d, verdict, tok)
 			}
-			body, status, mxErr = longPoll(r, d, verdict, since, useStateAfter, f, ann)
+			body, status, mxErr = longPoll(r, d, verdict, since, useStateAfter, fullState, f, ann)
 		} else {
 			body, status, mxErr = initialSyncV2(r, d, verdict, useStateAfter, f)
 		}
@@ -593,18 +592,9 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 	// is simply the state at the end token -- no union with the timeline start,
 	// and nothing subtracted, because the client is being told where the room
 	// ended up rather than what it must apply first.
-	var stateIDs map[store.StateKey]string
-	if useStateAfter {
-		stateIDs, err = initialStateAfter(ctx, d, room.RoomID, endKey, stateMembers, !archived)
-		if err != nil {
-			return nil, err
-		}
-		dropAliases(stateIDs)
-	} else {
-		stateIDs, err = syncStateBlock(ctx, d, room, messages, endKey, stateMembers)
-		if err != nil {
-			return nil, err
-		}
+	stateIDs, err := fullStateBlock(ctx, d, room, messages, endKey, stateMembers, useStateAfter, !archived)
+	if err != nil {
+		return nil, err
 	}
 	// A full-state block has no changed keys (_compute_state_delta_for_full_sync).
 	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, nil, messages, initial)
@@ -804,6 +794,25 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		entry["msc4354_sticky"] = stickyBlock
 	}
 	return entry, nil
+}
+
+// fullStateBlock is _compute_state_delta_for_full_sync: the state at the
+// start of the timeline, or with MSC4222 the state after it, for a room
+// whose client is given all of it (an initial sync, a newly joined room,
+// or full_state). Aliases are dropped from the state_after form here; the
+// other form drops them where the block is filtered.
+func fullStateBlock(ctx context.Context, d Deps, room store.RoomForUser, messages []store.TimelineEvent,
+	endKey streamtoken.RoomKey, members map[string]bool, useStateAfter, joined bool) (map[store.StateKey]string, error) {
+
+	if useStateAfter {
+		stateIDs, err := initialStateAfter(ctx, d, room.RoomID, endKey, members, joined)
+		if err != nil {
+			return nil, err
+		}
+		dropAliases(stateIDs)
+		return stateIDs, nil
+	}
+	return syncStateBlock(ctx, d, room, messages, endKey, members)
 }
 
 // syncStateBlock works out the `state` block for an initial sync.
@@ -1021,14 +1030,15 @@ func dropAliases(state map[store.StateKey]string) {
 // wakes it. Registering afterwards loses everything that arrives in the gap,
 // and the client hangs for its full timeout on news that had already come.
 func longPoll(r *http.Request, d Deps, verdict clientauth.Verdict, since string,
-	useStateAfter bool, f *filter.Collection, ann *server.Annotation) ([]byte, int, *matrixerr.Error) {
+	useStateAfter, fullState bool, f *filter.Collection, ann *server.Annotation) ([]byte, int, *matrixerr.Error) {
 
 	timeout := time.Duration(intParam(r, "timeout", 0)) * time.Millisecond
 	if ann != nil {
 		ann.Timeout = intParam(r, "timeout", 0)
 	}
-	if timeout <= 0 || d.Notifier == nil {
-		return incrementalSync(r, d, verdict, since, useStateAfter, f, nil)
+	// wait_for_sync_for_user: full_state answers at once, as an initial sync.
+	if timeout <= 0 || d.Notifier == nil || fullState {
+		return incrementalSync(r, d, verdict, since, useStateAfter, fullState, f, nil)
 	}
 	if timeout > maxSyncTimeout {
 		timeout = maxSyncTimeout
@@ -1058,7 +1068,7 @@ func longPoll(r *http.Request, d Deps, verdict clientauth.Verdict, since string,
 
 		handle := d.Notifier.Register(roomIDs, []string{verdict.UserID})
 
-		body, status, mxErr := incrementalSync(r, d, verdict, since, useStateAfter, f, rooms)
+		body, status, mxErr := incrementalSync(r, d, verdict, since, useStateAfter, false, f, rooms)
 		if mxErr != nil || !isEmptySync(body) {
 			handle.Close()
 			if ann != nil {
