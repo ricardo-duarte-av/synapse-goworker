@@ -53,6 +53,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/pushwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/receipts"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
@@ -293,6 +294,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		typer    *typing.App
 		receipt  *receipts.App
 		toDevice *todevice.App
+		pushRule *pushwriter.App
 	)
 	// localEDU is the handler in this process for an EDU type, while it
 	// writes that type's stream: for inbound's /send, and fed_send_edu.
@@ -547,6 +549,49 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		}
 	}
 
+	// The push-rules writer: it writes when stream_writers.push_rules names
+	// us at start. Not under -check: taking the role writes stream_positions.
+	switch {
+	case !slices.Contains(hs.Writers.PushRules, cfg.InstanceName):
+	case checkOnly:
+		log.Info().Msg("push-rules writer: stream_writers.push_rules names this process (not started under -check)")
+	case streams == nil:
+		degraded.WithLabelValues("push_rules").Set(1)
+		log.Warn().Msg("the push-rules writer needs homeserver.yaml's redis; push rule requests are proxied to main")
+	default:
+		pdb, err := pushwriter.Open(ctx, dsn, pools.PushRules, db.ConnectTimeout())
+		if err != nil {
+			degraded.WithLabelValues("push_rules").Set(1)
+			log.Warn().Err(err).Msg("push-rules writer unavailable; push rule requests are proxied to main")
+			break
+		}
+		closers = append(closers, pdb.Close)
+		eventWriters := hs.Writers.Events
+		pushRule, err = pushwriter.New(ctx, pushwriter.Options{
+			Instance: cfg.InstanceName,
+			Synapse:  src.Current,
+			Auth:     clientAuth,
+			Store:    pdb,
+			Pool:     streamid.PG{Pool: pdb.Pool()},
+			Writer:   streams,
+			Features: clientSync.PushRuleFeatures(),
+			Rules:    clientSync.PushRulesContent,
+			// The events stream's current token: the least of its writers'
+			// positions, from the bus, or stream_positions for a writer
+			// not seen since start (as a follower loads it).
+			EventsPosition: func(ctx context.Context) (int64, error) {
+				return eventsPosition(ctx, pdb.Pool(), positions, eventWriters)
+			},
+			Fallback: fallback(upstream),
+			Log:      componentLogger(log, cfg.Log, "push_rules"),
+		})
+		if err != nil {
+			pushRule = nil
+			degraded.WithLabelValues("push_rules").Set(1)
+			log.Warn().Err(err).Msg("push-rules writer unavailable; push rule requests are proxied to main")
+		}
+	}
+
 	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
 		log.Info().Bool("writing_typing", typer != nil && typer.Writing()).Msg("typing writer")
@@ -583,15 +628,16 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	client := http.NewServeMux()
 	clientSync.Register(client)
 	router := &httpserve.Router{
-		Send:          send,
-		Reads:         reads.Handler(),
-		ReadsMatch:    func(p string) bool { _, ok := fedapi.Match(p); return ok },
-		PingMatch:     fedping.Match,
-		Creator:       createEvents,
-		CreatorMatch:  creatorapp.Match,
-		TypingMatch:   typing.Match,
-		ReceiptsMatch: receipts.Match,
-		ToDeviceMatch: todevice.Match,
+		Send:           send,
+		Reads:          reads.Handler(),
+		ReadsMatch:     func(p string) bool { _, ok := fedapi.Match(p); return ok },
+		PingMatch:      fedping.Match,
+		Creator:        createEvents,
+		CreatorMatch:   creatorapp.Match,
+		TypingMatch:    typing.Match,
+		ReceiptsMatch:  receipts.Match,
+		ToDeviceMatch:  todevice.Match,
+		PushRulesMatch: pushwriter.Match,
 		AccountDataMatch: func(method, p string) bool {
 			return accountData != nil && accountData.Match(method, p)
 		},
@@ -628,6 +674,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if toDevice != nil {
 		router.ToDevice = toDevice.Handler()
 	}
+	if pushRule != nil {
+		router.PushRules = pushRule.Handler()
+	}
 
 	// The replication listener, where other Synapse processes reach this
 	// one at its instance_map address: get_repl_stream_updates for the
@@ -656,6 +705,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		if streams != nil {
 			if err := repl.Register(streams.Endpoint()); err != nil {
 				return err
+			}
+		}
+		if pushRule != nil && pushRule.Writing() {
+			for _, e := range pushRule.Endpoints() {
+				if err := repl.Register(e); err != nil {
+					return err
+				}
 			}
 		}
 		if accountData != nil && accountData.Writing() {
@@ -719,6 +775,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			}
 			if toDevice != nil {
 				toDevice.SetSynapse(scfg)
+			}
+			if pushRule != nil {
+				pushRule.SetSynapse(scfg)
 			}
 		})
 		return gctx.Err()

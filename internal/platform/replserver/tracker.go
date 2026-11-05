@@ -163,3 +163,12 @@ func (t *Tracker) forget(k trackKey, w *trackWaiter) {
 		delete(t.waiters, k)
 	}
 }
+
+// Seen is how far this process has seen instance's stream on the bus, and
+// whether it has seen it at all since start.
+func (t *Tracker) Seen(stream, instance string) (int64, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	p, ok := t.seen[trackKey{stream, instance}]
+	return p, ok
+}

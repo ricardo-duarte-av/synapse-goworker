@@ -103,6 +103,14 @@ in-process). Delivering and deleting messages stays with sync. As for the
 other stream-row writers, the role is taken at start only. See
 docs/cutover.md.
 
+### Push rules
+
+When goworker starts while `stream_writers.push_rules` names
+`instance_name`, it is Synapse's push-rules writer: it serves PUT, DELETE
+and GET under `/_matrix/client/*/pushrules/`, answers `copy_push_rules`
+(main's room upgrade), and writes and publishes the push_rules stream. The
+role is taken at start only. See docs/cutover.md.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)

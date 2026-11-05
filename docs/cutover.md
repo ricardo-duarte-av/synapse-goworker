@@ -203,6 +203,27 @@ Each step is independent and reversible by undoing it.
    To move it back, set the list to the old writer, restart every Synapse
    process and goworker, and point the location back.
 
+10. **Push rules** (same model). goworker takes the role only when it
+    starts.
+    - homeserver.yaml: `stream_writers.push_rules: [<goworker's
+      instance_name>]` (Synapse allows exactly one).
+    - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+      included), then **goworker straight after**: its log says "writing
+      the push_rules stream". It also loads push_rules.id and
+      push_rules_enable.id from the table then, so the old writer must not
+      write after that.
+    - nginx: point `^/_matrix/client/(api/v1|r0|v3|unstable)/pushrules/`
+      at goworker, and reload.
+    - Check:
+      - "Push-rules writer" on the dashboard: requests `ok`, writes;
+      - `stream_positions` has `(push_rules_stream, <goworker>)` following
+        `push_rules_stream_sequence` once something is written;
+      - a notification setting changed in a client (a room muted, a
+        keyword) shows in another session, and takes effect.
+
+    To move it back, set the list to the old writer, restart every Synapse
+    process and goworker, and point the location back.
+
 ## Afterwards
 
 - Remove the old containers.

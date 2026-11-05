@@ -17,3 +17,6 @@ func (s *Sync) PushRulesContent(ctx context.Context, userID string) (json.RawMes
 	}
 	return pushrules.Format(userID, rules, enabled, s.pushFeatures)
 }
+
+// PushRuleFeatures are the flags the push rules are built under.
+func (s *Sync) PushRuleFeatures() pushrules.Features { return s.pushFeatures }

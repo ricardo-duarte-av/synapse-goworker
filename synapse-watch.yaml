@@ -185,6 +185,22 @@ components:
       - synapse/util/json.py
       - synapse/util/stringutils.py
 
+  push_rules:
+    code: internal/pushwriter
+    synapse:
+      - rust/src/push/
+      - synapse/config/push_rules.py
+      - synapse/handlers/push_rules.py
+      - synapse/handlers/room_member.py
+      - synapse/http/servlet.py
+      - synapse/push/clientformat.py
+      - synapse/push/rulekinds.py
+      - synapse/replication/http/push.py
+      - synapse/rest/client/push_rule.py
+      - synapse/storage/databases/main/push_rule.py
+      - synapse/storage/util/id_generators.py
+      - synapse/util/json.py
+
   inbound:
     code: internal/inbound
     synapse:

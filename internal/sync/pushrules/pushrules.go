@@ -189,3 +189,35 @@ func localpartOf(userID string) string {
 	}
 	return s
 }
+
+// ServedBaseRuleIDs is _served_default_rule_ids: the namespaced IDs of the
+// built-in rules the experimental flags let a user see. A server-default
+// rule outside it cannot be enabled or given actions ("Unknown rule").
+func ServedBaseRuleIDs(f Features) map[string]bool {
+	out := map[string]bool{}
+	for id := range baseRuleIDs {
+		if f.allows(id) {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+// UserRulesInOrder are a user's own rules (not overrides of built-in
+// ones) in PushRules::iter's order, as FilteredPushRules.rules() yields
+// them: override, content, room, sender, underride. userRules is sorted as
+// Format requires.
+func UserRulesInOrder(userRules []UserRule) []UserRule {
+	byClass := map[int][]UserRule{}
+	for _, r := range userRules {
+		if _, isBase := baseRuleIDs[r.RuleID]; isBase {
+			continue
+		}
+		byClass[r.PriorityClass] = append(byClass[r.PriorityClass], r)
+	}
+	var out []UserRule
+	for _, c := range []int{5, 4, 3, 2, 1} {
+		out = append(out, byClass[c]...)
+	}
+	return out
+}

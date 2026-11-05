@@ -92,3 +92,26 @@ func TestCanonicalMatchesPython(t *testing.T) {
 		t.Fatal("no cases")
 	}
 }
+
+// testdata/repr.jsonl is [input, repr(json.loads(input)), str(...)] per
+// line, from the Synapse 1.164.1 image's Python.
+func TestReprMatchesPython(t *testing.T) {
+	f, err := os.Open("testdata/repr.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var c [3]string
+		if err := json.Unmarshal(sc.Bytes(), &c); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := Repr([]byte(c[0])); err != nil || got != c[1] {
+			t.Errorf("Repr(%s)\n got  %s (%v)\n want %s", c[0], got, err, c[1])
+		}
+		if got, err := Str([]byte(c[0])); err != nil || got != c[2] {
+			t.Errorf("Str(%s)\n got  %s (%v)\n want %s", c[0], got, err, c[2])
+		}
+	}
+}

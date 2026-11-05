@@ -36,6 +36,9 @@ type Router struct {
 	// ReceiptsMatch accepts.
 	Receipts      http.Handler
 	ReceiptsMatch func(method, escapedPath string) bool
+	// PushRules serves .../pushrules/..., which PushRulesMatch accepts.
+	PushRules      http.Handler
+	PushRulesMatch func(method, escapedPath string) bool
 	// ToDevice serves PUT /sendToDevice/..., which ToDeviceMatch accepts.
 	ToDevice      http.Handler
 	ToDeviceMatch func(method, escapedPath string) bool
@@ -70,6 +73,8 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.Typing.ServeHTTP(w, r)
 	case rt.Receipts != nil && rt.ReceiptsMatch != nil && rt.ReceiptsMatch(r.Method, p):
 		rt.Receipts.ServeHTTP(w, r)
+	case rt.PushRules != nil && rt.PushRulesMatch != nil && rt.PushRulesMatch(r.Method, p):
+		rt.PushRules.ServeHTTP(w, r)
 	case rt.ToDevice != nil && rt.ToDeviceMatch != nil && rt.ToDeviceMatch(r.Method, p):
 		rt.ToDevice.ServeHTTP(w, r)
 	case rt.AccountData != nil && rt.AccountDataMatch != nil && rt.AccountDataMatch(r.Method, p):
