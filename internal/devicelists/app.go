@@ -26,6 +26,7 @@ package devicelists
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -36,6 +37,8 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientreq"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamid"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
@@ -120,8 +123,16 @@ type Options struct {
 	Caches Caches
 	// StateAtEvent is the state at a partial join's event.
 	StateAtEvent StateAtEvent
-	Log          zerolog.Logger
-	Now          func() time.Time
+	// Auth checks client access tokens, for the device endpoints.
+	Auth clientreq.Authenticator
+	// CStore is the client endpoints' store (DB).
+	CStore ClientStore
+	// CachesInsert writes caches-stream rows in a transaction of their own.
+	CachesInsert func(ctx context.Context, cacheFunc string, keys [][]string) ([]cachestream.Row, error)
+	// Fallback is main, for what is not served here.
+	Fallback http.Handler
+	Log      zerolog.Logger
+	Now      func() time.Time
 }
 
 // App is the device-lists writer.

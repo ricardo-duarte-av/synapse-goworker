@@ -65,6 +65,8 @@ func (d *DB) runTxn(ctx context.Context, fn func(pgx.Tx) error) error {
 	return err
 }
 
+func nowMS() int64 { return time.Now().UnixMilli() }
+
 // emptyContext is json_encoder.encode(get_active_span_text_map()) with
 // tracing off, which every opentracing_context column holds here.
 const emptyContext = "{}"

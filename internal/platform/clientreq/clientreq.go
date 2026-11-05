@@ -195,6 +195,9 @@ func render(body map[string]any) []byte {
 	return data
 }
 
+// SetCORS sets Synapse's CORS headers on an answer written by hand.
+func SetCORS(w http.ResponseWriter) { server.SetCORS(w.Header()) }
+
 // WriteRaw answers 200 with a body already rendered (json_encoder's).
 func WriteRaw(w http.ResponseWriter, body []byte) {
 	server.SetCORS(w.Header())

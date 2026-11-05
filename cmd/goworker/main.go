@@ -645,6 +645,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			OnPokes:      sender.DeviceListPoke,
 			Query:        query,
 			StateAtEvent: stateAt,
+			Auth:         clientAuth,
+			CStore:       ddb,
+			CachesInsert: ddb.InsertCaches(cfg.InstanceName),
+			Fallback:     fallback(upstream),
 			Log:          componentLogger(log, cfg.Log, "device_lists"),
 		})
 		if err != nil {
@@ -700,6 +704,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ReceiptsMatch:  receipts.Match,
 		ToDeviceMatch:  todevice.Match,
 		PushRulesMatch: pushwriter.Match,
+		DevicesMatch: func(method, p string) bool {
+			return devLists != nil && devLists.Writing() && devicelists.MatchDevices(method, p)
+		},
 		AccountDataMatch: func(method, p string) bool {
 			return accountData != nil && accountData.Match(method, p)
 		},
@@ -738,6 +745,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	if pushRule != nil {
 		router.PushRules = pushRule.Handler()
+	}
+	if devLists != nil {
+		router.Devices = devLists.DevicesHandler()
 	}
 
 	// The replication listener, where other Synapse processes reach this
