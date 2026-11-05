@@ -204,6 +204,7 @@ components:
   device_lists:
     code: internal/devicelists
     synapse:
+      - synapse/api/errors.py
       - synapse/config/registration.py
       - synapse/handlers/device.py
       - synapse/handlers/e2e_keys.py

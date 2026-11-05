@@ -41,6 +41,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/e2ekeys"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/edutype"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
@@ -648,6 +649,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Auth:         clientAuth,
 			CStore:       ddb,
 			KStore:       ddb,
+			SStore:       ddb,
+			E2E:          e2ekeys.PoolQuerier(ddb.Pool()),
 			Locks:        workerLocks(inbound.Locks()),
 			CachesInsert: ddb.InsertCaches(cfg.InstanceName),
 			Fallback:     fallback(upstream),

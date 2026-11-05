@@ -39,6 +39,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientreq"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/e2ekeys"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamid"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
@@ -134,6 +135,10 @@ type Options struct {
 	// Locks is the process's worker locks (inbound's); without them
 	// /keys/upload goes to main.
 	Locks Locker
+	// SStore is /keys/signatures/upload's store (DB), and E2E the reader
+	// of local users' keys it checks signatures against.
+	SStore SignaturesStore
+	E2E    e2ekeys.Querier
 	// Fallback is main, for what is not served here.
 	Fallback http.Handler
 	Log      zerolog.Logger
