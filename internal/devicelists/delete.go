@@ -76,18 +76,8 @@ func deleteBody(r *http.Request, bulk bool) (gjson.Result, *clientreq.Error, err
 	}
 	body := gjson.ParseBytes(raw)
 	var p pydErrors
+	validateAuthField(&p, body)
 	auth := pyField(body, "auth")
-	if auth.Exists() && auth.Type != gjson.Null {
-		if !auth.IsObject() {
-			p.add("model_type", "'.auth' must be an object")
-		} else {
-			for _, f := range []string{"session", "type"} {
-				if x := pyField(auth, f); x.Exists() && x.Type != gjson.Null && x.Type != gjson.String {
-					p.typ(".auth."+f, "string")
-				}
-			}
-		}
-	}
 	devices := pyField(body, "devices")
 	if bulk {
 		switch {
@@ -170,17 +160,13 @@ func (a *App) serveDeleteDevice(ctx context.Context, w http.ResponseWriter, r *h
 		description = "remove device(s) from your account"
 	}
 	if v.AppServiceID == "" {
-		err := a.validateUserViaUIA(ctx, r, v, body, description)
+		err := a.validateUserViaUIA(ctx, r, v, body, description, true)
 		var ch *uiaChallenge
 		var se *sigError
 		switch {
 		case errors.As(err, &ch):
 			count("uia")
-			w.Header().Set("Content-Type", "application/json")
-			clientreq.SetCORS(w)
-			w.WriteHeader(http.StatusUnauthorized)
-			enc, _ := pyjson.Encode([]byte(ch.body))
-			_, _ = w.Write([]byte(enc))
+			writeChallenge(w, ch)
 			return
 		case errors.As(err, &se):
 			count("refused")

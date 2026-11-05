@@ -74,10 +74,11 @@ func devicePath(p string) (deviceID string, one, ok bool) {
 
 // MatchDevices is the device and key endpoints served here: GET /devices,
 // GET and PUT /devices/{deviceId}, POST /keys/upload and
-// /keys/signatures/upload, DELETE /devices/{deviceId} and POST
-// /delete_devices. Anything else goes to main.
+// /keys/signatures/upload and /keys/device_signing/upload, DELETE
+// /devices/{deviceId} and POST /delete_devices. Anything else goes to
+// main.
 func MatchDevices(method, escapedPath string) bool {
-	if keysUploadPath(escapedPath) || signaturesUploadPath(escapedPath) || deleteDevicesPath(escapedPath) {
+	if keysUploadPath(escapedPath) || signaturesUploadPath(escapedPath) || deleteDevicesPath(escapedPath) || deviceSigningPath(escapedPath) {
 		return method == http.MethodPost
 	}
 	_, one, ok := devicePath(escapedPath)
@@ -99,8 +100,12 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 	signatures := signaturesUploadPath(r.URL.EscapedPath())
 	bulk := deleteDevicesPath(r.URL.EscapedPath())
 	deleting := bulk || (one && r.Method == http.MethodDelete)
+	signing := deviceSigningPath(r.URL.EscapedPath())
+	uia := deleting || signing
 	endpoint := "devices"
 	switch {
+	case signing:
+		endpoint = "keys_device_signing_upload"
 	case bulk:
 		endpoint = "delete_devices"
 	case upload:
@@ -113,14 +118,16 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 	count := func(o string) { clientRequests.WithLabelValues(endpoint, r.Method, o).Inc() }
 	if !a.writing || a.CStore == nil || (upload && (a.KStore == nil || a.Locks == nil)) ||
 		(signatures && (a.SStore == nil || a.E2E == nil)) ||
-		(deleting && (a.UStore == nil || a.DStore == nil || a.Synapse().ClientAuth.Delegated)) {
+		(uia && (a.UStore == nil || a.Synapse().ClientAuth.Delegated)) ||
+		(deleting && a.DStore == nil) || (signing && (a.GStore == nil || a.E2E == nil)) {
 		count("to_main")
 		a.Fallback.ServeHTTP(w, r)
 		return
 	}
 	ctx := r.Context()
-	// The deletes' get_user_by_req refuses guests; the rest allow them.
-	v, cerr, err := clientreq.User(ctx, a.Auth, r, !deleting)
+	// The UIA endpoints' get_user_by_req refuses guests; the rest allow
+	// them.
+	v, cerr, err := clientreq.User(ctx, a.Auth, r, !uia)
 	if err != nil {
 		a.Log.Error().Err(err).Msg("devices: cannot validate a token")
 		count("auth_unavailable")
@@ -132,7 +139,7 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 		clientreq.Write(w, cerr, nil)
 		return
 	}
-	if deleting {
+	if uia {
 		raw, err := io.ReadAll(io.LimitReader(r.Body, clientreq.MaxBody+1))
 		if err != nil {
 			count("refused")
@@ -143,6 +150,10 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 		if v.AppServiceID == "" && a.uiaToMain(v, gjson.GetBytes(raw, "auth")) {
 			count("to_main")
 			a.Fallback.ServeHTTP(w, r)
+			return
+		}
+		if signing {
+			a.serveDeviceSigning(ctx, w, r, v, count)
 			return
 		}
 		a.serveDeleteDevice(ctx, w, r, v, id, bulk, count)

@@ -171,22 +171,23 @@ func crossSigningVerifyKey(key gjson.Result) (verifyKey, error) {
 	if !ok {
 		return verifyKey{}, errValue
 	}
+	// len(keys) == 1, then keys.items()
+	n, err := pyLen(keys)
+	if err != nil {
+		return verifyKey{}, err
+	}
+	if n != 1 {
+		return verifyKey{}, errValue
+	}
 	if !keys.IsObject() {
 		return verifyKey{}, errPython
 	}
 	var id string
 	var data gjson.Result
-	n := 0
 	keys.ForEach(func(k, v gjson.Result) bool {
-		if n == 0 {
-			id, data = k.Str, v
-		}
-		n++
-		return true
+		id, data = k.Str, v
+		return false
 	})
-	if n != 1 {
-		return verifyKey{}, errValue
-	}
 	return decodeVerifyKey(id, data)
 }
 

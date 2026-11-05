@@ -80,21 +80,20 @@ func (a *App) uiaToMain(v clientauth.Verdict, auth gjson.Result) bool {
 	return id.IsObject() && pyField(id, "type").Str == "m.id.phone"
 }
 
-// validateUserViaUIA is validate_user_via_ui_auth with can_skip_ui_auth:
-// nil once the requester has re-authenticated (or did within
+// validateUserViaUIA is validate_user_via_ui_auth: nil once the requester has re-authenticated (or did within
 // ui_auth.session_timeout); a *uiaChallenge for the 401; a *sigError for
 // Synapse's other refusals.
 //
 // The failed-attempts ratelimiter it consults is never updated (the
 // LoginError it counts is caught inside check_ui_auth), so it never
 // refuses and is not reproduced.
-func (a *App) validateUserViaUIA(ctx context.Context, r *http.Request, v clientauth.Verdict, body gjson.Result, description string) error {
+func (a *App) validateUserViaUIA(ctx context.Context, r *http.Request, v clientauth.Verdict, body gjson.Result, description string, canSkip bool) error {
 	if v.TokenID == 0 {
 		return errors.New("devicelists: cannot validate a user without an access token")
 	}
 	u := a.Synapse().UIA
 	now := a.Now().UnixMilli()
-	if u.SessionTimeoutMS != 0 {
+	if canSkip && u.SessionTimeoutMS != 0 {
 		last, err := a.UStore.TokenLastValidated(ctx, v.TokenID)
 		if err != nil {
 			return err
@@ -671,4 +670,3 @@ func (d *DB) CompletedUIAStages(ctx context.Context, id string) ([][2]string, er
 	}
 	return out, rows.Err()
 }
-

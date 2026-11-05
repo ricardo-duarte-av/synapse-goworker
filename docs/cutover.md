@@ -225,7 +225,8 @@ Each step is independent and reversible by undoing it.
     process and goworker, and point the location back.
 
 11. **Device lists** (goworker as the writer; the client endpoints stay
-    where nginx sends them, and call it over replication). Encryption
+    where nginx sends them, and call it over replication, until they
+    move too). Encryption
     across federation depends on it: a remote server with a stale device
     list cannot decrypt our users' messages, and nothing here reports it.
     - homeserver.yaml: `stream_writers.device_lists: [<goworker's
@@ -246,9 +247,23 @@ Each step is independent and reversible by undoing it.
         server, and have one of them decrypt it;
       - a remote user's new device shows in `/keys/query` here.
 
-    The client endpoints (`delete_devices`, `devices`, the `keys/` uploads)
-    move to goworker with phase 6's stage 3; until then they keep working
-    wherever they are.
+    The client endpoints (stage 3) then move with nginx alone; goworker
+    must be the writer first (until then it hands them to main):
+    - nginx: point at goworker
+      `^/_matrix/client/(r0|v3|unstable)/delete_devices$`,
+      `^/_matrix/client/(api/v1|r0|v3|unstable)/devices(/|$)`,
+      `^/_matrix/client/(r0|v3|unstable)/keys/upload`,
+      `^/_matrix/client/(api/v1|r0|v3|unstable)/keys/device_signing/upload$`
+      and `^/_matrix/client/(api/v1|r0|v3|unstable)/keys/signatures/upload$`.
+      What goworker does not serve of them (api/v1, r0 for device_signing,
+      the dehydrated-device paths) it proxies to main.
+    - Check, on "Device and key endpoints": `ok`, `refused` and `uia`
+      outcomes, `to_main` near zero (it counts UIA that only main can run:
+      SSO, password providers, modules, the recaptcha, email, msisdn and
+      registration-token stages); log in on a new device and verify it from
+      another (keys/upload, device_signing, signatures), rename it, and
+      delete it with your password (its pushers go, its tokens stop
+      working, the other device's list updates).
 
     To move it back, set the list to the old writer, restart every Synapse
     process and goworker.

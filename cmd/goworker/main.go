@@ -658,6 +658,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			E2E:          e2ekeys.PoolQuerier(ddb.Pool()),
 			UStore:       ddb,
 			DStore:       ddb,
+			GStore:       ddb,
 			AccountData: deviceAccountData(accountData, accountDataWriter{
 				client:    dlRepl,
 				writers:   hs.Writers.AccountData,

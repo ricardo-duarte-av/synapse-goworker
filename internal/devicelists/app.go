@@ -143,6 +143,8 @@ type Options struct {
 	// sessions and the rows delete_devices removes.
 	UStore UIAStore
 	DStore DeleteStore
+	// GStore is /keys/device_signing/upload's store (DB).
+	GStore SigningStore
 	// AccountData removes MSC3890's per-device settings; RemovePusher is
 	// main's remove_pusher; PublishTask sends NEW_ACTIVE_TASK; and
 	// ToDeviceToken is the to-device stream's current token.
