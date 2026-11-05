@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -153,8 +154,11 @@ type ServerKeyJSON = fedauth.ServerKeyJSON
 // keys from exactly the data Synapse resolves them from, with no network
 // traffic and no cold start after a restart.
 func (s *Store) GetServerKeys(ctx context.Context, serverName string, validAtMS int64) ([]ServerKeyJSON, error) {
+	// bytea is read as encode(..., 'hex'): Synapse runs SET bytea_output TO
+	// escape on its connections, and through pgcat a server connection keeps
+	// it, which pgx (Exec mode, text results) cannot decode.
 	const q = `
-		SELECT key_id, from_server, ts_valid_until_ms, key_json
+		SELECT key_id, from_server, ts_valid_until_ms, encode(key_json, 'hex')
 		FROM server_keys_json
 		WHERE server_name = $1 AND ts_valid_until_ms > $2
 		ORDER BY ts_valid_until_ms DESC`
@@ -168,8 +172,13 @@ func (s *Store) GetServerKeys(ctx context.Context, serverName string, validAtMS 
 	var out []ServerKeyJSON
 	for rows.Next() {
 		var k ServerKeyJSON
-		if err := rows.Scan(&k.KeyID, &k.FromServer, &k.ValidUntilMS, &k.JSON); err != nil {
+		var hexed string
+		if err := rows.Scan(&k.KeyID, &k.FromServer, &k.ValidUntilMS, &hexed); err != nil {
 			return nil, fmt.Errorf("store: scan server key: %w", err)
+		}
+		var err error
+		if k.JSON, err = hex.DecodeString(hexed); err != nil {
+			return nil, fmt.Errorf("store: server key json: %w", err)
 		}
 		out = append(out, k)
 	}

@@ -9,6 +9,7 @@ package pdustore
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -492,8 +493,11 @@ func (s *Store) SampleEvents(ctx context.Context, roomVersions []string, n int, 
 	return out, nil
 }
 
+// bytea is read as encode(..., 'hex'): Synapse runs SET bytea_output TO
+// escape on its connections, and through pgcat a server connection keeps
+// it, which pgx (Exec mode, text results) cannot decode.
 const qVerifyKeys = `
-	SELECT key_id, verify_key, ts_valid_until_ms, ts_added_ms
+	SELECT key_id, encode(verify_key, 'hex'), ts_valid_until_ms, ts_added_ms
 	FROM server_signature_keys
 	WHERE server_name = $1 AND key_id = ANY($2)`
 
@@ -508,10 +512,13 @@ func (s *Store) VerifyKeys(ctx context.Context, server string, keyIDs []string) 
 	defer rows.Close()
 	out := map[string]pdu.VerifyKey{}
 	for rows.Next() {
-		var kid string
-		var key []byte
+		var kid, hexed string
 		var until, added *int64
-		if err := rows.Scan(&kid, &key, &until, &added); err != nil {
+		if err := rows.Scan(&kid, &hexed, &until, &added); err != nil {
+			return nil, err
+		}
+		key, err := hex.DecodeString(hexed)
+		if err != nil {
 			return nil, err
 		}
 		if len(key) != 32 {

@@ -260,6 +260,14 @@ Still per component, on purpose:
   table is schema-qualified, because Synapse has tables of the same names
   in public (TestEveryTableIsQualified). That reads only read is held by
   the code and its tests, not by a grant.
+- **Read `bytea` as `encode(col, 'hex')`** (2026-11-05). Synapse runs `SET
+  bytea_output TO escape` on every connection it opens, and through pgcat
+  that session setting stays on the server connection, which pgx then hands
+  us: in Exec mode results are text, binary result formats are ignored, and
+  pgx cannot decode escape output ("invalid hex format"). It showed as a
+  400 on clients' first `/sync` after each Synapse restart (the user
+  filter). The five readers are hex-encoded in SQL; a new one must be too
+  (`pdustore/bytea_test.go`).
 - **Bound caches by size, never by count of things of unknown size.** A big
   room's state is 150k entries (31 MB as a Go map).
 - **Never name a metric label `instance` or `job`.**

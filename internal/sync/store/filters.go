@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -41,15 +42,22 @@ func (s *Store) UserFilter(ctx context.Context, userID string, filterID int64) (
 }
 
 func (s *Store) userFilter(ctx context.Context, userID string, filterID int64) ([]byte, error) {
+	// bytea columns are read as encode(..., 'hex'): Synapse runs SET
+	// bytea_output TO escape on its connections, and through pgcat a server
+	// connection keeps it, which pgx (in Exec mode, text results) cannot decode.
 	const q = `
-		SELECT filter_json
+		SELECT encode(filter_json, 'hex')
 		  FROM user_filters
 		 WHERE full_user_id = $1 AND filter_id = $2`
-	var raw []byte
-	err := s.queryRow(ctx, "UserFilter", q, userID, filterID).Scan(&raw)
+	var hexed string
+	err := s.queryRow(ctx, "UserFilter", q, userID, filterID).Scan(&hexed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoSuchFilter
 	}
+	if err != nil {
+		return nil, fmt.Errorf("store: user filter: %w", err)
+	}
+	raw, err := hex.DecodeString(hexed)
 	if err != nil {
 		return nil, fmt.Errorf("store: user filter: %w", err)
 	}

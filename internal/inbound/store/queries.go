@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -14,8 +15,11 @@ import (
 // ServerKeyJSON is one row of Synapse's server_keys_json.
 type ServerKeyJSON = fedauth.ServerKeyJSON
 
+// bytea columns are read as encode(..., 'hex'): Synapse runs SET
+// bytea_output TO escape on its connections, and through pgcat a server
+// connection keeps it, which pgx (in Exec mode, text results) cannot decode.
 const qServerKeys = `
-	SELECT key_id, from_server, ts_valid_until_ms, key_json
+	SELECT key_id, from_server, ts_valid_until_ms, encode(key_json, 'hex')
 	FROM server_keys_json
 	WHERE server_name = $1 AND ts_valid_until_ms > $2
 	ORDER BY ts_valid_until_ms DESC`
@@ -37,9 +41,14 @@ func (s *Store) GetServerKeys(ctx context.Context, serverName string, validAtMS 
 	var out []ServerKeyJSON
 	for rows.Next() {
 		var k ServerKeyJSON
-		if err := rows.Scan(&k.KeyID, &k.FromServer, &k.ValidUntilMS, &k.JSON); err != nil {
+		var hexed string
+		if err := rows.Scan(&k.KeyID, &k.FromServer, &k.ValidUntilMS, &hexed); err != nil {
 			observe("server_keys", start, err)
 			return nil, fmt.Errorf("store: scan server key: %w", err)
+		}
+		if k.JSON, err = hex.DecodeString(hexed); err != nil {
+			observe("server_keys", start, err)
+			return nil, fmt.Errorf("store: server key json: %w", err)
 		}
 		out = append(out, k)
 	}
@@ -111,10 +120,11 @@ type TxnState struct {
 }
 
 // One round trip for both, since this runs once per native transaction.
+// response_json is bytea, read as hex (see qServerKeys).
 const qTxnState = `
 	SELECT
 		(SELECT retry_last_ts FROM destinations WHERE destination = $1),
-		r.response_code, r.response_json
+		r.response_code, encode(r.response_json, 'hex')
 	FROM (SELECT 1) AS one
 	LEFT JOIN received_transactions r
 		ON r.transaction_id = $2 AND r.origin = $1`
@@ -125,11 +135,17 @@ func (s *Store) GetTxnState(ctx context.Context, origin, txnID string) (TxnState
 	var (
 		retry *int64
 		code  *int32
+		hexed *string
 		body  []byte
 	)
-	err := s.queryRow(ctx, "txn_state", qTxnState, origin, txnID).Scan(&retry, &code, &body)
+	err := s.queryRow(ctx, "txn_state", qTxnState, origin, txnID).Scan(&retry, &code, &hexed)
 	if err != nil {
 		return TxnState{}, fmt.Errorf("store: txn state: %w", err)
+	}
+	if hexed != nil {
+		if body, err = hex.DecodeString(*hexed); err != nil {
+			return TxnState{}, fmt.Errorf("store: txn state: %w", err)
+		}
 	}
 	var st TxnState
 	if retry != nil {
