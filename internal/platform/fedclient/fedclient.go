@@ -44,6 +44,7 @@ func NewMautrix(serverName string, key *federation.SigningKey, settings exhttp.C
 	c.AllowIP = AllowIP
 	if srt, ok := c.HTTP.Transport.(*federation.ServerResolvingTransport); ok {
 		FilterWellKnown(srt)
+		VerifyAsConfigured(srt.Transport)
 	}
 	useragent.Client(c)
 	c.HTTP.Transport = &ForgetOnFailure{Next: c.HTTP.Transport, Cache: Resolutions}

@@ -111,6 +111,16 @@ and GET under `/_matrix/client/*/pushrules/`, answers `copy_push_rules`
 (main's room upgrade), and writes and publishes the push_rules stream. The
 role is taken at start only. See docs/cutover.md.
 
+### Device lists
+
+When goworker starts while `stream_writers.device_lists` names
+`instance_name` alone, it is Synapse's device-lists writer: the five
+replication endpoints other processes call on it, the device_lists stream,
+the outbound pokes that tell other servers of our users' device changes,
+and the remote device lists (their EDUs, resyncs over federation, and the
+retry of stale ones). The client endpoints that change devices and keys
+are not native yet. See docs/cutover.md.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)

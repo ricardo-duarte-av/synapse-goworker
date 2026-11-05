@@ -16,8 +16,11 @@
 //     decides which servers hear of a local device change: wrong, a remote
 //     server keeps a stale device list and its users cannot decrypt.
 //
-// Stage 1 of phase 6 (the plan): remote device lists, resyncs and the
-// client endpoints come next. The role is taken at start only.
+// and the remote half (remote.go): m.device_list_update and
+// m.signing_key_update EDUs, multi_user_device_resync over federation with
+// its 30 s retry loop, partial-state rooms (device_handle_room_un_partial_stated),
+// and remote cross-signing keys. The client endpoints are stage 3. The
+// role is taken at start only.
 package devicelists
 
 import (
@@ -30,6 +33,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
+
+	"github.com/tidwall/gjson"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamid"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
@@ -106,8 +111,17 @@ type Options struct {
 	// OnPokes is told the stream ID of outbound pokes just written
 	// (federation_sender.send_device_messages): our sender drops our echo.
 	OnPokes func(streamID int64)
-	Log     zerolog.Logger
-	Now     func() time.Time
+	// RStore is the remote half's store (DB).
+	RStore RemoteStore
+	// Query fetches a remote user's devices over federation (nil: every
+	// resync fails and is retried).
+	Query Query
+	// Caches is the process's caches stream, for cross-signing keys.
+	Caches Caches
+	// StateAtEvent is the state at a partial join's event.
+	StateAtEvent StateAtEvent
+	Log          zerolog.Logger
+	Now          func() time.Time
 }
 
 // App is the device-lists writer.
@@ -124,6 +138,8 @@ type App struct {
 	converting  bool
 	convNewData bool
 
+	r remote
+
 	roleNoted sync.Once
 }
 
@@ -134,6 +150,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 	}
 	hs := o.Synapse()
 	a := &App{Options: o, serverName: hs.ServerName}
+	a.r.pending, a.r.signing, a.r.seen = map[string][]pendingUpdate{}, map[string][][2]gjson.Result{}, map[string]*seenEntry{}
 	if !slices.Contains(hs.Writers.DeviceLists, o.Instance) {
 		writing.Set(0)
 		return a, nil
@@ -197,12 +214,16 @@ func (a *App) Run(ctx context.Context) error {
 	a.HandleNewDeviceUpdate()
 	t := time.NewTicker(lagInterval)
 	defer t.Stop()
+	r := time.NewTicker(retryInterval)
+	defer r.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
 			a.reportLag(ctx)
+		case <-r.C:
+			go a.retryResyncs(ctx)
 		}
 	}
 }

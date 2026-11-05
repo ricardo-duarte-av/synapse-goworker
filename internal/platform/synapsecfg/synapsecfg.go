@@ -157,6 +157,8 @@ type Config struct {
 
 	// FederationIPRanges is where outbound federation may not connect.
 	FederationIPRanges IPRanges
+	// FederationTLS is how outbound federation checks certificates.
+	FederationTLS FederationTLS
 
 	// Delayed is delayed events' settings.
 	Delayed Delayed
@@ -340,6 +342,9 @@ func parse(b []byte, path string) (*Config, error) {
 	cfg.TrackPresence = trackPresence(r)
 	cfg.Experimental = lastWins(&r.ExperimentalFeatures)
 	if cfg.Membership, err = membership(b, r.ServerName); err != nil {
+		return nil, err
+	}
+	if cfg.FederationTLS, err = federationTLS(b); err != nil {
 		return nil, err
 	}
 	if cfg.FederationIPRanges, err = federationIPRanges(b); err != nil {

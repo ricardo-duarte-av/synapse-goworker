@@ -57,7 +57,7 @@ database:
     account_data: 4            # the account-data writer: account data and tags
     to_device_writer: 4        # the to-device writer: sendToDevice and remote to-device EDUs
     push_rules: 2              # the push-rules writer
-    device_lists: 4            # the device-lists writer (not complete yet: see docs/cutover.md)
+    device_lists: 4            # the device-lists writer
     creator_write: 4           # the event creator's own writes (push staging, state groups)
 
 memory:

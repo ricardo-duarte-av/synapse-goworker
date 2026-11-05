@@ -120,6 +120,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	hs := src.Current()
 	// Every federation client's IP filter, from the current copy.
 	fedclient.SetIPRanges(func() synapsecfg.IPRanges { return src.Current().FederationIPRanges })
+	// And how they check certificates (federation_verify_certificates).
+	fedclient.SetTLS(func() synapsecfg.FederationTLS { return src.Current().FederationTLS })
 	log.Info().Str("version", tag).Str("commit", commit).
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
@@ -308,6 +310,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			return receipt.ReceiveEDU
 		case eduType == edutype.DirectToDevice && toDevice != nil && toDevice.Writing():
 			return toDevice.ReceiveEDU
+		case eduType == edutype.DeviceListUpdate && devLists != nil && devLists.Writing():
+			return devLists.ReceiveDeviceListUpdate
+		case (eduType == edutype.SigningKeyUpdate || eduType == edutype.UnstableSigningKeyUpdate) && devLists != nil && devLists.Writing():
+			return devLists.ReceiveSigningKeyUpdate
 		}
 		return nil
 	}
@@ -535,6 +541,12 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			// when there is none), as a worker's DeviceListWorkerUpdater
 			// asks it.
 			Resync: func(ctx context.Context, userID string) error {
+				if devLists != nil && devLists.Writing() {
+					// The device-lists writer is us: DeviceListUpdater's
+					// multi_user_device_resync, in-process.
+					_, err := devLists.MultiUserDeviceResync(ctx, []string{userID}, true)
+					return err
+				}
 				w := synapsecfg.MainProcessInstanceName
 				if len(deviceLists) > 0 {
 					w = deviceLists[0]
@@ -594,18 +606,12 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		}
 	}
 
-	// The device-lists writer (phase 6, stage 1 of 3: the local half). Until
-	// the remote half exists it refuses the role: remote device lists would
-	// go unhandled. GOWORKER_DEVICE_LISTS_STAGE1=1 lets a throwaway
-	// reference test take it.
+	// The device-lists writer: it writes when stream_writers.device_lists
+	// names us alone at start.
 	switch {
 	case !slices.Contains(hs.Writers.DeviceLists, cfg.InstanceName):
 	case checkOnly:
 		log.Info().Msg("device-lists writer: stream_writers.device_lists names this process (not started under -check)")
-	case os.Getenv("GOWORKER_DEVICE_LISTS_STAGE1") != "1":
-		degraded.WithLabelValues("device_lists").Set(1)
-		log.Error().Msg("stream_writers.device_lists names this process, but goworker's device-lists writer is not complete " +
-			"(remote device lists are not ported yet): put the old writer back in homeserver.yaml")
 	case streams == nil:
 		degraded.WithLabelValues("device_lists").Set(1)
 		log.Warn().Msg("the device-lists writer needs homeserver.yaml's redis")
@@ -617,14 +623,29 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			break
 		}
 		closers = append(closers, ddb.Close)
+		query, err := deviceQuery(hs, inbound.Backoff())
+		if err != nil {
+			log.Warn().Err(err).Msg("device-lists writer: no federation client; remote device lists cannot be resynced")
+		}
+		stateAt, closeState, err := stateAtEvent(ctx, dsn, states)
+		if err != nil {
+			degraded.WithLabelValues("device_lists").Set(1)
+			log.Warn().Err(err).Msg("device-lists writer unavailable")
+			break
+		}
+		closers = append(closers, closeState)
 		devLists, err = devicelists.New(ctx, devicelists.Options{
-			Instance: cfg.InstanceName,
-			Synapse:  src.Current,
-			Store:    ddb,
-			Pool:     streamid.PG{Pool: ddb.Pool()},
-			Writer:   streams,
-			OnPokes:  sender.DeviceListPoke,
-			Log:      componentLogger(log, cfg.Log, "device_lists"),
+			Instance:     cfg.InstanceName,
+			Synapse:      src.Current,
+			Store:        ddb,
+			RStore:       ddb,
+			Pool:         streamid.PG{Pool: ddb.Pool()},
+			Writer:       streams,
+			Caches:       caches,
+			OnPokes:      sender.DeviceListPoke,
+			Query:        query,
+			StateAtEvent: stateAt,
+			Log:          componentLogger(log, cfg.Log, "device_lists"),
 		})
 		if err != nil {
 			devLists = nil
@@ -769,7 +790,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				}
 			}
 		}
-		if typer != nil || receipt != nil || toDevice != nil {
+		if typer != nil || receipt != nil || toDevice != nil || devLists != nil {
 			// One fed_send_edu, as one Synapse process has: for each EDU type
 			// whose stream this process writes.
 			if err := repl.Register(replserver.FedSendEDU(localEDU)); err != nil {

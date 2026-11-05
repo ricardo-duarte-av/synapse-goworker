@@ -96,6 +96,17 @@ type Inbound struct {
 	handler *txn.Handler
 	gate    *limits.Gate
 	closers []func()
+	backoff *backoff.Limiter
+}
+
+// Backoff is write mode's destination retry limiter (Synapse's
+// RetryDestinationLimiter, storing timings through originup); nil without
+// write mode.
+func (i *Inbound) Backoff() *backoff.Limiter {
+	if i == nil {
+		return nil
+	}
+	return i.backoff
 }
 
 // Handler serves /send. Anything else it is given is proxied.
@@ -204,6 +215,7 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 			return fail(err)
 		}
 		limiter = l
+		out.backoff = l
 		out.closers = append(out.closers, stop)
 	}
 

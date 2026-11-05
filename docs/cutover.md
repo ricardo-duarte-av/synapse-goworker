@@ -224,6 +224,35 @@ Each step is independent and reversible by undoing it.
     To move it back, set the list to the old writer, restart every Synapse
     process and goworker, and point the location back.
 
+11. **Device lists** (goworker as the writer; the client endpoints stay
+    where nginx sends them, and call it over replication). Encryption
+    across federation depends on it: a remote server with a stale device
+    list cannot decrypt our users' messages, and nothing here reports it.
+    - homeserver.yaml: `stream_writers.device_lists: [<goworker's
+      instance_name>]`, alone.
+    - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+      included), then **goworker straight after**: its log says "writing
+      the device_lists stream"; inbound's EDU routing, read at start, then
+      hands `m.device_list_update` and `m.signing_key_update` to it
+      in-process. It takes over the conversion position the old writer left
+      in `device_lists_changes_converted_stream_position`.
+    - Check:
+      - "Device-lists writer" on the dashboard: "Conversion lag" near zero
+        and not growing; outbound pokes `poked`; remote EDUs `applied` and
+        `resync`; "Stale remote device lists" falling or steady;
+      - `stream_positions` has `(device_lists_stream, <goworker>)` following
+        `device_lists_sequence`;
+      - log in on a new device here, send to a room with users on another
+        server, and have one of them decrypt it;
+      - a remote user's new device shows in `/keys/query` here.
+
+    The client endpoints (`delete_devices`, `devices`, the `keys/` uploads)
+    move to goworker with phase 6's stage 3; until then they keep working
+    wherever they are.
+
+    To move it back, set the list to the old writer, restart every Synapse
+    process and goworker.
+
 ## Afterwards
 
 - Remove the old containers.
