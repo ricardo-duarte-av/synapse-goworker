@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"strings"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/edutype"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientreq"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/userid"
 )
 
 // ErrNotWriter is a typing EDU for a process that does not write typing.
@@ -55,7 +54,7 @@ func (a *App) ReceiveEDU(ctx context.Context, origin string, content json.RawMes
 	}
 	if cerr := checkUserID(userID); cerr != nil {
 		edus.WithLabelValues("error").Inc()
-		return &replserver.Error{Code: cerr.status, Errcode: cerr.body["errcode"].(string), Msg: cerr.body["error"].(string)}
+		return &replserver.Error{Code: cerr.Status, Errcode: cerr.Body["errcode"].(string), Msg: cerr.Body["error"].(string)}
 	}
 	domain := domainOf(userID)
 	if domain != origin {
@@ -63,7 +62,7 @@ func (a *App) ReceiveEDU(ctx context.Context, origin string, content json.RawMes
 		a.log.Info().Str("origin", origin).Str("user", userID).Msg("Got typing update with bad 'user_id'")
 		return nil
 	}
-	if !compliantUserID(userID) {
+	if !userid.Compliant(userID) {
 		edus.WithLabelValues("non_compliant").Inc()
 		a.log.Info().Str("origin", origin).Str("user", userID).Msg("Dropping typing update for non-compliant user ID")
 		return nil
@@ -82,7 +81,7 @@ func (a *App) ReceiveEDU(ctx context.Context, origin string, content json.RawMes
 		edus.WithLabelValues("error").Inc()
 		return errors.New("typing: EDU has no 'typing'") // KeyError
 	}
-	state.Remote(roomID, userID, truthy(rawTyping))
+	state.Remote(roomID, userID, clientreq.Truthy(rawTyping))
 	edus.WithLabelValues("applied").Inc()
 	return nil
 }
@@ -99,58 +98,4 @@ func stringKey(c map[string]json.RawMessage, key string) (string, error) {
 		return "", fmt.Errorf("typing: EDU %q is not a string", key)
 	}
 	return s, nil
-}
-
-// compliantUserID is is_compliant_user_id: a localpart that is not empty and
-// all U+0021 to U+007E.
-func compliantUserID(userID string) bool {
-	if !strings.HasPrefix(userID, "@") {
-		return false
-	}
-	local, _, _ := strings.Cut(userID[1:], ":")
-	if local == "" {
-		return false
-	}
-	for _, r := range local {
-		if r < 0x21 || r > 0x7e {
-			return false
-		}
-	}
-	return true
-}
-
-// fedSendEDU is fed_send_edu (replication/http/federation.py), which
-// another process calls with a typing EDU it received over federation. The
-// EDU is handled as Synapse's registry handles it (on_edu): an error in the
-// handler is the request's error.
-//
-// Only m.typing is handled here. Synapse's on_edu would forward any other
-// type to its writer; nothing sends this process another type, since
-// stream_writers names it only for typing, and one that arrives is a 500.
-func (a *App) fedSendEDU() replserver.Endpoint {
-	return replserver.Endpoint{
-		Name:           "fed_send_edu",
-		Method:         http.MethodPost,
-		PathArgs:       []string{"edu_type"},
-		Cache:          true,
-		WaitForStreams: true,
-		Handle: func(ctx context.Context, req replserver.Request) (int, map[string]any, error) {
-			if req.Args["edu_type"] != edutype.Typing {
-				return 0, nil, fmt.Errorf("typing: fed_send_edu for %q", req.Args["edu_type"])
-			}
-			var origin string
-			if err := json.Unmarshal(req.Content["origin"], &origin); err != nil {
-				return 0, nil, fmt.Errorf("typing: fed_send_edu origin: %w", err)
-			}
-			content, ok := req.Content["content"]
-			if !ok {
-				return 0, nil, errors.New("typing: fed_send_edu has no content")
-			}
-			if err := a.ReceiveEDU(ctx, origin, content); err != nil {
-				a.log.Warn().Err(err).Str("origin", origin).Msg("typing: EDU from another process failed")
-				return 0, nil, err
-			}
-			return 200, map[string]any{}, nil
-		},
-	}
 }

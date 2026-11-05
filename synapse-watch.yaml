@@ -129,6 +129,23 @@ components:
       - synapse/types/__init__.py
       - synapse/util/wheel_timer.py
 
+  receipts:
+    code: internal/receipts
+    synapse:
+      - synapse/handlers/events.py
+      - synapse/handlers/read_marker.py
+      - synapse/handlers/receipts.py
+      - synapse/replication/http/account_data.py
+      - synapse/rest/client/read_marker.py
+      - synapse/rest/client/receipts.py
+      - synapse/storage/database.py
+      - synapse/storage/databases/main/account_data.py
+      - synapse/storage/databases/main/events_worker.py
+      - synapse/storage/databases/main/receipts.py
+      - synapse/storage/databases/main/relations.py
+      - synapse/storage/util/id_generators.py
+      - synapse/util/json.py
+
   inbound:
     code: internal/inbound
     synapse:

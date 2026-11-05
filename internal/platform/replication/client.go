@@ -61,13 +61,17 @@ type Part int
 const (
 	Inbound Part = iota
 	Creator
+	Receipts
 )
 
 // NewClient builds a client for every instance in the instance map.
 func NewClient(cfg *synapsecfg.Config, part Part) *Client {
 	c := &Client{targets: make(map[string]*target), secret: cfg.ReplicationSecret, sleep: sleepCtx, retries: inboundRetries}
-	if part == Creator {
+	switch part {
+	case Creator:
 		c.retries = creatorRetries
+	case Receipts:
+		c.retries = receiptsRetries
 	}
 	for name, inst := range cfg.InstanceMap {
 		c.targets[name] = newTarget(inst)

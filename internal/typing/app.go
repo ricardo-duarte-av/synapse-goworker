@@ -12,7 +12,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
@@ -150,9 +149,6 @@ func (a *App) msc3848() bool { return a.Synapse().Flag("msc3848_enabled", false)
 // Handler serves what Match accepts.
 func (a *App) Handler() http.Handler { return http.HandlerFunc(a.serveClient) }
 
-// Register puts fed_send_edu on the replication listener.
-func (a *App) Register(s *replserver.Server) error { return s.Register(a.fedSendEDU()) }
-
 // Run checks timeouts every TimeoutInterval and prunes every
 // ForgetTimeout, as Synapse's looping calls do, until ctx ends.
 func (a *App) Run(ctx context.Context) error {
@@ -185,11 +181,11 @@ type stream struct{ st *State }
 
 func (stream) Name() string          { return StreamName }
 func (s stream) CurrentToken() int64 { return s.st.CurrentToken() }
-func (s stream) UpdatesSince(from, upto int64, limit int) ([]streamwriter.Update, int64, bool) {
+func (s stream) UpdatesSince(_ context.Context, from, upto int64, limit int) ([]streamwriter.Update, int64, bool, error) {
 	rows, upto, limited := s.st.UpdatesSince(from, upto, limit)
 	out := make([]streamwriter.Update, len(rows))
 	for i, r := range rows {
 		out[i] = streamwriter.Update{Token: r.Token, Row: r.Row}
 	}
-	return out, upto, limited
+	return out, upto, limited, nil
 }

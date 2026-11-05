@@ -54,6 +54,10 @@ var (
 		Name: "goworker_stream_writer_position",
 		Help: "How far each stream this process writes has been published.",
 	}, []string{"stream"})
+	fetchFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "goworker_stream_writer_fetch_failures_total",
+		Help: "Times a stream's updates could not be read, by stream; they are read again shortly.",
+	}, []string{"stream"})
 	announcements = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "goworker_stream_writer_announcements_total",
 		Help: "Times every stream's position was announced, by why: replicate (a process asked), connected (our subscription came back), start (a stream was added), failure (a line was dropped).",
@@ -75,8 +79,9 @@ type Stream interface {
 	CurrentToken() int64
 	// UpdatesSince returns the rows with from < token <= upto, in token
 	// order, at most about limit of them; the token to fetch on from; and
-	// whether rows were left out (Stream.update_function).
-	UpdatesSince(from, upto int64, limit int) ([]Update, int64, bool)
+	// whether rows were left out (Stream.update_function). A stream in the
+	// database reads them from there.
+	UpdatesSince(ctx context.Context, from, upto int64, limit int) ([]Update, int64, bool, error)
 }
 
 // Publisher puts one line on the bus (bus.Publisher).
@@ -254,11 +259,19 @@ func (w *Writer) loop(ctx context.Context) {
 			if last == current {
 				continue
 			}
-			updates, upto, limited := h.s.UpdatesSince(last, current, TargetRowCount)
+			name := h.s.Name()
+			updates, upto, limited, err := h.s.UpdatesSince(ctx, last, current, TargetRowCount)
+			if err != nil {
+				// Synapse's streamer gives up the loop ("Failed to handle
+				// stream"); the stream stays where it was, and is tried again.
+				fetchFailures.WithLabelValues(name).Inc()
+				w.opts.Log.Warn().Err(err).Str("stream", name).Msg("could not read a stream's updates; trying again")
+				time.AfterFunc(failureRetry, w.Poke)
+				continue
+			}
 			pending = pending || limited
 			w.setLast(h, upto)
 
-			name := h.s.Name()
 			if len(updates) == 0 {
 				w.publish(ctx, name, "POSITION", positionLine(name, w.opts.Instance, last, upto))
 				continue

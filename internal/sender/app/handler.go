@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
@@ -310,4 +311,20 @@ func (h *handler) OnReplicate() {
 // is sent follows the role and the shard, as for every row.
 func (w *Worker) TypingRow(token int64, roomID string, users []string) {
 	w.typing.HandleRows(token, []sender.TypingRow{{RoomID: roomID, UserIDs: users}})
+}
+
+// ReceiptRow is a receipt stored by the receipts writer in this process
+// (internal/receipts), handled as handleReceipts handles one from the bus,
+// where this process's own rows are dropped as echoes. Only our users'
+// public receipts become EDUs; the rest is filtered there, as for every row.
+func (w *Worker) ReceiptRow(roomID, receiptType, userID, eventID, threadID string, data json.RawMessage) {
+	u := sender.ReceiptUpdate{RoomID: roomID, ReceiptType: receiptType, UserID: userID,
+		EventID: eventID, ThreadID: threadID, Data: data}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), replicationWorkTimeout)
+		defer cancel()
+		if err := w.ephemeral.HandleReceipt(ctx, u); err != nil {
+			w.log.Error().Err(err).Str("room", roomID).Msg("failed to route a receipt")
+		}
+	}()
 }

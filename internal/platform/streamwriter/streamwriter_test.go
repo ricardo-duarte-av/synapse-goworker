@@ -58,7 +58,7 @@ func (s *memStream) add(token int64, row string) {
 	s.updates = append(s.updates, Update{Token: token, Row: json.RawMessage(row)})
 	s.current = token
 }
-func (s *memStream) UpdatesSince(from, upto int64, limit int) ([]Update, int64, bool) {
+func (s *memStream) UpdatesSince(_ context.Context, from, upto int64, limit int) ([]Update, int64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Update
@@ -69,9 +69,9 @@ func (s *memStream) UpdatesSince(from, upto int64, limit int) ([]Update, int64, 
 	}
 	if len(out) > limit {
 		out = out[:limit]
-		return out, out[len(out)-1].Token, true
+		return out, out[len(out)-1].Token, true, nil
 	}
-	return out, upto, false
+	return out, upto, false, nil
 }
 
 func newWriter(p *fakePub) *Writer {

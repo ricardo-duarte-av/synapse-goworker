@@ -138,6 +138,8 @@ type Pools struct {
 	ClientAuth int32 `yaml:"client_auth"`
 	// Typing reads memberships and room hosts for the typing writer.
 	Typing int32 `yaml:"typing"`
+	// Receipts writes receipts and reads what they are checked against.
+	Receipts int32 `yaml:"receipts"`
 	// CreatorWrite writes what Synapse's event creator writes itself:
 	// push actions staging, room participation, state groups.
 	CreatorWrite int32 `yaml:"creator_write"`
@@ -148,7 +150,7 @@ type Pools struct {
 func (p *Pools) settle() error {
 	for _, n := range []int32{p.Read, p.SyncRead, p.FederationReadsRead, p.SenderRead, p.CreatorRead, p.ToDevice,
 		p.SlidingSync, p.SenderWrite, p.SenderState, p.InboundRead, p.InboundPDU, p.InboundWrite, p.ClientAuth,
-		p.CreatorWrite, p.Typing} {
+		p.CreatorWrite, p.Typing, p.Receipts} {
 		if n < 0 {
 			return fmt.Errorf("config: database.pools: sizes must not be negative")
 		}
@@ -187,7 +189,7 @@ type Log struct {
 }
 
 // LogComponents are the parts whose level log.components can set.
-var LogComponents = []string{"sync", "federation_reads", "inbound", "sender", "creator", "client_auth", "typing", "replication", "bus", "proxy"}
+var LogComponents = []string{"sync", "federation_reads", "inbound", "sender", "creator", "client_auth", "typing", "receipts", "replication", "bus", "proxy"}
 
 // LevelFor is the level for component, or the default for "".
 func (l Log) LevelFor(component string) zerolog.Level {
@@ -246,7 +248,7 @@ func Parse(data []byte) (*Config, error) {
 		Database: Database{
 			ConnectTimeoutSeconds: 10,
 			Pools: Pools{
-				Read: 16, ToDevice: 4, SlidingSync: 8, SenderWrite: 8, SenderState: 4, ClientAuth: 4, Typing: 2,
+				Read: 16, ToDevice: 4, SlidingSync: 8, SenderWrite: 8, SenderState: 4, ClientAuth: 4, Typing: 2, Receipts: 4,
 				InboundRead: 4, InboundPDU: 4, InboundWrite: 4, CreatorWrite: 4,
 			},
 		},

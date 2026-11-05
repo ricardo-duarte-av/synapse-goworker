@@ -68,6 +68,16 @@ follows. It needs redis, the replication listener, and an `instance_map`
 entry. A typing request while it is not the writer goes to main. See
 docs/cutover.md.
 
+### Receipts
+
+When goworker starts while `stream_writers.receipts` names `instance_name`
+alone, it is Synapse's receipts writer: it serves
+`POST /_matrix/client/*/rooms/{roomId}/receipt/{type}/{eventId}` and
+`POST .../rooms/{roomId}/read_markers` (the `m.fully_read` marker is stored
+on the account-data writer), takes receipt EDUs from other servers, and
+writes and publishes the receipts stream. A change to the list is taken at
+the next start of goworker, not on a re-read. See docs/cutover.md.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)

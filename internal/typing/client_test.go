@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 )
 
@@ -278,7 +279,12 @@ func TestReceiveEDU(t *testing.T) {
 
 func TestFedSendEDU(t *testing.T) {
 	w := newWorld(t, true)
-	e := w.app.fedSendEDU()
+	e := replserver.FedSendEDU(func(eduType string) replserver.EDUHandler {
+		if eduType == "m.typing" {
+			return w.app.ReceiveEDU
+		}
+		return nil
+	})
 	if e.Method != "POST" || !e.Cache || !e.WaitForStreams || e.Name != "fed_send_edu" {
 		t.Fatalf("endpoint %+v", e)
 	}
@@ -291,6 +297,6 @@ func TestFedSendEDU(t *testing.T) {
 		t.Fatalf("got %d %v %v", code, err, w.rows)
 	}
 	if _, _, err := e.Handle(context.Background(), replRequest("m.receipt", content)); err == nil {
-		t.Fatal("handled another EDU type")
+		t.Fatal("handled an EDU type with no handler")
 	}
 }

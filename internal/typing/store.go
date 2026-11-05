@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/roomhosts"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/userid"
 )
 
 // Store is what the writer reads from Synapse's database. Read-only.
@@ -79,76 +81,12 @@ func (d *DB) ShadowBanned(ctx context.Context, userID string) (bool, error) {
 	return b, err
 }
 
-// errInvalidHost is is_host_joined's Exception("Invalid host name").
-var errInvalidHost = errors.New("Invalid host name")
-
-const qHostJoined = `
-	SELECT state_key FROM current_state_events
-	WHERE membership = 'join'
-		AND type = 'm.room.member'
-		AND room_id = $1
-		AND state_key LIKE $2
-	LIMIT 1`
-
 func (d *DB) HostJoined(ctx context.Context, roomID, host string) (bool, error) {
-	// _check_host_room_membership: no LIKE wildcards in the host, and the
-	// user found really is of that host.
-	if strings.ContainsAny(host, "%_") {
-		return false, errInvalidHost
-	}
-	var userID string
-	err := d.pool.QueryRow(ctx, qHostJoined, roomID, "%:"+host).Scan(&userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if domainOf(userID) != host {
-		return false, errInvalidHost
-	}
-	return true, nil
+	return roomhosts.HostJoined(ctx, d.pool, roomID, host)
 }
-
-const (
-	qPartialServers = `SELECT server_name FROM partial_state_rooms_servers WHERE room_id = $1`
-	// get_current_hosts_in_room's PostgreSQL query.
-	qCurrentHosts = `
-		SELECT DISTINCT substring(state_key FROM '@[^:]*:(.*)$')
-		FROM current_state_events
-		WHERE type = 'm.room.member' AND membership = 'join' AND room_id = $1`
-)
 
 func (d *DB) HostsApprox(ctx context.Context, roomID string) (map[string]struct{}, error) {
-	out := map[string]struct{}{}
-	// The servers at join first, as Synapse reads them, to mitigate races
-	// with un-partial-stating.
-	for _, q := range []string{qPartialServers, qCurrentHosts} {
-		rows, err := d.pool.Query(ctx, q, roomID)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var h *string
-			if err := rows.Scan(&h); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if h != nil {
-				out[*h] = struct{}{}
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
+	return roomhosts.Approx(ctx, d.pool, roomID)
 }
 
-// domainOf is UserID.from_string(user_id).domain: everything after the
-// first colon.
-func domainOf(userID string) string {
-	_, domain, _ := strings.Cut(userID, ":")
-	return domain
-}
+func domainOf(userID string) string { return userid.Domain(userID) }

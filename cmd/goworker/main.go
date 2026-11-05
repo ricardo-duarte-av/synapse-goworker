@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"syscall"
 	"time"
 
@@ -43,11 +44,14 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamid"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/receipts"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/typing"
@@ -272,7 +276,21 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 
 	// The typing writer, built after the sender it feeds; inbound hands it
 	// typing EDUs through LocalEDU once it exists.
-	var typer *typing.App
+	var (
+		typer   *typing.App
+		receipt *receipts.App
+	)
+	// localEDU is the handler in this process for an EDU type, while it
+	// writes that type's stream: for inbound's /send, and fed_send_edu.
+	localEDU := func(eduType string) replserver.EDUHandler {
+		switch {
+		case eduType == edutype.Typing && typer != nil && typer.Writing():
+			return typer.ReceiveEDU
+		case eduType == edutype.Receipt && receipt != nil && receipt.Writing():
+			return receipt.ReceiveEDU
+		}
+		return nil
+	}
 
 	inbound, err := inboundapp.New(ctx, inboundapp.Settings{
 		InstanceName:   cfg.InstanceName,
@@ -288,12 +306,12 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Replication:    consumer("inbound"),
 		States:         states,
 		Keys:           keys,
-		// A typing EDU for the typing writer, when that is us.
+		// A typing or receipt EDU for its writer, when that is us.
 		LocalEDU: func(ctx context.Context, eduType, origin string, content json.RawMessage) (bool, error) {
-			if eduType != edutype.Typing || typer == nil {
-				return false, nil
+			if h := localEDU(eduType); h != nil {
+				return true, h(ctx, origin, content)
 			}
-			return true, typer.ReceiveEDU(ctx, origin, content)
+			return false, nil
 		},
 		Log: componentLogger(log, cfg.Log, "inbound"),
 	})
@@ -376,6 +394,57 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		})
 	}
 
+	// The receipts writer: it writes when stream_writers.receipts names us
+	// alone at start. Not under -check: taking the role writes
+	// stream_positions.
+	switch {
+	case !slices.Contains(hs.Writers.Receipts, cfg.InstanceName):
+	case checkOnly:
+		log.Info().Msg("receipts writer: stream_writers.receipts names this process (not started under -check)")
+	case streams == nil:
+		degraded.WithLabelValues("receipts").Set(1)
+		log.Warn().Msg("the receipts writer needs homeserver.yaml's redis; receipt requests are proxied to main")
+	default:
+		rdb, err := receipts.Open(ctx, dsn, pools.Receipts, db.ConnectTimeout())
+		if err != nil {
+			degraded.WithLabelValues("receipts").Set(1)
+			log.Warn().Err(err).Msg("receipts writer unavailable; receipt requests are proxied to main")
+			break
+		}
+		closers = append(closers, rdb.Close)
+		var pres receipts.Presence
+		if pc := clientSync.Presence(); pc != nil {
+			pres = pc
+		}
+		receipt, err = receipts.New(ctx, receipts.Options{
+			Instance: cfg.InstanceName,
+			Synapse:  src.Current,
+			Auth:     clientAuth,
+			Store:    rdb,
+			Events:   receiptEvents{clientSync},
+			AccountData: accountDataWriter{
+				client:    replication.NewClient(hs, replication.Receipts),
+				writers:   hs.Writers.AccountData,
+				instance:  cfg.InstanceName,
+				streams:   streams,
+				positions: positions,
+			},
+			Presence: pres,
+			Pool:     streamid.PG{Pool: rdb.Pool()},
+			Writer:   streams,
+			OnReceipt: func(r receipts.Row) {
+				sender.ReceiptRow(r.RoomID, r.ReceiptType, r.UserID, r.EventID, r.ThreadID, r.Data)
+			},
+			Fallback: fallback(upstream),
+			Log:      componentLogger(log, cfg.Log, "receipts"),
+		})
+		if err != nil {
+			receipt = nil
+			degraded.WithLabelValues("receipts").Set(1)
+			log.Warn().Err(err).Msg("receipts writer unavailable; receipt requests are proxied to main")
+		}
+	}
+
 	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
 		log.Info().Bool("writing_typing", typer != nil && typer.Writing()).Msg("typing writer")
@@ -412,15 +481,16 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	client := http.NewServeMux()
 	clientSync.Register(client)
 	router := &httpserve.Router{
-		Send:         send,
-		Reads:        reads.Handler(),
-		ReadsMatch:   func(p string) bool { _, ok := fedapi.Match(p); return ok },
-		PingMatch:    fedping.Match,
-		Creator:      createEvents,
-		CreatorMatch: creatorapp.Match,
-		TypingMatch:  typing.Match,
-		Client:       client,
-		Fallback:     fallback(upstream),
+		Send:          send,
+		Reads:         reads.Handler(),
+		ReadsMatch:    func(p string) bool { _, ok := fedapi.Match(p); return ok },
+		PingMatch:     fedping.Match,
+		Creator:       createEvents,
+		CreatorMatch:  creatorapp.Match,
+		TypingMatch:   typing.Match,
+		ReceiptsMatch: receipts.Match,
+		Client:        client,
+		Fallback:      fallback(upstream),
 	}
 
 	mode, _ := cfg.Listen.ParsedSocketMode() // validated at load
@@ -442,6 +512,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	if typer != nil {
 		router.Typing = typer.Handler()
+	}
+	if receipt != nil {
+		router.Receipts = receipt.Handler()
 	}
 
 	// The replication listener, where other Synapse processes reach this
@@ -473,8 +546,10 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				return err
 			}
 		}
-		if typer != nil {
-			if err := typer.Register(repl); err != nil {
+		if typer != nil || receipt != nil {
+			// One fed_send_edu, as one Synapse process has: for each EDU type
+			// whose stream this process writes.
+			if err := repl.Register(replserver.FedSendEDU(localEDU)); err != nil {
 				return err
 			}
 		}
@@ -515,6 +590,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
 			if typer != nil {
 				typer.SetSynapse(scfg)
+			}
+			if receipt != nil {
+				receipt.SetSynapse(scfg)
 			}
 		})
 		return gctx.Err()

@@ -12,8 +12,8 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/build"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pyjson"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyjson"
 )
 
 // Policy servers (MSC4284): RoomPolicyHandler (handlers/room_policy.py,

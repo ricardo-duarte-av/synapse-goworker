@@ -11,7 +11,7 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pyjson"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyjson"
 )
 
 // The request parsing of http/servlet.py (v1.163.0).

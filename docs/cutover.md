@@ -122,6 +122,34 @@ Each step is independent and reversible by undoing it.
    To move it back, set `stream_writers.typing` to the old writer, restart
    every Synapse process and goworker, and point the location back.
 
+7. **Receipts** (after typing; the replication listener and `instance_map`
+   entry are already there). goworker takes the role only when it starts.
+   - homeserver.yaml: `stream_writers.receipts: [<goworker's
+     instance_name>]`, alone. account_data stays where it is: goworker
+     stores `m.fully_read` on that writer over replication.
+   - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+     included), then **goworker straight after**. Its log says "writing
+     the receipts stream" with the position (the sequence's `last_value`).
+     Until goworker is back, receipt requests fail with 500, as on any
+     instance that is not the writer.
+   - nginx: point both `rooms/.*/receipt` and `rooms/.*/read_markers` at
+     goworker, and reload. `read_markers` must move too: it writes `m.read`
+     receipts, which only the writer can.
+   - Check:
+     - "Receipts writer" on the dashboard: requests `stored`, "Receipts
+       stored" `local new`, and "Stream IDs" with nothing left unfinished;
+     - `stream_positions` has `(receipts, <goworker>)` following
+       `receipts_sequence`, and no row for the old writer;
+     - another user sees your read receipt through a Python sync worker and
+       through goworker;
+     - your unread count drops after reading (main's push summaries);
+     - receipts from remote servers arrive (EDUs `handled`).
+
+   To move it back, set the list to the old writer, restart every Synapse
+   process and goworker, and point both locations back. The old writer
+   starts again from the sequence, as Synapse does when a writer is added
+   back.
+
 ## Afterwards
 
 - Remove the old containers.

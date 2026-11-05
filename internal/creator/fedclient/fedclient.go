@@ -18,8 +18,8 @@ import (
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/federation"
 
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/creator/pyjson"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyjson"
 )
 
 // queryTimeout is make_query's timeout=10000.

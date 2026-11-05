@@ -57,6 +57,7 @@ type Writers struct {
 	Receipts    []string
 	Presence    []string
 	DeviceLists []string
+	AccountData []string
 }
 
 // Config is the subset of homeserver.yaml this worker needs.
@@ -219,6 +220,7 @@ type raw struct {
 		Receipts    any `yaml:"receipts"`
 		Presence    any `yaml:"presence"`
 		DeviceLists any `yaml:"device_lists"`
+		AccountData any `yaml:"account_data"`
 	} `yaml:"stream_writers"`
 
 	WorkerReplicationSecret     *string `yaml:"worker_replication_secret"`
@@ -514,6 +516,7 @@ func writers(r raw) (Writers, error) {
 		{"receipts", r.StreamWriters.Receipts, &w.Receipts},
 		{"presence", r.StreamWriters.Presence, &w.Presence},
 		{"device_lists", r.StreamWriters.DeviceLists, &w.DeviceLists},
+		{"account_data", r.StreamWriters.AccountData, &w.AccountData},
 	}
 	for _, f := range fields {
 		names, err := instanceList(f.v)

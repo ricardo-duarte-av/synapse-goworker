@@ -27,7 +27,7 @@ func (w *Writer) Endpoint() replserver.Endpoint {
 	}
 }
 
-func (w *Writer) serveUpdates(_ context.Context, req replserver.Request) (int, map[string]any, error) {
+func (w *Writer) serveUpdates(ctx context.Context, req replserver.Request) (int, map[string]any, error) {
 	s := w.Stream(req.Args["stream_name"])
 	if s == nil {
 		return 0, nil, &replserver.Error{Code: 400, Errcode: "M_UNKNOWN", Msg: "Unknown stream"}
@@ -43,7 +43,9 @@ func (w *Writer) serveUpdates(_ context.Context, req replserver.Request) (int, m
 	// get_updates_since
 	updates, limited := []Update(nil), false
 	if from != upto {
-		updates, upto, limited = s.UpdatesSince(from, upto, TargetRowCount)
+		if updates, upto, limited, err = s.UpdatesSince(ctx, from, upto, TargetRowCount); err != nil {
+			return 0, nil, err
+		}
 	}
 	rows := make([][2]any, 0, len(updates))
 	for _, u := range updates {

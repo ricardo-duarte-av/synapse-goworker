@@ -1,6 +1,7 @@
-// Package pyjson decodes JSON as Python's json module does where gjson
-// differs: an object with a repeated key holds it once, at its first
-// position, with its last value (a dict assignment). gjson finds the first.
+// Package pyjson reads and writes JSON as Python's json module does where Go
+// differs. Reading: an object with a repeated key holds it once, at its
+// first position, with its last value (a dict assignment); gjson finds the
+// first. Writing: Encode is Synapse's json_encoder (encode.go).
 package pyjson
 
 import (
