@@ -97,6 +97,16 @@ type Inbound struct {
 	gate    *limits.Gate
 	closers []func()
 	backoff *backoff.Limiter
+	locks   *inbound.Locks
+}
+
+// Locks is write mode's lock store, shared by every part that takes
+// Synapse's worker locks; nil without write mode.
+func (i *Inbound) Locks() *inbound.Locks {
+	if i == nil {
+		return nil
+	}
+	return i.locks
 }
 
 // Backoff is write mode's destination retry limiter (Synapse's
@@ -210,12 +220,13 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		log.Warn().Err(err).Msg("Inbound: write mode unavailable; transactions with PDUs go to Synapse")
 	} else {
 		out.closers = append(out.closers, wdb.Close)
-		stop, l, err := writeMode(ctx, cfg, wdb, repl, acls, &opts, &handler)
+		stop, l, locks, err := writeMode(ctx, cfg, wdb, repl, acls, &opts, &handler)
 		if err != nil {
 			return fail(err)
 		}
 		limiter = l
 		out.backoff = l
+		out.locks = locks
 		out.closers = append(out.closers, stop)
 	}
 
@@ -245,12 +256,12 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 // writeMode builds the PDU path and puts it into opts. It returns what stops
 // it, and the destination backoff its outbound requests are under.
 func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replication.Client,
-	acls *acl.Checker, opts *txn.Options, handler *atomic.Pointer[txn.Handler]) (func(), *backoff.Limiter, error) {
+	acls *acl.Checker, opts *txn.Options, handler *atomic.Pointer[txn.Handler]) (func(), *backoff.Limiter, *inbound.Locks, error) {
 	hs, log, ic := cfg.Synapse, cfg.Log, cfg.Inbound
 
 	pst, err := pdustore.OpenAs(ctx, cfg.DSN, "", "", orDefault(cfg.PDUMaxConns, 4))
 	if err != nil {
-		return nil, nil, fmt.Errorf("inbound: %w", err)
+		return nil, nil, nil, fmt.Errorf("inbound: %w", err)
 	}
 	pv := pduverify.New(pst, stateres.Options{})
 	if cfg.States != nil {
@@ -259,7 +270,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	pc, err := pduverify.PushConfigFor(hs)
 	if err != nil {
 		pst.Close()
-		return nil, nil, fmt.Errorf("inbound: push rules: %w", err)
+		return nil, nil, nil, fmt.Errorf("inbound: push rules: %w", err)
 	}
 	pv.EnablePush(pc)
 
@@ -286,7 +297,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	if err != nil {
 		proc.Close()
 		pst.Close()
-		return nil, nil, fmt.Errorf("inbound: signing key: %w", err)
+		return nil, nil, nil, fmt.Errorf("inbound: signing key: %w", err)
 	}
 	// Policy servers decide soft-fail on receipt (MSC4284): without asking,
 	// spam Synapse soft-fails gets through.
@@ -294,7 +305,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	if err != nil {
 		proc.Close()
 		pst.Close()
-		return nil, nil, fmt.Errorf("inbound: policy server client: %w", err)
+		return nil, nil, nil, fmt.Errorf("inbound: policy server client: %w", err)
 	}
 	asker.Backoff = limiter
 
@@ -304,7 +315,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 		if err != nil {
 			proc.Close()
 			pst.Close()
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		fetcher := fedfetch.New(fc, pst, pv, asker, hs.ServerName, keys)
 		fetcher.Backoff = limiter
@@ -331,7 +342,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	proc.Start()
 	log.Info().Str("instance", cfg.InstanceName).Bool("fetch_missing", ic.FetchesMissingEvents()).
 		Msg("Inbound: write mode on; PDUs are persisted here")
-	return func() { proc.Close(); pst.Close() }, limiter, nil
+	return func() { proc.Close(); pst.Close() }, limiter, proc.Locks(), nil
 }
 
 func orDefault(v, def int32) int32 {

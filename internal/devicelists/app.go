@@ -129,6 +129,11 @@ type Options struct {
 	CStore ClientStore
 	// CachesInsert writes caches-stream rows in a transaction of their own.
 	CachesInsert func(ctx context.Context, cacheFunc string, keys [][]string) ([]cachestream.Row, error)
+	// KStore is /keys/upload's store (DB).
+	KStore KeysStore
+	// Locks is the process's worker locks (inbound's); without them
+	// /keys/upload goes to main.
+	Locks Locker
 	// Fallback is main, for what is not served here.
 	Fallback http.Handler
 	Log      zerolog.Logger

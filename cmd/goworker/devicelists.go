@@ -12,6 +12,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/devicelists"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
+	inboundlocks "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
@@ -89,4 +90,25 @@ func stateAtEvent(ctx context.Context, dsn string, states *statecache.Cache) (de
 		}
 		return out, nil
 	}, st.Close, nil
+}
+
+// workerLocks is inbound's lock store as devicelists.Locker; nil without
+// it (inbound not writing), which sends /keys/upload to main.
+func workerLocks(l *inboundlocks.Locks) devicelists.Locker {
+	if l == nil {
+		return nil
+	}
+	return lockerFunc(func(ctx context.Context, name, key string) (func(), error) {
+		lk, err := l.Acquire(ctx, name, key)
+		if err != nil {
+			return nil, err
+		}
+		return func() { lk.Release(context.Background()) }, nil
+	})
+}
+
+type lockerFunc func(ctx context.Context, name, key string) (func(), error)
+
+func (f lockerFunc) Acquire(ctx context.Context, name, key string) (func(), error) {
+	return f(ctx, name, key)
 }

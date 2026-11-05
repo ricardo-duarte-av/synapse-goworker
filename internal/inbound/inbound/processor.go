@@ -648,3 +648,7 @@ var (
 		Help: "Staged events pruned from rooms with over 100 queued.",
 	})
 )
+
+// Locks is the process's lock store (LockStore): one, so that a lock this
+// process holds is not taken again under its own name.
+func (p *Processor) Locks() *Locks { return p.locks }

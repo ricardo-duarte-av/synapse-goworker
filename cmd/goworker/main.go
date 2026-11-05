@@ -647,6 +647,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			StateAtEvent: stateAt,
 			Auth:         clientAuth,
 			CStore:       ddb,
+			KStore:       ddb,
+			Locks:        workerLocks(inbound.Locks()),
 			CachesInsert: ddb.InsertCaches(cfg.InstanceName),
 			Fallback:     fallback(upstream),
 			Log:          componentLogger(log, cfg.Log, "device_lists"),

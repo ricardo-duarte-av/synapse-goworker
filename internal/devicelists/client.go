@@ -70,9 +70,13 @@ func devicePath(p string) (deviceID string, one, ok bool) {
 	return "", false, false
 }
 
-// MatchDevices is the device endpoints served here: GET /devices, GET and
-// PUT /devices/{deviceId}. DELETE and anything else go to main.
+// MatchDevices is the device and key endpoints served here: GET /devices,
+// GET and PUT /devices/{deviceId}, POST /keys/upload. DELETE and anything
+// else go to main.
 func MatchDevices(method, escapedPath string) bool {
+	if keysUploadPath(escapedPath) {
+		return method == http.MethodPost
+	}
 	_, one, ok := devicePath(escapedPath)
 	if !ok {
 		return false
@@ -88,12 +92,16 @@ func (a *App) DevicesHandler() http.Handler { return http.HandlerFunc(a.serveDev
 
 func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 	id, one, _ := devicePath(r.URL.EscapedPath())
+	upload := keysUploadPath(r.URL.EscapedPath())
 	endpoint := "devices"
-	if one {
+	switch {
+	case upload:
+		endpoint = "keys_upload"
+	case one:
 		endpoint = "device"
 	}
 	count := func(o string) { clientRequests.WithLabelValues(endpoint, r.Method, o).Inc() }
-	if !a.writing || a.CStore == nil {
+	if !a.writing || a.CStore == nil || (upload && (a.KStore == nil || a.Locks == nil)) {
 		count("to_main")
 		a.Fallback.ServeHTTP(w, r)
 		return
@@ -116,6 +124,8 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	)
 	switch {
+	case upload:
+		body, cerr = a.serveKeysUpload(ctx, r, v)
 	case !one:
 		body, cerr = a.getDevices(ctx, v.UserID)
 	case r.Method == http.MethodGet:

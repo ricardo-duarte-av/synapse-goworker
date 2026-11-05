@@ -167,6 +167,9 @@ type Config struct {
 	Profile Profile
 	// RcKeyRequests is rc_key_requests (20/s, burst 100).
 	RcKeyRequests Ratelimit
+	// DontNotifyNewDevicesFor is dont_notify_new_devices_for: users whose
+	// new devices send no device list update.
+	DontNotifyNewDevicesFor []string
 
 	signingKey, signingKeyPath string
 }
@@ -202,6 +205,8 @@ func (c *Config) Flag(name string, def bool) bool {
 // a Synapse upgrade that adds options cannot stop this parsing.
 type raw struct {
 	ServerName string `yaml:"server_name"`
+
+	DontNotifyNewDevicesFor []string `yaml:"dont_notify_new_devices_for"`
 
 	SigningKey     string `yaml:"signing_key"`
 	SigningKeyPath string `yaml:"signing_key_path"`
@@ -339,6 +344,7 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, err
 	}
 
+	cfg.DontNotifyNewDevicesFor = r.DontNotifyNewDevicesFor
 	cfg.TrackPresence = trackPresence(r)
 	cfg.Experimental = lastWins(&r.ExperimentalFeatures)
 	if cfg.Membership, err = membership(b, r.ServerName); err != nil {

@@ -152,6 +152,24 @@ func (l *Locks) TryAcquireReadWrite(ctx context.Context, name, key string, write
 	return l.d.newLock(true, name, key, token, nil), nil
 }
 
+// Acquire waits for a lock, as WaitingLock does (acquire_lock): retrying
+// from 100ms, doubling, at most every 5s.
+func (l *Locks) Acquire(ctx context.Context, name, key string) (*Lock, error) {
+	wait := 100 * time.Millisecond
+	for {
+		lk, err := l.TryAcquire(ctx, name, key)
+		if err != nil || lk != nil {
+			return lk, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, maxLockWait)
+	}
+}
+
 // AcquireReadWrite waits for a read/write lock, as WaitingLock does:
 // retrying from 100ms, doubling, at most every 5s. Synapse also wakes
 // waiters when a lock is released, over replication; we only poll.
