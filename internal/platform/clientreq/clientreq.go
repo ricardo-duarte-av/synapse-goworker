@@ -19,6 +19,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyjson"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
 )
 
@@ -184,6 +185,16 @@ func Truthy(raw json.RawMessage) bool {
 	}
 }
 
+// render is a body as Synapse's json_encoder writes it: ensure_ascii, no
+// HTML escaping ("a > b", not encoding/json's "a \u003e b").
+func render(body map[string]any) []byte {
+	data, _ := json.Marshal(body)
+	if enc, err := pyjson.Encode(data); err == nil {
+		return []byte(enc)
+	}
+	return data
+}
+
 // WriteRaw answers 200 with a body already rendered (json_encoder's).
 func WriteRaw(w http.ResponseWriter, body []byte) {
 	server.SetCORS(w.Header())
@@ -202,14 +213,18 @@ func Write(w http.ResponseWriter, e *Error, body map[string]any) {
 			_, _ = w.Write(e.Raw)
 			return
 		}
-		data, _ := json.Marshal(e.Body)
-		_, _ = w.Write(data)
+		_, _ = w.Write(render(e.Body))
 		return
 	}
 	if body == nil {
 		body = map[string]any{}
 	}
 	data, err := json.Marshal(body)
+	if err == nil {
+		var enc string
+		enc, err = pyjson.Encode(data)
+		data = []byte(enc)
+	}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"errcode":"M_UNKNOWN","error":"Internal server error"}`))

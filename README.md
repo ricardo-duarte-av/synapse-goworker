@@ -91,6 +91,18 @@ account_data stream; and puts the ignored-user invalidations on the caches
 stream. Module `on_account_data_updated` callbacks do not run. As for
 receipts, the role is taken at start only. See docs/cutover.md.
 
+### To-device
+
+When goworker starts while `stream_writers.to_device` names `instance_name`,
+it is Synapse's to-device writer: it serves `PUT /_matrix/client/*/sendToDevice/{type}/{txnId}`
+(with Synapse's transaction cache and `rc_key_requests`), takes
+`m.direct_to_device` EDUs from other servers, and writes and publishes the
+to_device stream (`device_inbox` for our devices, `device_federation_outbox`
+for other servers, whose destinations go to our federation sender
+in-process). Delivering and deleting messages stays with sync. As for the
+other stream-row writers, the role is taken at start only. See
+docs/cutover.md.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)

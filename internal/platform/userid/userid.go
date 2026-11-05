@@ -3,7 +3,11 @@
 // is_compliant_user_id.
 package userid
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
+)
 
 // ParseError is UserID.from_string's SynapseError(400, ..., M_INVALID_PARAM).
 type ParseError struct{ Msg string }
@@ -44,4 +48,10 @@ func Compliant(s string) bool {
 		}
 	}
 	return true
+}
+
+// Valid is UserID.is_valid: from_string succeeds, and the domain is a
+// valid server name (parse_and_validate_server_name).
+func Valid(s string) bool {
+	return Check(s) == nil && pdu.ValidServerName(Domain(s))
 }

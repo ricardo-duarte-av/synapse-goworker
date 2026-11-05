@@ -3,6 +3,8 @@ package pyjson
 import (
 	"errors"
 	"math"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -29,17 +31,43 @@ var ErrOutOfRange = errors.New("pyjson: Out of range float values are not JSON c
 //     float.__repr__ ("1e5" is "100000.0", "1e16" is "1e+16"), and one
 //     out of range is ErrOutOfRange.
 func Encode(raw []byte) (string, error) {
+	return encode(raw, options{ensureASCII: true})
+}
+
+// ErrLoneSurrogate is a lone surrogate in a string, which canonicaljson's
+// .encode("utf-8") refuses (UnicodeEncodeError).
+var ErrLoneSurrogate = errors.New("pyjson: a lone surrogate cannot be encoded as UTF-8")
+
+// CanonicalLen is len(encode_canonical_json(json.loads(raw))): canonicaljson
+// 2.0's ensure_ascii=False, sort_keys=True, compact JSON, as UTF-8 bytes,
+// with Python's float repr. Synapse sizes to-device messages and EDUs by it.
+func CanonicalLen(raw []byte) (int, error) {
+	s, err := Canonical(raw)
+	return len(s), err
+}
+
+// Canonical is encode_canonical_json(json.loads(raw)) as a string.
+func Canonical(raw []byte) (string, error) {
+	return encode(raw, options{sortKeys: true})
+}
+
+type options struct {
+	ensureASCII bool
+	sortKeys    bool
+}
+
+func encode(raw []byte, o options) (string, error) {
 	if !gjson.ValidBytes(raw) {
 		return "", ErrInvalid
 	}
 	var sb strings.Builder
-	if err := encodeValue(&sb, gjson.ParseBytes(raw)); err != nil {
+	if err := encodeValue(&sb, gjson.ParseBytes(raw), o); err != nil {
 		return "", err
 	}
 	return sb.String(), nil
 }
 
-func encodeValue(sb *strings.Builder, v gjson.Result) error {
+func encodeValue(sb *strings.Builder, v gjson.Result, o options) error {
 	switch {
 	case v.IsObject():
 		type member struct {
@@ -67,15 +95,23 @@ func encodeValue(sb *strings.Builder, v gjson.Result) error {
 		if err != nil {
 			return err
 		}
+		if o.sortKeys {
+			// sorted() of str keys: by code point.
+			sort.Slice(order, func(i, j int) bool {
+				return slices.Compare(members[order[i]].key, members[order[j]].key) < 0
+			})
+		}
 		sb.WriteByte('{')
 		for i, id := range order {
 			if i > 0 {
 				sb.WriteByte(',')
 			}
 			m := members[id]
-			writeString(sb, m.key)
+			if err := writeStr(sb, m.key, o); err != nil {
+				return err
+			}
 			sb.WriteByte(':')
-			if err := encodeValue(sb, m.value); err != nil {
+			if err := encodeValue(sb, m.value, o); err != nil {
 				return err
 			}
 		}
@@ -89,7 +125,7 @@ func encodeValue(sb *strings.Builder, v gjson.Result) error {
 				sb.WriteByte(',')
 			}
 			i++
-			err = encodeValue(sb, x)
+			err = encodeValue(sb, x, o)
 			return err == nil
 		})
 		if err != nil {
@@ -101,7 +137,9 @@ func encodeValue(sb *strings.Builder, v gjson.Result) error {
 		if err != nil {
 			return err
 		}
-		writeString(sb, s)
+		if err := writeStr(sb, s, o); err != nil {
+			return err
+		}
 	case v.Type == gjson.Number:
 		return writeNumber(sb, v.Raw)
 	case v.Type == gjson.True:
@@ -184,6 +222,52 @@ func decodeString(lit string) ([]rune, error) {
 		}
 	}
 	return out, nil
+}
+
+func writeStr(sb *strings.Builder, s []rune, o options) error {
+	if o.ensureASCII {
+		writeString(sb, s)
+		return nil
+	}
+	return writeStringUTF8(sb, s)
+}
+
+// writeStringUTF8 is py_encode_basestring (ensure_ascii=False): only '"',
+// '\\' and the control characters escaped, everything else as itself.
+func writeStringUTF8(sb *strings.Builder, s []rune) error {
+	const hex = "0123456789abcdef"
+	sb.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			sb.WriteString(`\"`)
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		case '\b':
+			sb.WriteString(`\b`)
+		case '\f':
+			sb.WriteString(`\f`)
+		default:
+			switch {
+			case r < 0x20:
+				sb.WriteString(`\u00`)
+				sb.WriteByte(hex[r>>4])
+				sb.WriteByte(hex[r&0xf])
+			case r >= 0xd800 && r <= 0xdfff:
+				return ErrLoneSurrogate
+			default:
+				sb.WriteRune(r)
+			}
+		}
+	}
+	sb.WriteByte('"')
+	return nil
 }
 
 // writeString is py_encode_basestring_ascii.

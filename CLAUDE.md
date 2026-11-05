@@ -47,6 +47,7 @@ The approved plan is in
 | `internal/typing` | the typing writer (`TypingWriterHandler`): PUT `.../typing/`, typing EDUs (in-process from inbound, `fed_send_edu` from others), the typing stream; writes while `stream_writers.typing` names `instance_name` |
 | `internal/receipts` | the receipts writer: POST `.../receipt/...` and `.../read_markers` (m.fully_read goes to the account-data writer over replication), receipt EDUs, the receipts stream from `receipts_linearized`; writes when `stream_writers.receipts` names `instance_name` alone **at start** |
 | `internal/accountdata` | the account-data writer: global and room account data, MSC3391 deletes, tags, the six replication endpoints other processes call on the writer, the account_data stream (three tables), ignored-user invalidations on the caches stream; writes when `stream_writers.account_data` names `instance_name` **at start** |
+| `internal/todevice` | the to-device writer: PUT `.../sendToDevice/...` (Synapse's transaction cache, `rc_key_requests`), `m.direct_to_device` EDUs (in-process from inbound, `fed_send_edu`), the to_device stream (`device_inbox`, `device_federation_outbox`; destinations to our sender in-process); writes when `stream_writers.to_device` names `instance_name` **at start** |
 | `internal/fedping` | MSC4524 ping/pong (not in Synapse; main's 404 is its "disabled"); started from the metrics listener's `/debug/federation/ping` |
 | `cmd/goevent-e2e` | the creator's live suite, in its test rooms only |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
@@ -208,6 +209,22 @@ Still per component, on purpose:
   GETs and errors, its sync and long-poll, ignoring hiding messages on
   main, a room upgrade on main copying tags and m.direct through us, both
   restarts.
+- **The to-device writer** (2026-11-05). Same model: sole writer (Synapse
+  allows no other), role at start only. Sizes are Synapse's: a message
+  over 65536 bytes of `encode_canonical_json` is 413, and EDUs are packed
+  by `split_device_messages_into_edus` (`pyjson.Canonical`, canonicaljson
+  2.0's encoding, checked against the Synapse image; the partitions
+  against Synapse's own splitter, `testdata/split.jsonl`). Every add takes
+  a stream ID, the local batch even when empty, and a repeated remote
+  `message_id` too. An EDU error Synapse raises as a SynapseError goes back
+  over `fed_send_edu` with its status (a `replserver.Error`), since
+  `on_edu` does not catch it. Checked against a throwaway Synapse 1.164.1
+  main as the reference: the same requests to it as writer and to goworker
+  gave identical responses (400, 413 and 500 texts included), IDs spent,
+  `device_inbox` rows and outbox EDUs (bar the random `message_id`); then
+  delivery in both syncs, main's long-poll, `fed_send_edu` and its
+  repeat, both restarts. Native error bodies are rendered by
+  `pyjson.Encode` now (encoding/json wrote `>` as `\u003e`).
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

@@ -162,6 +162,8 @@ type Config struct {
 
 	// Profile is what a profile lookup reads.
 	Profile Profile
+	// RcKeyRequests is rc_key_requests (20/s, burst 100).
+	RcKeyRequests Ratelimit
 
 	signingKey, signingKeyPath string
 }
@@ -342,6 +344,9 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.Delayed, err = delayedSettings(b, cfg.Experimental); err != nil {
+		return nil, err
+	}
+	if cfg.RcKeyRequests, err = keyRequests(b); err != nil {
 		return nil, err
 	}
 	if cfg.Profile, err = profileSettings(b); err != nil {

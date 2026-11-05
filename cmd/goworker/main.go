@@ -56,6 +56,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/receipts"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
 	syncapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sync/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/todevice"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/typing"
 )
 
@@ -289,8 +290,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	// The typing writer, built after the sender it feeds; inbound hands it
 	// typing EDUs through LocalEDU once it exists.
 	var (
-		typer   *typing.App
-		receipt *receipts.App
+		typer    *typing.App
+		receipt  *receipts.App
+		toDevice *todevice.App
 	)
 	// localEDU is the handler in this process for an EDU type, while it
 	// writes that type's stream: for inbound's /send, and fed_send_edu.
@@ -300,6 +302,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			return typer.ReceiveEDU
 		case eduType == edutype.Receipt && receipt != nil && receipt.Writing():
 			return receipt.ReceiveEDU
+		case eduType == edutype.DirectToDevice && toDevice != nil && toDevice.Writing():
+			return toDevice.ReceiveEDU
 		}
 		return nil
 	}
@@ -496,6 +500,53 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		}
 	}
 
+	// The to-device writer: it writes when stream_writers.to_device names us
+	// at start. Not under -check: taking the role writes stream_positions.
+	switch {
+	case !slices.Contains(hs.Writers.ToDevice, cfg.InstanceName):
+	case checkOnly:
+		log.Info().Msg("to-device writer: stream_writers.to_device names this process (not started under -check)")
+	case streams == nil:
+		degraded.WithLabelValues("to_device").Set(1)
+		log.Warn().Msg("the to-device writer needs homeserver.yaml's redis; sendToDevice is proxied to main")
+	default:
+		tdb, err := todevice.Open(ctx, dsn, pools.ToDeviceWriter, db.ConnectTimeout())
+		if err != nil {
+			degraded.WithLabelValues("to_device").Set(1)
+			log.Warn().Err(err).Msg("to-device writer unavailable; sendToDevice is proxied to main")
+			break
+		}
+		closers = append(closers, tdb.Close)
+		resyncClient := replication.NewClient(hs, replication.Inbound)
+		deviceLists := hs.Writers.DeviceLists
+		toDevice, err = todevice.New(ctx, todevice.Options{
+			Instance:       cfg.InstanceName,
+			Synapse:        src.Current,
+			Auth:           clientAuth,
+			Store:          tdb,
+			Pool:           streamid.PG{Pool: tdb.Pool()},
+			Writer:         streams,
+			OnDestinations: sender.ToDeviceDestinations,
+			// multi_user_device_resync on the device-lists writer (main
+			// when there is none), as a worker's DeviceListWorkerUpdater
+			// asks it.
+			Resync: func(ctx context.Context, userID string) error {
+				w := synapsecfg.MainProcessInstanceName
+				if len(deviceLists) > 0 {
+					w = deviceLists[0]
+				}
+				return resyncClient.MultiUserDeviceResync(ctx, w, []string{userID})
+			},
+			Fallback: fallback(upstream),
+			Log:      componentLogger(log, cfg.Log, "to_device"),
+		})
+		if err != nil {
+			toDevice = nil
+			degraded.WithLabelValues("to_device").Set(1)
+			log.Warn().Err(err).Msg("to-device writer unavailable; sendToDevice is proxied to main")
+		}
+	}
+
 	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
 		log.Info().Bool("writing_typing", typer != nil && typer.Writing()).Msg("typing writer")
@@ -540,6 +591,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		CreatorMatch:  creatorapp.Match,
 		TypingMatch:   typing.Match,
 		ReceiptsMatch: receipts.Match,
+		ToDeviceMatch: todevice.Match,
 		AccountDataMatch: func(method, p string) bool {
 			return accountData != nil && accountData.Match(method, p)
 		},
@@ -572,6 +624,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	if accountData != nil {
 		router.AccountData = accountData.Handler()
+	}
+	if toDevice != nil {
+		router.ToDevice = toDevice.Handler()
 	}
 
 	// The replication listener, where other Synapse processes reach this
@@ -610,7 +665,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				}
 			}
 		}
-		if typer != nil || receipt != nil {
+		if typer != nil || receipt != nil || toDevice != nil {
 			// One fed_send_edu, as one Synapse process has: for each EDU type
 			// whose stream this process writes.
 			if err := repl.Register(replserver.FedSendEDU(localEDU)); err != nil {
@@ -661,6 +716,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			}
 			if accountData != nil {
 				accountData.SetSynapse(scfg)
+			}
+			if toDevice != nil {
+				toDevice.SetSynapse(scfg)
 			}
 		})
 		return gctx.Err()

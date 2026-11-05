@@ -165,6 +165,26 @@ components:
       - synapse/storage/util/id_generators.py
       - synapse/util/json.py
 
+  to_device:
+    code: internal/todevice
+    synapse:
+      - synapse/api/constants.py
+      - synapse/api/errors.py
+      - synapse/api/ratelimiting.py
+      - synapse/config/ratelimiting.py
+      - synapse/handlers/devicemessage.py
+      - synapse/rest/client/sendtodevice.py
+      - synapse/rest/client/transactions.py
+      - synapse/storage/database.py
+      - synapse/storage/databases/main/deviceinbox.py
+      - synapse/storage/databases/main/devices.py
+      - synapse/storage/databases/main/roommember.py
+      - synapse/storage/util/id_generators.py
+      - synapse/types/__init__.py
+      - synapse/util/__init__.py
+      - synapse/util/json.py
+      - synapse/util/stringutils.py
+
   inbound:
     code: internal/inbound
     synapse:

@@ -57,3 +57,38 @@ func TestFloatReprRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// testdata/canonical.jsonl is [input, encode_canonical_json(json.loads(input))]
+// per line (null where it raises), written by canonicaljson 2.0 in the
+// Synapse 1.164.1 image.
+func TestCanonicalMatchesPython(t *testing.T) {
+	f, err := os.Open("testdata/canonical.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	n := 0
+	for sc.Scan() {
+		var pair [2]*string
+		if err := json.Unmarshal(sc.Bytes(), &pair); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Canonical([]byte(*pair[0]))
+		switch {
+		case pair[1] == nil:
+			if err == nil {
+				t.Errorf("Canonical(%s) = %s, want an error", *pair[0], got)
+			}
+		case err != nil || got != *pair[1]:
+			t.Errorf("Canonical(%s)\n got  %s (%v)\n want %s", *pair[0], got, err, *pair[1])
+		}
+		if l, lerr := CanonicalLen([]byte(*pair[0])); err == nil && (lerr != nil || l != len(got)) {
+			t.Errorf("CanonicalLen(%s) = %d", *pair[0], l)
+		}
+		n++
+	}
+	if n == 0 {
+		t.Fatal("no cases")
+	}
+}

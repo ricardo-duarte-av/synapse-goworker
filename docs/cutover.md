@@ -177,6 +177,32 @@ Each step is independent and reversible by undoing it.
    To move it back, set the list to the old writer, restart every Synapse
    process and goworker, and point both locations back.
 
+9. **To-device** (after account data; same model). goworker takes the role
+   only when it starts. Encryption depends on it: a lost to-device message
+   is a message some device cannot decrypt.
+   - homeserver.yaml: `stream_writers.to_device: [<goworker's
+     instance_name>]` (Synapse allows exactly one).
+   - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+     included), then **goworker straight after**: its log says "writing
+     the to_device stream" with the position, and inbound's EDU routing,
+     read at start, then hands remote to-device EDUs to it in-process.
+     Until goworker is back, sendToDevice fails with 500.
+   - nginx: point `^/_matrix/client/(r0|v3|unstable)/sendToDevice/` at
+     goworker, and reload.
+   - Check:
+     - "To-device writer" on the dashboard: requests `ok`, messages
+       `local -> local` and `local -> remote`, EDUs `in handled` and
+       `out queued`;
+     - `stream_positions` has `(to_device, <goworker>)` following
+       `device_inbox_sequence`, and no row for the old writer;
+     - a new login decrypts history (key sharing), and a verification
+       between two sessions completes (both are to-device);
+     - messages to another server's users leave: "Outbound federation"
+       EDUs by type `m.direct_to_device`.
+
+   To move it back, set the list to the old writer, restart every Synapse
+   process and goworker, and point the location back.
+
 ## Afterwards
 
 - Remove the old containers.

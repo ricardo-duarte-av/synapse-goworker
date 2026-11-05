@@ -328,3 +328,18 @@ func (w *Worker) ReceiptRow(roomID, receiptType, userID, eventID, threadID strin
 		}
 	}()
 }
+
+// ToDeviceDestinations are the destinations the to-device writer in this
+// process (internal/todevice) queued EDUs for: send_device_messages, as
+// Synapse pokes its own federation sender in-process. They reach the sender
+// here and not from the bus, where this process's own rows are dropped as
+// echoes; the shard filter applies as for every row.
+func (w *Worker) ToDeviceDestinations(servers []string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), replicationWorkTimeout)
+		defer cancel()
+		if err := w.devices.HandleToDevice(ctx, servers); err != nil {
+			w.log.Error().Err(err).Int("servers", len(servers)).Msg("failed to queue to-device messages")
+		}
+	}()
+}
