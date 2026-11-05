@@ -81,6 +81,8 @@ type Sync struct {
 	routes  server.Routes
 	// presence relays to the presence writer; nil with presence off.
 	presence *presence.Client
+	// pushFeatures are the flags the push rules are built under.
+	pushFeatures pushrules.Features
 }
 
 // Presence is the relay to the presence writer, which the typing writer
@@ -217,6 +219,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 			MSC4306Enabled:             flag("msc4306_enabled", false),
 		},
 	}
+	s.pushFeatures = deps.PushRuleFeatures
 	s.routes = server.Routes{
 		RoomInitialSync: handlers.RoomInitialSync(deps),
 		InitialSync:     handlers.InitialSync(deps),

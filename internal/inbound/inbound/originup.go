@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
 )
 
 // CacheRetryTimings is the cache an origin's reset invalidates
@@ -37,13 +39,7 @@ const qInsertCacheInvalidation = `
 	VALUES ($1, $2, $3, $4, $5)`
 
 // CacheInvalidation is a row of the caches stream, as written.
-type CacheInvalidation struct {
-	StreamID       int64
-	Instance       string
-	CacheFunc      string
-	Keys           []string
-	InvalidationTS int64
-}
+type CacheInvalidation = cachestream.Row
 
 // ResetDestination is set_destination_retry_timings(origin, None, 0, 0).
 func (d *DB) ResetDestination(ctx context.Context, origin string) (CacheInvalidation, error) {

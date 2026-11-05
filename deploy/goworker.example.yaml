@@ -54,6 +54,7 @@ database:
     client_auth: 4             # access token lookups, and marking a token used
     typing: 2                  # the typing writer: memberships, room hosts
     receipts: 4                # the receipts writer: receipts, and what they are checked against
+    account_data: 4            # the account-data writer: account data and tags
     creator_write: 4           # the event creator's own writes (push staging, state groups)
 
 memory:
@@ -67,7 +68,7 @@ memory:
 log:
   level: info                  # trace, debug, info, warn, error, disabled
   # Per part, overriding level; the name is the "component" its lines carry.
-  # Parts: sync, federation_reads, inbound, sender, creator, client_auth, typing, receipts, replication, bus, proxy.
+  # Parts: sync, federation_reads, inbound, sender, creator, client_auth, typing, receipts, account_data, replication, bus, proxy.
   #components:
   #  sender: error              # its warnings are mostly remote servers failing
   #  sync: info

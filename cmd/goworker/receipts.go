@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/rand/v2"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/accountdata"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
@@ -29,6 +30,15 @@ func (e receiptEvents) Access(ctx context.Context, userID, roomID, eventID strin
 		return receipts.Forbidden, nil
 	}
 	return receipts.Missing, nil
+}
+
+// receiptsAccountData is where the read marker is stored: in-process when
+// this process writes account data, else over replication.
+func receiptsAccountData(local *accountdata.App, remote accountDataWriter) receipts.AccountData {
+	if local != nil && local.Writing() {
+		return local
+	}
+	return remote
 }
 
 // accountDataWriter is add_account_data_to_room on a process that does not

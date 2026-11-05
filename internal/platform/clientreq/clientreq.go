@@ -13,10 +13,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
 )
 
@@ -85,19 +87,42 @@ func Unquote(s string) string {
 
 // ReadObject is parse_json_object_from_request.
 func ReadObject(body io.Reader) (map[string]json.RawMessage, *Error) {
+	_, obj, cerr := ReadObjectRaw(body)
+	return obj, cerr
+}
+
+// ReadObjectRaw is ReadObject, with the body's bytes as well, for a value
+// stored as Synapse re-encodes the dict it parsed (pyjson.Encode keeps the
+// order and the last of a repeated key).
+func ReadObjectRaw(body io.Reader) (json.RawMessage, map[string]json.RawMessage, *Error) {
 	data, err := io.ReadAll(io.LimitReader(body, MaxBody+1))
 	if err != nil || len(data) > MaxBody {
-		return nil, New(http.StatusRequestEntityTooLarge, "M_TOO_LARGE", "Request content is too large")
+		return nil, nil, New(http.StatusRequestEntityTooLarge, "M_TOO_LARGE", "Request content is too large")
 	}
 	data = bytes.TrimSpace(data)
 	if !json.Valid(data) {
-		return nil, New(http.StatusBadRequest, "M_NOT_JSON", "Content not JSON.")
+		return nil, nil, New(http.StatusBadRequest, "M_NOT_JSON", "Content not JSON.")
 	}
 	var obj map[string]json.RawMessage
 	if len(data) == 0 || data[0] != '{' || json.Unmarshal(data, &obj) != nil {
-		return nil, New(http.StatusBadRequest, "M_BAD_JSON", "Content must be a JSON object.")
+		return nil, nil, New(http.StatusBadRequest, "M_BAD_JSON", "Content must be a JSON object.")
 	}
-	return obj, nil
+	return data, obj, nil
+}
+
+var domainlessRoomID = regexp.MustCompile(`^[A-Za-z0-9\-_]{43}$`)
+
+// ValidRoomID is RoomID.is_valid: "!localpart:domain" with a valid server
+// name, or MSC4291's "!" and 43 characters of unpadded urlsafe base64.
+func ValidRoomID(s string) bool {
+	if !strings.HasPrefix(s, "!") {
+		return false
+	}
+	if strings.Contains(s, ":") {
+		_, domain, _ := strings.Cut(s[1:], ":")
+		return pdu.ValidServerName(domain)
+	}
+	return domainlessRoomID.MatchString(s[1:])
 }
 
 // Number is a JSON value as Python compares it with an int: a number, or a
@@ -157,6 +182,14 @@ func Truthy(raw json.RawMessage) bool {
 		}
 		return true
 	}
+}
+
+// WriteRaw answers 200 with a body already rendered (json_encoder's).
+func WriteRaw(w http.ResponseWriter, body []byte) {
+	server.SetCORS(w.Header())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // Write answers with Synapse's CORS headers: the error, or body with 200.

@@ -150,6 +150,33 @@ Each step is independent and reversible by undoing it.
    starts again from the sequence, as Synapse does when a writer is added
    back.
 
+8. **Account data** (after receipts; same model). goworker takes the role
+   only when it starts.
+   - homeserver.yaml: `stream_writers.account_data: [<goworker's
+     instance_name>]` (Synapse allows exactly one). If homeserver.yaml
+     lists `modules`, check none registers `on_account_data_updated`: those
+     callbacks run on the writer, and goworker runs none.
+   - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+     included), then **goworker straight after**. Its log says "writing
+     the account_data stream" with the position. Until goworker is back,
+     account data writes fail with 500 on every process.
+   - nginx: point both `.*/account_data` and `.*/tags` at goworker, and
+     reload.
+   - Check:
+     - "Account-data writer" on the dashboard: requests `ok`, writes by
+       caller (`client`, `replication` from main, `local` for read
+       markers), and "Caches stream" lines `sent`;
+     - `stream_positions` has `(account_data, <goworker>)` following
+       `account_data_sequence`, and no row for the old writer;
+     - a tag or `m.direct` set in one client shows in another session;
+     - ignoring a user hides their new messages, and un-ignoring shows
+       them again (the ignored-user cache on every process is dropped
+       through the caches stream);
+     - `m.fully_read` still moves (now stored in-process).
+
+   To move it back, set the list to the old writer, restart every Synapse
+   process and goworker, and point both locations back.
+
 ## Afterwards
 
 - Remove the old containers.

@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientreq"
-	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdu"
 )
 
 // Endpoints, for metrics.
@@ -291,17 +289,5 @@ func jsonBool(raw json.RawMessage) (bool, bool) {
 	return false, false
 }
 
-var domainlessRoomID = regexp.MustCompile(`^[A-Za-z0-9\-_]{43}$`)
-
-// validRoomID is RoomID.is_valid: "!localpart:domain" with a valid server
-// name, or MSC4291's "!" and 43 characters of unpadded urlsafe base64.
-func validRoomID(s string) bool {
-	if !strings.HasPrefix(s, "!") {
-		return false
-	}
-	if strings.Contains(s, ":") {
-		_, domain, _ := strings.Cut(s[1:], ":")
-		return pdu.ValidServerName(domain)
-	}
-	return domainlessRoomID.MatchString(s[1:])
-}
+// validRoomID is RoomID.is_valid.
+func validRoomID(s string) bool { return clientreq.ValidRoomID(s) }

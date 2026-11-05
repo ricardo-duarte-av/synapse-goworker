@@ -30,12 +30,14 @@ import (
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/accountdata"
 	creatorapp "github.com/ricardo-duarte-av/synapse-goworker/internal/creator/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedping"
 	fedreadapp "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
 	inboundapp "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/config"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/edutype"
@@ -142,8 +144,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		stream    *bus.Bus
 		streams   *streamwriter.Writer
 		positions *replserver.Tracker
+		caches    *cachestream.Writer
 		// Their views of the bus: REPLICATE, and every writer's positions.
-		streamsBus, positionsBus *bus.Consumer
+		streamsBus, positionsBus, cachesBus *bus.Consumer
 	)
 	consumer := func(name string) *bus.Consumer { return nil }
 	if hs.Redis.Enabled {
@@ -171,6 +174,15 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		})
 		positions = replserver.NewTracker()
 		streamsBus, positionsBus = consumer("stream_writer"), consumer("replication_server")
+		// The caches stream, which every part writing caches rows under our
+		// name shares, so that they reach the bus in stream ID order.
+		cachesStart, err := cachestream.LoadStart(ctx, dsn, db.ConnectTimeout())
+		if err != nil {
+			log.Warn().Err(err).Msg("caches stream: cannot read its position; nothing is announced before our first row")
+		}
+		caches = cachestream.New(cachestream.Options{Publisher: pub, Instance: cfg.InstanceName,
+			Start: cachesStart, Log: componentLogger(log, cfg.Log, "replication")})
+		cachesBus = consumer("caches")
 		defer func() { _ = pub.Close() }()
 	} else {
 		log.Warn().Msg("homeserver.yaml has no redis: nothing wakes long-polls, invalidates caches or shows the sender new events")
@@ -304,6 +316,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ConnectTimeout: db.ConnectTimeout(),
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
 		Replication:    consumer("inbound"),
+		Caches:         caches,
 		States:         states,
 		Keys:           keys,
 		// A typing or receipt EDU for its writer, when that is us.
@@ -394,6 +407,44 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		})
 	}
 
+	// The account-data writer: it writes when stream_writers.account_data
+	// names us at start. Not under -check: taking the role writes
+	// stream_positions.
+	var accountData *accountdata.App
+	switch {
+	case !slices.Contains(hs.Writers.AccountData, cfg.InstanceName):
+	case checkOnly:
+		log.Info().Msg("account-data writer: stream_writers.account_data names this process (not started under -check)")
+	case streams == nil:
+		degraded.WithLabelValues("account_data").Set(1)
+		log.Warn().Msg("the account-data writer needs homeserver.yaml's redis; account data requests are proxied to main")
+	default:
+		adb, err := accountdata.Open(ctx, dsn, pools.AccountData, db.ConnectTimeout())
+		if err != nil {
+			degraded.WithLabelValues("account_data").Set(1)
+			log.Warn().Err(err).Msg("account-data writer unavailable; account data requests are proxied to main")
+			break
+		}
+		closers = append(closers, adb.Close)
+		accountData, err = accountdata.New(ctx, accountdata.Options{
+			Instance:  cfg.InstanceName,
+			Synapse:   src.Current,
+			Auth:      clientAuth,
+			Store:     adb,
+			Pool:      streamid.PG{Pool: adb.Pool()},
+			Writer:    streams,
+			Caches:    caches,
+			PushRules: clientSync.PushRulesContent,
+			Fallback:  fallback(upstream),
+			Log:       componentLogger(log, cfg.Log, "account_data"),
+		})
+		if err != nil {
+			accountData = nil
+			degraded.WithLabelValues("account_data").Set(1)
+			log.Warn().Err(err).Msg("account-data writer unavailable; account data requests are proxied to main")
+		}
+	}
+
 	// The receipts writer: it writes when stream_writers.receipts names us
 	// alone at start. Not under -check: taking the role writes
 	// stream_positions.
@@ -422,13 +473,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Auth:     clientAuth,
 			Store:    rdb,
 			Events:   receiptEvents{clientSync},
-			AccountData: accountDataWriter{
+			AccountData: receiptsAccountData(accountData, accountDataWriter{
 				client:    replication.NewClient(hs, replication.Receipts),
 				writers:   hs.Writers.AccountData,
 				instance:  cfg.InstanceName,
 				streams:   streams,
 				positions: positions,
-			},
+			}),
 			Presence: pres,
 			Pool:     streamid.PG{Pool: rdb.Pool()},
 			Writer:   streams,
@@ -489,8 +540,11 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		CreatorMatch:  creatorapp.Match,
 		TypingMatch:   typing.Match,
 		ReceiptsMatch: receipts.Match,
-		Client:        client,
-		Fallback:      fallback(upstream),
+		AccountDataMatch: func(method, p string) bool {
+			return accountData != nil && accountData.Match(method, p)
+		},
+		Client:   client,
+		Fallback: fallback(upstream),
 	}
 
 	mode, _ := cfg.Listen.ParsedSocketMode() // validated at load
@@ -515,6 +569,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	}
 	if receipt != nil {
 		router.Receipts = receipt.Handler()
+	}
+	if accountData != nil {
+		router.AccountData = accountData.Handler()
 	}
 
 	// The replication listener, where other Synapse processes reach this
@@ -546,6 +603,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				return err
 			}
 		}
+		if accountData != nil && accountData.Writing() {
+			for _, e := range accountData.Endpoints() {
+				if err := repl.Register(e); err != nil {
+					return err
+				}
+			}
+		}
 		if typer != nil || receipt != nil {
 			// One fed_send_edu, as one Synapse process has: for each EDU type
 			// whose stream this process writes.
@@ -574,6 +638,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if streams != nil {
 		g.Go(func() error { streams.Run(gctx, streamsBus); return gctx.Err() })
 		g.Go(func() error { positions.Run(gctx, positionsBus); return gctx.Err() })
+		g.Go(func() error { cachestream.Listen(gctx, cachesBus, caches.OnReplicate); return gctx.Err() })
 	}
 	if typer != nil {
 		g.Go(func() error { return typer.Run(gctx) })
@@ -593,6 +658,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			}
 			if receipt != nil {
 				receipt.SetSynapse(scfg)
+			}
+			if accountData != nil {
+				accountData.SetSynapse(scfg)
 			}
 		})
 		return gctx.Err()

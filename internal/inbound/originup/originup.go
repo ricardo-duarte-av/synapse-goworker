@@ -21,9 +21,8 @@ package originup
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
 )
 
 var resets = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -53,6 +53,9 @@ type Publisher interface {
 type Options struct {
 	Store     Store
 	Publisher Publisher
+	// Caches is the process's caches stream. Nil makes one of our own on
+	// Publisher, for a process where nothing else writes it.
+	Caches *cachestream.Writer
 	// Instance is our instance name on the caches stream.
 	Instance string
 	Log      zerolog.Logger
@@ -62,6 +65,7 @@ type Options struct {
 type Resetter struct {
 	store    Store
 	pub      Publisher
+	caches   *cachestream.Writer
 	instance string
 	log      zerolog.Logger
 	now      func() time.Time
@@ -71,14 +75,6 @@ type Resetter struct {
 	mu       sync.Mutex
 	inflight map[string]bool
 	failedAt time.Time
-
-	// bus serialises resets: a process drops RDATA at or below the last
-	// token it saw from an instance, so ours go out in stream ID order.
-	bus sync.Mutex
-	// last is the last caches stream ID we wrote; unannounced says its
-	// RDATA may not have reached the bus.
-	last        int64
-	unannounced bool
 }
 
 // failureHold is how long after a failed reset Ready says no, so that while
@@ -92,8 +88,18 @@ const (
 
 // New builds a Resetter.
 func New(o Options) *Resetter {
-	return &Resetter{store: o.Store, pub: o.Publisher, instance: o.Instance, log: o.Log,
+	caches := o.Caches
+	if caches == nil {
+		caches = cachestream.New(cachestream.Options{Publisher: o.Publisher, Instance: o.Instance, Log: o.Log})
+	}
+	return &Resetter{store: o.Store, pub: o.Publisher, caches: caches, instance: o.Instance, log: o.Log,
 		now: time.Now, retryDelay: time.Second, inflight: map[string]bool{}}
+}
+
+// SetRetryDelay shortens the wait between publish attempts, for tests.
+func (r *Resetter) SetRetryDelay(d time.Duration) {
+	r.retryDelay = d
+	r.caches.RetryDelay = d
 }
 
 // Ready says whether origins in backoff can be served here: false for a
@@ -167,34 +173,22 @@ func (r *Resetter) SetTimings(dest string, failureTS *int64, lastTS, interval in
 }
 
 func (r *Resetter) storeTimings(dest string, failureTS *int64, lastTS, interval int64, up bool) (string, error) {
-	r.bus.Lock()
-	defer r.bus.Unlock()
-
-	if r.unannounced {
-		// A POSITION makes every process read the rows it missed from the
-		// database (_process_position).
-		if err := r.publish(r.positionLine()); err != nil {
-			return "publish_error", err
+	err := r.caches.Do(func() ([]cachestream.Row, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), stepTimeout)
+		defer cancel()
+		inv, err := r.store.SetRetryTimings(ctx, dest, failureTS, lastTS, interval)
+		if err != nil {
+			return nil, err
 		}
-		r.unannounced = false
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), stepTimeout)
-	inv, err := r.store.SetRetryTimings(ctx, dest, failureTS, lastTS, interval)
-	cancel()
-	if err != nil {
+		return []cachestream.Row{inv}, nil
+	})
+	var perr *cachestream.PublishError
+	switch {
+	case errors.As(err, &perr):
+		return "publish_error", err
+	case err != nil:
 		return "db_error", err
 	}
-	r.last, r.unannounced = inv.StreamID, true
-
-	line, err := rdataLine(inv)
-	if err != nil {
-		return "publish_error", err
-	}
-	if err := r.publish(line); err != nil {
-		return "publish_error", err
-	}
-	r.unannounced = false
 	if !up {
 		return "stored", nil
 	}
@@ -220,35 +214,6 @@ func (r *Resetter) publish(line string) error {
 	return fmt.Errorf("originup: publishing %.40q: %w", line, err)
 }
 
-// OnReplicate answers a REPLICATE as every writer does, with its position on
-// each stream it writes, so a process that just connected catches up on
-// rows it missed. Nothing is said before our first write.
-func (r *Resetter) OnReplicate() {
-	r.bus.Lock()
-	defer r.bus.Unlock()
-	if r.last == 0 {
-		return
-	}
-	if err := r.publish(r.positionLine()); err != nil {
-		r.log.Warn().Err(err).Msg("Could not answer REPLICATE with our caches position")
-		return
-	}
-	r.unannounced = false
-}
-
-// positionLine is POSITION with prev_token = new_token = our last ID, as an
-// instance announces itself (commands.py PositionCommand).
-func (r *Resetter) positionLine() string {
-	id := strconv.FormatInt(r.last, 10)
-	return "POSITION caches " + r.instance + " " + id + " " + id
-}
-
-// rdataLine is the caches stream's RDATA for inv: the row is
-// CachesStreamRow(cache_func, keys, invalidation_ts) as a JSON list.
-func rdataLine(inv inbound.CacheInvalidation) (string, error) {
-	row, err := json.Marshal([]any{inv.CacheFunc, inv.Keys, inv.InvalidationTS})
-	if err != nil {
-		return "", err
-	}
-	return "RDATA caches " + inv.Instance + " " + strconv.FormatInt(inv.StreamID, 10) + " " + string(row), nil
-}
+// OnReplicate answers a REPLICATE with our caches position
+// (cachestream.Writer.OnReplicate).
+func (r *Resetter) OnReplicate() { r.caches.OnReplicate() }

@@ -146,6 +146,25 @@ components:
       - synapse/storage/util/id_generators.py
       - synapse/util/json.py
 
+  account_data:
+    code: internal/accountdata
+    synapse:
+      - synapse/api/constants.py
+      - synapse/handlers/account_data.py
+      - synapse/handlers/room_member.py
+      - synapse/http/server.py
+      - synapse/replication/http/_base.py
+      - synapse/replication/http/account_data.py
+      - synapse/replication/tcp/streams/_base.py
+      - synapse/rest/client/account_data.py
+      - synapse/rest/client/tags.py
+      - synapse/storage/database.py
+      - synapse/storage/databases/main/account_data.py
+      - synapse/storage/databases/main/cache.py
+      - synapse/storage/databases/main/tags.py
+      - synapse/storage/util/id_generators.py
+      - synapse/util/json.py
+
   inbound:
     code: internal/inbound
     synapse:

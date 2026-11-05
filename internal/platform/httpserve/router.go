@@ -36,6 +36,10 @@ type Router struct {
 	// ReceiptsMatch accepts.
 	Receipts      http.Handler
 	ReceiptsMatch func(method, escapedPath string) bool
+	// AccountData serves account data and tags, which AccountDataMatch
+	// accepts.
+	AccountData      http.Handler
+	AccountDataMatch func(method, escapedPath string) bool
 	// Client holds the client API routes. A request it has no pattern for is
 	// not answered by it.
 	Client *http.ServeMux
@@ -63,6 +67,8 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.Typing.ServeHTTP(w, r)
 	case rt.Receipts != nil && rt.ReceiptsMatch != nil && rt.ReceiptsMatch(r.Method, p):
 		rt.Receipts.ServeHTTP(w, r)
+	case rt.AccountData != nil && rt.AccountDataMatch != nil && rt.AccountDataMatch(r.Method, p):
+		rt.AccountData.ServeHTTP(w, r)
 	case rt.Creator != nil && rt.CreatorMatch != nil && rt.CreatorMatch(r.Method, p):
 		rt.Creator.ServeHTTP(w, r)
 	default:

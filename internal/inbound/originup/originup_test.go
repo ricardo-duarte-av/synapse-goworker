@@ -62,7 +62,7 @@ func (p *fakePub) list() []string {
 
 func setup(s *fakeStore, p *fakePub) *Resetter {
 	r := New(Options{Store: s, Publisher: p, Instance: "goinbound-worker", Log: zerolog.Nop()})
-	r.retryDelay = time.Millisecond
+	r.SetRetryDelay(time.Millisecond)
 	return r
 }
 

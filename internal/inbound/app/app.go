@@ -37,6 +37,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/txn"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/acl"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cachestream"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
@@ -74,8 +75,13 @@ type Settings struct {
 	// the federation reads. Nil builds one of this component's own.
 	Keys *fedauth.Keys
 	// Replication is this path's view of the worker's one subscription, on
-	// which it answers REPLICATE for the caches rows it publishes.
+	// which it answers REPLICATE for the caches rows it publishes, unless
+	// Caches is given.
 	Replication *bus.Consumer
+	// Caches is the process's caches stream, shared with every part that
+	// writes caches rows under our instance name (main answers REPLICATE
+	// for it). Nil makes one of inbound's own.
+	Caches *cachestream.Writer
 	// LocalEDU handles an EDU in this process when the router picks this
 	// process for it (the typing writer, when it is us), instead of a
 	// replication call to ourselves. handled false sends it on as usual.
@@ -202,12 +208,14 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 	}
 
 	if ic.MarksOriginsUp() && wdb != nil && cfg.Replication != nil {
-		pub, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, log)
+		pub, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, cfg.Caches, log)
 		if err != nil {
 			log.Warn().Err(err).Msg("Inbound: origins in backoff cannot be marked up; their transactions go to Synapse")
 		} else {
 			busCtx, stopBus := context.WithCancel(context.Background())
-			go originup.Listen(busCtx, cfg.Replication, r.OnReplicate)
+			if cfg.Caches == nil {
+				go originup.Listen(busCtx, cfg.Replication, r.OnReplicate)
+			}
 			opts.OriginUp = r
 			if limiter != nil {
 				// Write mode's backoff timings are stored once the bus is up.

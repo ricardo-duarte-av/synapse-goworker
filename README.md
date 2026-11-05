@@ -78,6 +78,19 @@ on the account-data writer), takes receipt EDUs from other servers, and
 writes and publishes the receipts stream. A change to the list is taken at
 the next start of goworker, not on a re-read. See docs/cutover.md.
 
+### Account data
+
+When goworker starts while `stream_writers.account_data` names
+`instance_name`, it is Synapse's account-data writer: it serves global and
+room account data (`PUT`/`GET .../user/{userId}[/rooms/{roomId}]/account_data/{type}`,
+and MSC3391's `DELETE` under `unstable/org.matrix.msc3391` when enabled) and
+room tags (`.../rooms/{roomId}/tags[/{tag}]`); answers the six replication
+endpoints other Synapse processes call on the writer (room upgrades, server
+notices, read markers stored elsewhere); writes and publishes the
+account_data stream; and puts the ignored-user invalidations on the caches
+stream. Module `on_account_data_updated` callbacks do not run. As for
+receipts, the role is taken at start only. See docs/cutover.md.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)
