@@ -32,6 +32,7 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/accountdata"
 	creatorapp "github.com/ricardo-duarte-av/synapse-goworker/internal/creator/app"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/devicelists"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedping"
 	fedreadapp "github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/app"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/fedapi"
@@ -295,6 +296,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		receipt  *receipts.App
 		toDevice *todevice.App
 		pushRule *pushwriter.App
+		devLists *devicelists.App
 	)
 	// localEDU is the handler in this process for an EDU type, while it
 	// writes that type's stream: for inbound's /send, and fed_send_edu.
@@ -592,6 +594,45 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		}
 	}
 
+	// The device-lists writer (phase 6, stage 1 of 3: the local half). Until
+	// the remote half exists it refuses the role: remote device lists would
+	// go unhandled. GOWORKER_DEVICE_LISTS_STAGE1=1 lets a throwaway
+	// reference test take it.
+	switch {
+	case !slices.Contains(hs.Writers.DeviceLists, cfg.InstanceName):
+	case checkOnly:
+		log.Info().Msg("device-lists writer: stream_writers.device_lists names this process (not started under -check)")
+	case os.Getenv("GOWORKER_DEVICE_LISTS_STAGE1") != "1":
+		degraded.WithLabelValues("device_lists").Set(1)
+		log.Error().Msg("stream_writers.device_lists names this process, but goworker's device-lists writer is not complete " +
+			"(remote device lists are not ported yet): put the old writer back in homeserver.yaml")
+	case streams == nil:
+		degraded.WithLabelValues("device_lists").Set(1)
+		log.Warn().Msg("the device-lists writer needs homeserver.yaml's redis")
+	default:
+		ddb, err := devicelists.Open(ctx, dsn, pools.DeviceLists, db.ConnectTimeout())
+		if err != nil {
+			degraded.WithLabelValues("device_lists").Set(1)
+			log.Warn().Err(err).Msg("device-lists writer unavailable")
+			break
+		}
+		closers = append(closers, ddb.Close)
+		devLists, err = devicelists.New(ctx, devicelists.Options{
+			Instance: cfg.InstanceName,
+			Synapse:  src.Current,
+			Store:    ddb,
+			Pool:     streamid.PG{Pool: ddb.Pool()},
+			Writer:   streams,
+			OnPokes:  sender.DeviceListPoke,
+			Log:      componentLogger(log, cfg.Log, "device_lists"),
+		})
+		if err != nil {
+			devLists = nil
+			degraded.WithLabelValues("device_lists").Set(1)
+			log.Warn().Err(err).Msg("device-lists writer unavailable")
+		}
+	}
+
 	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
 		log.Info().Bool("writing_typing", typer != nil && typer.Writing()).Msg("typing writer")
@@ -707,6 +748,13 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				return err
 			}
 		}
+		if devLists != nil && devLists.Writing() {
+			for _, e := range devLists.Endpoints() {
+				if err := repl.Register(e); err != nil {
+					return err
+				}
+			}
+		}
 		if pushRule != nil && pushRule.Writing() {
 			for _, e := range pushRule.Endpoints() {
 				if err := repl.Register(e); err != nil {
@@ -761,6 +809,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	if creator != nil {
 		g.Go(func() error { return creator.Run(gctx) })
 	}
+	if devLists != nil {
+		g.Go(func() error { return devLists.Run(gctx) })
+	}
 	g.Go(func() error {
 		watchHomeserver(gctx, src, sender, upstream, log, func(scfg *synapsecfg.Config) {
 			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
@@ -778,6 +829,9 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			}
 			if pushRule != nil {
 				pushRule.SetSynapse(scfg)
+			}
+			if devLists != nil {
+				devLists.SetSynapse(scfg)
 			}
 		})
 		return gctx.Err()

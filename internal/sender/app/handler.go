@@ -343,3 +343,18 @@ func (w *Worker) ToDeviceDestinations(servers []string) {
 		}
 	}()
 }
+
+// DeviceListPoke is the stream ID of outbound device list pokes the
+// device-lists writer in this process (internal/devicelists) just wrote:
+// send_device_messages, as Synapse pokes its own sender in-process. Our
+// own rows on the bus are dropped as echoes; the shard filter applies as
+// for every row.
+func (w *Worker) DeviceListPoke(streamID int64) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), replicationWorkTimeout)
+		defer cancel()
+		if err := w.devices.HandleDeviceLists(ctx, streamID); err != nil {
+			w.log.Error().Err(err).Int64("stream_id", streamID).Msg("failed to queue device list updates")
+		}
+	}()
+}

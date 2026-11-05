@@ -201,6 +201,20 @@ components:
       - synapse/storage/util/id_generators.py
       - synapse/util/json.py
 
+  device_lists:
+    code: internal/devicelists
+    synapse:
+      - synapse/handlers/device.py
+      - synapse/handlers/e2e_keys.py
+      - synapse/replication/http/devices.py
+      - synapse/replication/tcp/streams/_base.py
+      - synapse/storage/controllers/state.py
+      - synapse/storage/database.py
+      - synapse/storage/databases/main/devices.py
+      - synapse/storage/databases/main/end_to_end_keys.py
+      - synapse/storage/util/id_generators.py
+      - synapse/util/json.py
+
   inbound:
     code: internal/inbound
     synapse:

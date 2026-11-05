@@ -57,6 +57,7 @@ database:
     account_data: 4            # the account-data writer: account data and tags
     to_device_writer: 4        # the to-device writer: sendToDevice and remote to-device EDUs
     push_rules: 2              # the push-rules writer
+    device_lists: 4            # the device-lists writer (not complete yet: see docs/cutover.md)
     creator_write: 4           # the event creator's own writes (push staging, state groups)
 
 memory:
@@ -70,7 +71,7 @@ memory:
 log:
   level: info                  # trace, debug, info, warn, error, disabled
   # Per part, overriding level; the name is the "component" its lines carry.
-  # Parts: sync, federation_reads, inbound, sender, creator, client_auth, typing, receipts, account_data, to_device, push_rules, replication, bus, proxy.
+  # Parts: sync, federation_reads, inbound, sender, creator, client_auth, typing, receipts, account_data, to_device, push_rules, device_lists, replication, bus, proxy.
   #components:
   #  sender: error              # its warnings are mostly remote servers failing
   #  sync: info
