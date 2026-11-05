@@ -67,3 +67,19 @@ func (w accountDataWriter) AddRoomAccountData(ctx context.Context, userID, roomI
 	}
 	return nil
 }
+
+func (w accountDataWriter) RemoveUserAccountData(ctx context.Context, userID, dataType string) error {
+	if len(w.writers) == 0 {
+		return errors.New("no account_data writer")
+	}
+	writer := w.writers[rand.IntN(len(w.writers))]
+	theirs, err := w.client.RemoveUserAccountData(ctx, writer, userID, dataType,
+		replication.StreamPositions{InstanceName: w.instance, Streams: w.streams.Positions()})
+	if err != nil {
+		return err
+	}
+	for stream, pos := range theirs {
+		w.positions.WaitForStreamPosition(ctx, writer, stream, pos)
+	}
+	return nil
+}

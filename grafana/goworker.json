@@ -4782,7 +4782,7 @@
       "gridPos": {
         "x": 0,
         "y": 128,
-        "w": 24,
+        "w": 16,
         "h": 8
       },
       "fieldConfig": {
@@ -4829,6 +4829,70 @@
           "editorMode": "code",
           "expr": "sum by (endpoint, method, outcome) (rate(goworker_device_lists_client_requests_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
           "legendFormat": "{{endpoint}} {{method}} {{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication retries of the device endpoints",
+      "description": "Calls the device deletes make on other processes (main's remove_pusher, the account-data writer's remove_user_account_data) that were retried, by instance and reason.",
+      "id": 339,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 128,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (writer, reason) (increase(goworker_device_lists_replication_retries_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{writer}} {{reason}}",
           "range": true,
           "refId": "A"
         }

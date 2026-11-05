@@ -1,9 +1,11 @@
 package devicelists
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -72,10 +74,10 @@ func devicePath(p string) (deviceID string, one, ok bool) {
 
 // MatchDevices is the device and key endpoints served here: GET /devices,
 // GET and PUT /devices/{deviceId}, POST /keys/upload and
-// /keys/signatures/upload. DELETE and anything
-// else go to main.
+// /keys/signatures/upload, DELETE /devices/{deviceId} and POST
+// /delete_devices. Anything else goes to main.
 func MatchDevices(method, escapedPath string) bool {
-	if keysUploadPath(escapedPath) || signaturesUploadPath(escapedPath) {
+	if keysUploadPath(escapedPath) || signaturesUploadPath(escapedPath) || deleteDevicesPath(escapedPath) {
 		return method == http.MethodPost
 	}
 	_, one, ok := devicePath(escapedPath)
@@ -85,7 +87,7 @@ func MatchDevices(method, escapedPath string) bool {
 	if !one {
 		return method == http.MethodGet
 	}
-	return method == http.MethodGet || method == http.MethodPut
+	return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
 }
 
 // DevicesHandler serves what MatchDevices accepts.
@@ -95,8 +97,12 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 	id, one, _ := devicePath(r.URL.EscapedPath())
 	upload := keysUploadPath(r.URL.EscapedPath())
 	signatures := signaturesUploadPath(r.URL.EscapedPath())
+	bulk := deleteDevicesPath(r.URL.EscapedPath())
+	deleting := bulk || (one && r.Method == http.MethodDelete)
 	endpoint := "devices"
 	switch {
+	case bulk:
+		endpoint = "delete_devices"
 	case upload:
 		endpoint = "keys_upload"
 	case signatures:
@@ -106,13 +112,15 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	count := func(o string) { clientRequests.WithLabelValues(endpoint, r.Method, o).Inc() }
 	if !a.writing || a.CStore == nil || (upload && (a.KStore == nil || a.Locks == nil)) ||
-		(signatures && (a.SStore == nil || a.E2E == nil)) {
+		(signatures && (a.SStore == nil || a.E2E == nil)) ||
+		(deleting && (a.UStore == nil || a.DStore == nil || a.Synapse().ClientAuth.Delegated)) {
 		count("to_main")
 		a.Fallback.ServeHTTP(w, r)
 		return
 	}
 	ctx := r.Context()
-	v, cerr, err := clientreq.User(ctx, a.Auth, r, true)
+	// The deletes' get_user_by_req refuses guests; the rest allow them.
+	v, cerr, err := clientreq.User(ctx, a.Auth, r, !deleting)
 	if err != nil {
 		a.Log.Error().Err(err).Msg("devices: cannot validate a token")
 		count("auth_unavailable")
@@ -122,6 +130,22 @@ func (a *App) serveDevices(w http.ResponseWriter, r *http.Request) {
 	if cerr != nil {
 		count("auth_rejected")
 		clientreq.Write(w, cerr, nil)
+		return
+	}
+	if deleting {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, clientreq.MaxBody+1))
+		if err != nil {
+			count("refused")
+			clientreq.Write(w, clientreq.Internal, nil)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		if v.AppServiceID == "" && a.uiaToMain(v, gjson.GetBytes(raw, "auth")) {
+			count("to_main")
+			a.Fallback.ServeHTTP(w, r)
+			return
+		}
+		a.serveDeleteDevice(ctx, w, r, v, id, bulk, count)
 		return
 	}
 	var (

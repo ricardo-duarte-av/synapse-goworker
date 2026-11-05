@@ -205,7 +205,18 @@ components:
     code: internal/devicelists
     synapse:
       - synapse/api/errors.py
+      - synapse/config/auth.py
       - synapse/config/registration.py
+      - synapse/handlers/auth.py
+      - synapse/push/pusherpool.py
+      - synapse/replication/http/account_data.py
+      - synapse/replication/http/push.py
+      - synapse/storage/databases/main/deviceinbox.py
+      - synapse/storage/databases/main/registration.py
+      - synapse/storage/databases/main/task_scheduler.py
+      - synapse/storage/databases/main/ui_auth.py
+      - synapse/util/task_scheduler.py
+      - synapse/util/threepids.py
       - synapse/handlers/device.py
       - synapse/handlers/e2e_keys.py
       - synapse/handlers/worker_lock.py

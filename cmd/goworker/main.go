@@ -151,6 +151,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		streams   *streamwriter.Writer
 		positions *replserver.Tracker
 		caches    *cachestream.Writer
+		// publishTask sends NEW_ACTIVE_TASK; nil without Redis.
+		publishTask func(ctx context.Context, id string) error
 		// Their views of the bus: REPLICATE, and every writer's positions.
 		streamsBus, positionsBus, cachesBus *bus.Consumer
 	)
@@ -173,6 +175,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			DB:       hs.Redis.DBID,
 			Channel:  hs.ServerName,
 		})
+		// send_new_active_task: main, which runs background tasks, is told.
+		publishTask = func(ctx context.Context, id string) error { return pub.Publish(ctx, "NEW_ACTIVE_TASK "+id) }
 		streams = streamwriter.New(streamwriter.Options{
 			Instance:  cfg.InstanceName,
 			Publisher: pub,
@@ -635,6 +639,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			break
 		}
 		closers = append(closers, closeState)
+		dlRepl := replication.NewClient(hs, replication.DeviceLists)
 		devLists, err = devicelists.New(ctx, devicelists.Options{
 			Instance:     cfg.InstanceName,
 			Synapse:      src.Current,
@@ -651,10 +656,25 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			KStore:       ddb,
 			SStore:       ddb,
 			E2E:          e2ekeys.PoolQuerier(ddb.Pool()),
-			Locks:        workerLocks(inbound.Locks()),
-			CachesInsert: ddb.InsertCaches(cfg.InstanceName),
-			Fallback:     fallback(upstream),
-			Log:          componentLogger(log, cfg.Log, "device_lists"),
+			UStore:       ddb,
+			DStore:       ddb,
+			AccountData: deviceAccountData(accountData, accountDataWriter{
+				client:    dlRepl,
+				writers:   hs.Writers.AccountData,
+				instance:  cfg.InstanceName,
+				streams:   streams,
+				positions: positions,
+			}),
+			RemovePusher: func(ctx context.Context, appID, pushKey, userID string) error {
+				return dlRepl.RemovePusher(ctx, userID, appID, pushKey,
+					replication.StreamPositions{InstanceName: cfg.InstanceName, Streams: streams.Positions()})
+			},
+			PublishTask:   publishTask,
+			ToDeviceToken: toDeviceToken(toDevice, ddb),
+			Locks:         workerLocks(inbound.Locks()),
+			CachesInsert:  ddb.InsertCaches(cfg.InstanceName),
+			Fallback:      fallback(upstream),
+			Log:           componentLogger(log, cfg.Log, "device_lists"),
 		})
 		if err != nil {
 			devLists = nil

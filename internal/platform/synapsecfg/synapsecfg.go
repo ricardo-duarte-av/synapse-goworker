@@ -170,6 +170,8 @@ type Config struct {
 	// DontNotifyNewDevicesFor is dont_notify_new_devices_for: users whose
 	// new devices send no device list update.
 	DontNotifyNewDevicesFor []string
+	// UIA is user-interactive authentication's settings.
+	UIA UIA
 
 	signingKey, signingKeyPath string
 }
@@ -345,6 +347,9 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 
 	cfg.DontNotifyNewDevicesFor = r.DontNotifyNewDevicesFor
+	if cfg.UIA, err = uiaSettings(b); err != nil {
+		return nil, err
+	}
 	cfg.TrackPresence = trackPresence(r)
 	cfg.Experimental = lastWins(&r.ExperimentalFeatures)
 	if cfg.Membership, err = membership(b, r.ServerName); err != nil {

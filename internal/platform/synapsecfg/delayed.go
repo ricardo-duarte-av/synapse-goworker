@@ -72,7 +72,7 @@ func delayedSettings(b []byte, experimental map[string]any) (Delayed, error) {
 }
 
 // durationNode is Config.parse_duration on a YAML node: an int is milliseconds; a string
-// takes a suffix of s, m, h, d, w or y, none being milliseconds.
+// takes a suffix of ms, s, m, h, d, w or y, none being milliseconds.
 func durationNode(n yaml.Node) (int64, error) {
 	if n.Tag == "!!int" {
 		return strconv.ParseInt(n.Value, 10, 64)
@@ -83,7 +83,9 @@ func durationNode(n yaml.Node) (int64, error) {
 	}
 	sizes := map[byte]int64{'s': 1000, 'm': 60000, 'h': 3600000, 'd': 86400000, 'w': 604800000, 'y': 31536000000}
 	size := int64(1)
-	if s, ok := sizes[v[len(v)-1]]; ok {
+	if len(v) > 2 && v[len(v)-2:] == "ms" {
+		v = v[:len(v)-2]
+	} else if s, ok := sizes[v[len(v)-1]]; ok {
 		v, size = v[:len(v)-1], s
 	}
 	x, err := strconv.ParseInt(v, 10, 64)

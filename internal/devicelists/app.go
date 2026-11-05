@@ -139,6 +139,17 @@ type Options struct {
 	// of local users' keys it checks signatures against.
 	SStore SignaturesStore
 	E2E    e2ekeys.Querier
+	// UStore and DStore are the device deletes' stores (DB): UIA's
+	// sessions and the rows delete_devices removes.
+	UStore UIAStore
+	DStore DeleteStore
+	// AccountData removes MSC3890's per-device settings; RemovePusher is
+	// main's remove_pusher; PublishTask sends NEW_ACTIVE_TASK; and
+	// ToDeviceToken is the to-device stream's current token.
+	AccountData   AccountDataRemover
+	RemovePusher  func(ctx context.Context, appID, pushKey, userID string) error
+	PublishTask   func(ctx context.Context, taskID string) error
+	ToDeviceToken func() int64
 	// Fallback is main, for what is not served here.
 	Fallback http.Handler
 	Log      zerolog.Logger

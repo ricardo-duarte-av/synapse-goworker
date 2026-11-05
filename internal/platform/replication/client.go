@@ -62,6 +62,7 @@ const (
 	Inbound Part = iota
 	Creator
 	Receipts
+	DeviceLists
 )
 
 // NewClient builds a client for every instance in the instance map.
@@ -72,6 +73,8 @@ func NewClient(cfg *synapsecfg.Config, part Part) *Client {
 		c.retries = creatorRetries
 	case Receipts:
 		c.retries = receiptsRetries
+	case DeviceLists:
+		c.retries = deviceListsRetries
 	}
 	for name, inst := range cfg.InstanceMap {
 		c.targets[name] = newTarget(inst)

@@ -175,6 +175,9 @@ func (a *App) poke() {
 // Writing reports whether this process writes to-device messages.
 func (a *App) Writing() bool { return a.writing }
 
+// CurrentToken is the to_device stream's current token.
+func (a *App) CurrentToken() int64 { return a.ids.Position() }
+
 // SetSynapse notes a re-read: the role is not changed until restart.
 func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.ToDevice, a.Instance)

@@ -10,6 +10,7 @@ import (
 
 	"maunium.net/go/mautrix/federation"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/accountdata"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/devicelists"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
 	inboundlocks "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
@@ -17,6 +18,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/todevice"
 )
 
 // deviceQueryTimeout is query_user_devices' timeout (30 s, one attempt).
@@ -111,4 +113,33 @@ type lockerFunc func(ctx context.Context, name, key string) (func(), error)
 
 func (f lockerFunc) Acquire(ctx context.Context, name, key string) (func(), error) {
 	return f(ctx, name, key)
+}
+
+// deviceAccountData is remove_account_data_for_user for the device
+// deletes: the account-data writer in this process, else one over
+// replication.
+func deviceAccountData(local *accountdata.App, remote accountDataWriter) devicelists.AccountDataRemover {
+	if local != nil && local.Writing() {
+		return localAccountData{local}
+	}
+	return remote
+}
+
+type localAccountData struct{ a *accountdata.App }
+
+func (l localAccountData) RemoveUserAccountData(ctx context.Context, userID, dataType string) error {
+	_, err := l.a.RemoveUser(ctx, "devices", userID, dataType)
+	return err
+}
+
+// toDeviceToken is get_current_token().to_device_key: the writer's in
+// this process, else the greatest ID either to-device table holds.
+func toDeviceToken(td *todevice.App, ddb *devicelists.DB) func() int64 {
+	return func() int64 {
+		if td != nil && td.Writing() {
+			return td.CurrentToken()
+		}
+		n, _ := ddb.ToDeviceMax(context.Background())
+		return n
+	}
 }
