@@ -23,7 +23,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	scfg := w.syn.Load()
 	key, _ := scfg.SigningKey()
 	r := w.role.Load()
-	w.log.Info().
+	w.cfg.Worker.Info().
 		Str("server_name", scfg.ServerName).
 		Str("instance_name", w.cfg.InstanceName).
 		Bool("sending", r.active).
@@ -32,7 +32,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		Str("signing_key", key.ID()).
 		Msg("starting the federation sender")
 	if !r.active {
-		w.log.Info().Msg("not named in federation_sender_instances; following the " +
+		w.cfg.Worker.Info().Msg("not named in federation_sender_instances; following the " +
 			"replication stream without sending until homeserver.yaml names this instance")
 	}
 

@@ -71,7 +71,10 @@ memory:
 log:
   level: info                  # trace, debug, info, warn, error, disabled
   # Per part, overriding level; the name is the "component" its lines carry.
-  # Parts: sync, federation_reads, inbound, sender, creator, client_auth, typing, receipts, account_data, to_device, push_rules, device_lists, replication, bus, proxy.
+  # "worker" is the process itself: start, listeners, the replication stream,
+  # every role taken or lost and what is left to main (part=<name> says
+  # whose). A part's level does not hide those; worker: error does.
+  # Parts: worker, sync, federation_reads, inbound, sender, creator, client_auth, typing, receipts, account_data, to_device, push_rules, device_lists, replication, bus, proxy.
   #components:
   #  sender: error              # its warnings are mostly remote servers failing
   #  sync: info

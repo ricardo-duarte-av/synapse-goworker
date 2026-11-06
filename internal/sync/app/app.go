@@ -68,6 +68,9 @@ type Settings struct {
 	Requests, InitialSyncs *limits.Gate
 	Tag                    string
 	Log                    zerolog.Logger
+	// Worker carries the role lines (what is on, what is left to
+	// Synapse): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // Sync is the assembled client sync path.
@@ -156,13 +159,13 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 			ConnectTimeout: cfg.ConnectTimeout,
 		})
 		if err != nil {
-			log.Warn().Err(err).Msg("sync: to_device unavailable; messages are left for Synapse to deliver")
+			cfg.Worker.Warn().Err(err).Msg("sync: to_device unavailable; messages are left for Synapse to deliver")
 		} else {
-			log.Info().Msg("sync: to_device enabled; acknowledged messages are deleted")
+			cfg.Worker.Info().Msg("sync: to_device enabled; acknowledged messages are deleted")
 		}
 	}
 
-	presenceClient, err := s.openPresence(log)
+	presenceClient, err := s.openPresence(cfg.Worker)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -176,7 +179,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		if err := s.openSliding(ctx, openCtx); err != nil {
 			// Degraded: both sliding sync paths stay unregistered, so the
 			// worker's catch-all sends them to Synapse.
-			log.Warn().Err(err).Msg("sync: sliding sync unavailable; its requests go to Synapse")
+			cfg.Worker.Warn().Err(err).Msg("sync: sliding sync unavailable; its requests go to Synapse")
 			if s.sliding != nil {
 				s.sliding.Close()
 				s.sliding = nil
@@ -234,7 +237,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 			Modules:        cfg.Synapse.Current().Membership.Modules,
 			Pause:          500 * time.Millisecond,
 		}),
-		KeysQuery: handlers.KeysQuery(deps, keysDeps(cfg.Synapse.Current(), log)),
+		KeysQuery: handlers.KeysQuery(deps, keysDeps(cfg.Synapse.Current(), cfg.Worker)),
 	}
 	if s.sliding != nil {
 		s.routes.SlidingSync = handlers.SlidingSync(deps)
@@ -414,7 +417,7 @@ func (s *Sync) openSliding(ctx, openCtx context.Context) error {
 		return err
 	}
 	if s.sliding.Created() {
-		s.log.Info().Msg("sync: created the gosync schema's tables")
+		s.cfg.Worker.Info().Msg("sync: created the gosync schema's tables")
 	}
 
 	// The materialised tables sliding sync reads are maintained by Synapse's
@@ -441,12 +444,12 @@ func (s *Sync) openSliding(ctx, openCtx context.Context) error {
 			Connections: c.Connections, Positions: c.Positions, Rows: c.Rows,
 		}, nil
 	})
-	s.log.Info().Msg("sync: sliding sync enabled")
+	s.cfg.Worker.Info().Msg("sync: sliding sync enabled")
 	return nil
 }
 
 // keysDeps reads what POST /keys/query needs from homeserver.yaml.
-func keysDeps(hs *synapsecfg.Config, log zerolog.Logger) handlers.KeysDeps {
+func keysDeps(hs *synapsecfg.Config, wlog zerolog.Logger) handlers.KeysDeps {
 	k := handlers.KeysDeps{
 		MSC4263: hs.Flag("msc4263_limit_key_queries_to_users_who_share_rooms", false),
 		MSC3984: hs.Flag("msc3984_appservice_key_query", false),
@@ -454,7 +457,7 @@ func keysDeps(hs *synapsecfg.Config, log zerolog.Logger) handlers.KeysDeps {
 	if k.MSC3984 {
 		re, err := appservice.ExclusiveUsers(hs.AppServiceFiles)
 		if err != nil {
-			log.Warn().Err(err).Msg("sync: appservice namespaces unreadable; key queries go to Synapse")
+			wlog.Warn().Err(err).Msg("sync: appservice namespaces unreadable; key queries go to Synapse")
 			k.ExclusiveUnknown = true
 		}
 		k.ExclusiveUsers = re

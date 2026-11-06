@@ -146,6 +146,9 @@ type Options struct {
 	// Fallback is main.
 	Fallback http.Handler
 	Log      zerolog.Logger
+	// Worker carries the role lines (taken, dropped, a change that needs a
+	// restart): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // App is the receipts writer.
@@ -193,7 +196,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 	if a.Writer != nil {
 		a.Writer.Add(stream{a})
 	}
-	a.Log.Info().Int64("position", a.ids.Position()).
+	a.Worker.Info().Int64("position", a.ids.Position()).
 		Msg("writing the receipts stream (stream_writers.receipts names this process)")
 	return a, nil
 }
@@ -216,7 +219,7 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.Receipts, a.Instance)
 	if want != a.writing {
 		a.roleNoted.Do(func() {
-			a.Log.Warn().Strs("receipts_writers", hs.Writers.Receipts).Bool("writing", a.writing).
+			a.Worker.Warn().Strs("receipts_writers", hs.Writers.Receipts).Bool("writing", a.writing).
 				Msg("homeserver.yaml changed stream_writers.receipts; restart goworker to take or drop the receipts role")
 		})
 	}

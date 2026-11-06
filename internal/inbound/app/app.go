@@ -89,6 +89,9 @@ type Settings struct {
 	LocalEDU func(ctx context.Context, eduType, origin string, content json.RawMessage) (handled bool, err error)
 
 	Log zerolog.Logger
+	// Worker carries the role lines (write mode, EDU routing, what is left
+	// to Synapse): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // Inbound is the assembled /send path.
@@ -189,7 +192,7 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 	}
 	processor := edu.NewProcessor(router, acls, sendEDU, hs.TrackPresence, log)
 
-	log.Info().
+	cfg.Worker.Info().
 		Str("server_name", hs.ServerName).
 		Bool("track_presence", hs.TrackPresence).
 		Strs("typing", hs.Writers.Typing).
@@ -217,7 +220,7 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 	wdb, err := inbound.Open(openCtx, cfg.DSN, cfg.InstanceName, orDefault(cfg.WriteMaxConns, 4))
 	if err != nil {
 		// Degraded, not down: EDUs are still ours, PDUs go to main.
-		log.Warn().Err(err).Msg("Inbound: write mode unavailable; transactions with PDUs go to Synapse")
+		cfg.Worker.Warn().Err(err).Msg("Inbound: write mode unavailable; transactions with PDUs go to Synapse")
 	} else {
 		out.closers = append(out.closers, wdb.Close)
 		stop, l, locks, err := writeMode(ctx, cfg, wdb, repl, acls, &opts, &handler)
@@ -231,9 +234,9 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 	}
 
 	if ic.MarksOriginsUp() && wdb != nil && cfg.Replication != nil {
-		pub, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, cfg.Caches, log)
+		pub, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, cfg.Caches, log, cfg.Worker)
 		if err != nil {
-			log.Warn().Err(err).Msg("Inbound: origins in backoff cannot be marked up; their transactions go to Synapse")
+			cfg.Worker.Warn().Err(err).Msg("Inbound: origins in backoff cannot be marked up; their transactions go to Synapse")
 		} else {
 			busCtx, stopBus := context.WithCancel(context.Background())
 			if cfg.Caches == nil {
@@ -277,7 +280,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	proc := inbound.NewProcessor(wdb, pv, persister{repl, hs.Writers}, pst, hs.ServerName, log)
 	if ic.Fallback == config.FallbackNone {
 		proc.WithoutFallback()
-		log.Warn().Msg("inbound.fallback is none: an event write mode cannot handle is retried, then dropped, as Synapse drops one it fails to handle")
+		cfg.Worker.Warn().Msg("inbound.fallback is none: an event write mode cannot handle is retried, then dropped, as Synapse drops one it fails to handle")
 	}
 	// Every request write mode makes to another server is under Synapse's
 	// destination retry limiter.
@@ -340,7 +343,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 		}
 	})
 	proc.Start()
-	log.Info().Str("instance", cfg.InstanceName).Bool("fetch_missing", ic.FetchesMissingEvents()).
+	cfg.Worker.Info().Str("instance", cfg.InstanceName).Bool("fetch_missing", ic.FetchesMissingEvents()).
 		Msg("Inbound: write mode on; PDUs are persisted here")
 	return func() { proc.Close(); pst.Close() }, limiter, proc.Locks(), nil
 }

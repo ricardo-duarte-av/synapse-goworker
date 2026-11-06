@@ -144,6 +144,9 @@ type Config struct {
 	Publisher Publisher
 
 	Log zerolog.Logger
+	// Worker carries the mode lines (native, or /whoami and why):
+	// component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // Authenticator authenticates requests.
@@ -248,19 +251,19 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 			if a.reason == "" {
 				a.reason = err.Error()
 			} else {
-				cfg.Log.Warn().Err(err).Msg("client auth: no pool; events will not show their sender's transaction_id")
+				cfg.Worker.Warn().Err(err).Msg("client auth: no pool; events will not show their sender's transaction_id")
 			}
 		}
 	}
 	a.native = a.reason == ""
 	if a.native {
 		for _, why := range a.as.unsupported {
-			cfg.Log.Warn().Str("why", why).Msg("client auth: an appservice's requests go to /whoami")
+			cfg.Worker.Warn().Str("why", why).Msg("client auth: an appservice's requests go to /whoami")
 		}
-		cfg.Log.Info().Int("appservices", len(a.as.byToken)).Msg("client auth: native")
+		cfg.Worker.Info().Int("appservices", len(a.as.byToken)).Msg("client auth: native")
 		nativeGauge.Set(1)
 	} else {
-		cfg.Log.Warn().Str("why", a.reason).Msg("client auth: every token goes to /whoami")
+		cfg.Worker.Warn().Str("why", a.reason).Msg("client auth: every token goes to /whoami")
 		nativeGauge.Set(0)
 	}
 	return a, nil

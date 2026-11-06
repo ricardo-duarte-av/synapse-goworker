@@ -71,6 +71,9 @@ type Settings struct {
 	States *statecache.Cache
 
 	Log zerolog.Logger
+	// Worker carries the role lines (what is left to main and why):
+	// component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // App is the event creator.
@@ -94,7 +97,7 @@ func New(ctx context.Context, s Settings) (*App, error) {
 		return nil, fmt.Errorf("creator: no client authenticator")
 	}
 	if hs.ReplicationSecret == "" {
-		s.Log.Warn().Msg("no worker_replication_secret: replication requests are sent without one")
+		s.Worker.Warn().Msg("no worker_replication_secret: replication requests are sent without one")
 	}
 	for _, w := range hs.Writers.Events {
 		if _, ok := hs.Instance(w); !ok {
@@ -174,7 +177,7 @@ func New(ctx context.Context, s Settings) (*App, error) {
 	// Our own table, which profile propagations survive restarts in. Without
 	// it, profile writes are main's.
 	if err := w.Setup(openCtx); err != nil {
-		s.Log.Warn().Err(err).Msg("cannot create goevent_profile_propagations; profile writes are proxied to main")
+		s.Worker.Warn().Err(err).Msg("cannot create goevent_profile_propagations; profile writes are proxied to main")
 		o.ProfileWriter = nil
 	}
 	a.creator = creator.New(o)

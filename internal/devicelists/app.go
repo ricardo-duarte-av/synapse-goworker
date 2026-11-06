@@ -155,7 +155,10 @@ type Options struct {
 	// Fallback is main, for what is not served here.
 	Fallback http.Handler
 	Log      zerolog.Logger
-	Now      func() time.Time
+	// Worker carries the role lines (taken, dropped, a change that needs a
+	// restart): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
+	Now    func() time.Time
 }
 
 // App is the device-lists writer.
@@ -211,7 +214,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 	if a.Writer != nil {
 		a.Writer.Add(stream{a})
 	}
-	a.Log.Info().Int64("position", a.ids.Position()).
+	a.Worker.Info().Int64("position", a.ids.Position()).
 		Msg("writing the device_lists stream (stream_writers.device_lists names this process)")
 	return a, nil
 }
@@ -230,7 +233,7 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.DeviceLists, a.Instance)
 	if want != a.writing {
 		a.roleNoted.Do(func() {
-			a.Log.Warn().Strs("device_lists_writers", hs.Writers.DeviceLists).Bool("writing", a.writing).
+			a.Worker.Warn().Strs("device_lists_writers", hs.Writers.DeviceLists).Bool("writing", a.writing).
 				Msg("homeserver.yaml changed stream_writers.device_lists; restart goworker to take or drop the device-lists role")
 		})
 	}

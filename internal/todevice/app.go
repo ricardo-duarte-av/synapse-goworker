@@ -105,6 +105,9 @@ type Options struct {
 	// Fallback is main.
 	Fallback http.Handler
 	Log      zerolog.Logger
+	// Worker carries the role lines (taken, dropped, a change that needs a
+	// restart): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 	// Now and MessageID are replaced in tests.
 	Now       func() time.Time
 	MessageID func() string
@@ -161,7 +164,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 	if a.Writer != nil {
 		a.Writer.Add(stream{a})
 	}
-	a.Log.Info().Int64("position", a.ids.Position()).
+	a.Worker.Info().Int64("position", a.ids.Position()).
 		Msg("writing the to_device stream (stream_writers.to_device names this process)")
 	return a, nil
 }
@@ -183,7 +186,7 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.ToDevice, a.Instance)
 	if want != a.writing {
 		a.roleNoted.Do(func() {
-			a.Log.Warn().Strs("to_device_writers", hs.Writers.ToDevice).Bool("writing", a.writing).
+			a.Worker.Warn().Strs("to_device_writers", hs.Writers.ToDevice).Bool("writing", a.writing).
 				Msg("homeserver.yaml changed stream_writers.to_device; restart goworker to take or drop the to-device role")
 		})
 	}

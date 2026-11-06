@@ -104,7 +104,10 @@ func main() {
 	}
 }
 
-func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
+func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
+	// The worker's own lines: start, listeners, roles taken and lost, what
+	// is left to main. Each part logs its work at its own level.
+	log := componentLogger(base, cfg.Log, "worker")
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -127,7 +130,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
 
-	upstream, err := proxy.New(cfg.Upstream, componentLogger(log, cfg.Log, "proxy"))
+	upstream, err := proxy.New(cfg.Upstream, componentLogger(base, cfg.Log, "proxy"))
 	if err != nil {
 		return err
 	}
@@ -164,7 +167,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Password: hs.Redis.Password,
 			DB:       hs.Redis.DBID,
 			Channel:  hs.ServerName,
-		}, componentLogger(log, cfg.Log, "bus"))
+		}, componentLogger(base, cfg.Log, "bus")).WithWorker(workerLogger(base, cfg.Log, "bus"))
 		consumer = func(name string) *bus.Consumer { return stream.Consumer(name, 0) }
 		// What this process writes, it publishes on a connection of its own
 		// (platform/streamwriter); the first stream is typing.
@@ -180,7 +183,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		streams = streamwriter.New(streamwriter.Options{
 			Instance:  cfg.InstanceName,
 			Publisher: pub,
-			Log:       componentLogger(log, cfg.Log, "replication"),
+			Log:       componentLogger(base, cfg.Log, "replication"),
 		})
 		positions = replserver.NewTracker()
 		streamsBus, positionsBus = consumer("stream_writer"), consumer("replication_server")
@@ -191,7 +194,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			log.Warn().Err(err).Msg("caches stream: cannot read its position; nothing is announced before our first row")
 		}
 		caches = cachestream.New(cachestream.Options{Publisher: pub, Instance: cfg.InstanceName,
-			Start: cachesStart, Log: componentLogger(log, cfg.Log, "replication")})
+			Start: cachesStart, Log: componentLogger(base, cfg.Log, "replication")})
 		cachesBus = consumer("caches")
 		defer func() { _ = pub.Close() }()
 	} else {
@@ -212,7 +215,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 	// federation reads verify requests with. It reads Synapse's
 	// server_keys_json through whichever of the two opens a pool first.
 	keys := fedauth.NewKeys(hs.ServerName,
-		inboundapp.KeyOptions(cfg.Inbound, hs.TrustedKeyServers, componentLogger(log, cfg.Log, "inbound")))
+		inboundapp.KeyOptions(cfg.Inbound, hs.TrustedKeyServers, componentLogger(base, cfg.Log, "inbound")))
 
 	var closers []func()
 	defer func() {
@@ -247,7 +250,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		TTL:         cfg.Sync.Auth.Positive(),
 		Replication: consumer("client_auth"),
 		Publisher:   userIPs,
-		Log:         componentLogger(log, cfg.Log, "client_auth"),
+		Log:         componentLogger(base, cfg.Log, "client_auth"),
+		Worker:      workerLogger(base, cfg.Log, "client_auth"),
 	})
 	if err != nil {
 		return fmt.Errorf("client auth: %w", err)
@@ -268,7 +272,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		Requests:       limits.NewGate("sync_requests", lim.SyncRequests),
 		InitialSyncs:   limits.NewGate("initial_syncs", lim.InitialSyncs),
 		Tag:            tag,
-		Log:            componentLogger(log, cfg.Log, "sync"),
+		Log:            componentLogger(base, cfg.Log, "sync"),
+		Worker:         workerLogger(base, cfg.Log, "sync"),
 	})
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
@@ -289,7 +294,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		KeyQuery:          fedreadapp.KeyQueryFor(hs, log),
 		Reads:             limits.NewGate("federation_reads", lim.FederationReads),
 		StateStreams:      limits.NewGate("state_streams", lim.StateStreams),
-		Log:               componentLogger(log, cfg.Log, "federation_reads"),
+		Log:               componentLogger(base, cfg.Log, "federation_reads"),
+		Worker:            workerLogger(base, cfg.Log, "federation_reads"),
 	})
 	if err != nil {
 		return fmt.Errorf("federation reads: %w", err)
@@ -345,7 +351,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			}
 			return false, nil
 		},
-		Log: componentLogger(log, cfg.Log, "inbound"),
+		Log:    componentLogger(base, cfg.Log, "inbound"),
+		Worker: workerLogger(base, cfg.Log, "inbound"),
 	})
 	var send http.Handler
 	if err != nil {
@@ -367,7 +374,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		WriteMaxConns:  pools.CreatorWrite,
 		ConnectTimeout: db.ConnectTimeout(),
 		States:         states,
-		Log:            componentLogger(log, cfg.Log, "creator"),
+		Log:            componentLogger(base, cfg.Log, "creator"),
+		Worker:         workerLogger(base, cfg.Log, "creator"),
 	})
 	var createEvents http.Handler
 	if err != nil {
@@ -394,7 +402,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		// reads filter what they serve.
 		EventVisibleToServer: reads.EventVisibleToServer,
 		Tag:                  tag, Commit: commit, BuildTime: buildTime,
-		Log: componentLogger(log, cfg.Log, "sender"),
+		Log:    componentLogger(base, cfg.Log, "sender"),
+		Worker: workerLogger(base, cfg.Log, "sender"),
 	})
 	if err != nil {
 		return fmt.Errorf("sender: %w", err)
@@ -422,7 +431,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Writer:   streams,
 			OnRow:    func(r typing.Row) { sender.TypingRow(r.Token, r.RoomID, r.Users) },
 			Fallback: fallback(upstream),
-			Log:      componentLogger(log, cfg.Log, "typing"),
+			Log:      componentLogger(base, cfg.Log, "typing"),
+			Worker:   workerLogger(base, cfg.Log, "typing"),
 		})
 	}
 
@@ -455,7 +465,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Caches:    caches,
 			PushRules: clientSync.PushRulesContent,
 			Fallback:  fallback(upstream),
-			Log:       componentLogger(log, cfg.Log, "account_data"),
+			Log:       componentLogger(base, cfg.Log, "account_data"),
+			Worker:    workerLogger(base, cfg.Log, "account_data"),
 		})
 		if err != nil {
 			accountData = nil
@@ -506,7 +517,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				sender.ReceiptRow(r.RoomID, r.ReceiptType, r.UserID, r.EventID, r.ThreadID, r.Data)
 			},
 			Fallback: fallback(upstream),
-			Log:      componentLogger(log, cfg.Log, "receipts"),
+			Log:      componentLogger(base, cfg.Log, "receipts"),
+			Worker:   workerLogger(base, cfg.Log, "receipts"),
 		})
 		if err != nil {
 			receipt = nil
@@ -559,7 +571,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				return resyncClient.MultiUserDeviceResync(ctx, w, []string{userID})
 			},
 			Fallback: fallback(upstream),
-			Log:      componentLogger(log, cfg.Log, "to_device"),
+			Log:      componentLogger(base, cfg.Log, "to_device"),
+			Worker:   workerLogger(base, cfg.Log, "to_device"),
 		})
 		if err != nil {
 			toDevice = nil
@@ -602,7 +615,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				return eventsPosition(ctx, pdb.Pool(), positions, eventWriters)
 			},
 			Fallback: fallback(upstream),
-			Log:      componentLogger(log, cfg.Log, "push_rules"),
+			Log:      componentLogger(base, cfg.Log, "push_rules"),
+			Worker:   workerLogger(base, cfg.Log, "push_rules"),
 		})
 		if err != nil {
 			pushRule = nil
@@ -675,7 +689,8 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 			Locks:         workerLocks(inbound.Locks()),
 			CachesInsert:  ddb.InsertCaches(cfg.InstanceName),
 			Fallback:      fallback(upstream),
-			Log:           componentLogger(log, cfg.Log, "device_lists"),
+			Log:           componentLogger(base, cfg.Log, "device_lists"),
+			Worker:        workerLogger(base, cfg.Log, "device_lists"),
 		})
 		if err != nil {
 			devLists = nil
@@ -711,7 +726,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 				ServerName: hs.ServerName,
 				Verifier:   fedauth.New(hs.ServerName, fedauth.Options{Keys: keys}),
 				Client:     fc,
-				Log:        componentLogger(log, cfg.Log, "ping"),
+				Log:        componentLogger(base, cfg.Log, "ping"),
 			})
 			closers = append(closers, ping.Close)
 		}
@@ -793,7 +808,7 @@ func run(cfg *config.Config, log zerolog.Logger, checkOnly bool) error {
 		ropts := replserver.Options{
 			Instance: cfg.InstanceName,
 			Secret:   func() string { return src.Current().ReplicationSecret },
-			Log:      componentLogger(log, cfg.Log, "replication"),
+			Log:      componentLogger(base, cfg.Log, "replication"),
 		}
 		if streams != nil {
 			ropts.Waiter = positions
@@ -975,4 +990,10 @@ func newLogger(cfg config.Log) zerolog.Logger {
 // its own, so a part may be noisier or quieter than the process.
 func componentLogger(log zerolog.Logger, cfg config.Log, component string) zerolog.Logger {
 	return log.With().Str("component", component).Logger().Level(cfg.LevelFor(component))
+}
+
+// workerLogger is part's logger for its role lines: component=worker, at
+// the worker's level, with the part named.
+func workerLogger(base zerolog.Logger, cfg config.Log, part string) zerolog.Logger {
+	return componentLogger(base, cfg, "worker").With().Str("part", part).Logger()
 }

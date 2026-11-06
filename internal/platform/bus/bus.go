@@ -91,6 +91,7 @@ var (
 type Bus struct {
 	cfg       Config
 	log       zerolog.Logger
+	worker    zerolog.Logger
 	mu        sync.Mutex
 	consumers []*Consumer
 	live      bool
@@ -98,7 +99,14 @@ type Bus struct {
 
 // New builds a Bus. It connects in Run.
 func New(cfg Config, log zerolog.Logger) *Bus {
-	return &Bus{cfg: cfg, log: log}
+	return &Bus{cfg: cfg, log: log, worker: log}
+}
+
+// WithWorker logs the subscription's coming and going to l
+// (component=worker), so a quiet bus level does not hide them.
+func (b *Bus) WithWorker(l zerolog.Logger) *Bus {
+	b.worker = l
+	return b
 }
 
 // Consumer is one reader's view of the stream.
@@ -221,7 +229,7 @@ func (b *Bus) Run(ctx context.Context) {
 		if subscribed {
 			backoff = time.Second
 		}
-		b.log.Warn().Err(err).Dur("retry_in", backoff).Msg("replication stream lost")
+		b.worker.Warn().Err(err).Dur("retry_in", backoff).Msg("replication stream lost")
 		select {
 		case <-ctx.Done():
 			return
@@ -260,7 +268,7 @@ func (b *Bus) session(ctx context.Context) (subscribed bool, err error) {
 	}
 	reconnects.Inc()
 	connected.Set(1)
-	b.log.Info().Str("channel", b.cfg.Channel).Str("address", b.cfg.Address).
+	b.worker.Info().Str("channel", b.cfg.Channel).Str("address", b.cfg.Address).
 		Msg("following the replication stream")
 	b.broadcast(Event{Kind: Connected})
 

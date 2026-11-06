@@ -242,6 +242,14 @@ Still per component, on purpose:
   push_rules, push_rules_enable and push_rules_stream row identical, the
   room-upgrade copy included; main's cache and both syncs follow our
   writes; both restarts.
+- **Role lines are the worker's, not the part's** (operator, 2026-11-06).
+  main.go's own lines and every part's role lines (a stream taken or
+  dropped, a role changed, what is left to main or Synapse, the bus
+  coming and going) log as `component=worker` with `part=<name>`, through
+  the part's `Worker` logger, so `log.components.<part>` cannot hide them;
+  `worker: error` does. On av, `device_lists: error` had hidden "writing
+  the device_lists stream", and a running writer looked unstarted.
+  TestRoleLinesAreWorkerLines holds it for new lines.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

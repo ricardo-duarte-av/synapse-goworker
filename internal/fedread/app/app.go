@@ -77,6 +77,9 @@ type Settings struct {
 	// streamed /state ones.
 	Reads, StateStreams *limits.Gate
 	Log                 zerolog.Logger
+	// Worker carries the role lines: component=worker, so a quiet Log
+	// does not hide them.
+	Worker zerolog.Logger
 }
 
 // FedRead is the assembled read endpoints.
@@ -148,7 +151,7 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 	metrics.RegisterRateLimitHosts(f.handler.Limiter().Hosts)
 
 	s := fc.Caches.WithDefaults()
-	log.Info().
+	cfg.Worker.Info().
 		Int("events_mb", s.EventsMB).
 		Int("event_state_groups_mb", s.EventStateGroupsMB).
 		Int("auth_chains_mb", s.AuthChainsMB).
@@ -225,7 +228,7 @@ func (f *FedRead) Run(ctx context.Context) error {
 func (f *FedRead) Close() { f.db.Close() }
 
 // KeyQueryFor reads /user/keys/query's options from homeserver.yaml.
-func KeyQueryFor(hs *synapsecfg.Config, log zerolog.Logger) matrixstate.KeyQueryOptions {
+func KeyQueryFor(hs *synapsecfg.Config, wlog zerolog.Logger) matrixstate.KeyQueryOptions {
 	o := matrixstate.KeyQueryOptions{
 		DisplayNames: hs.AllowDeviceNameLookup,
 		MSC3984:      hs.Flag("msc3984_appservice_key_query", false),
@@ -233,7 +236,7 @@ func KeyQueryFor(hs *synapsecfg.Config, log zerolog.Logger) matrixstate.KeyQuery
 	if o.MSC3984 {
 		re, err := appservice.ExclusiveUsers(hs.AppServiceFiles)
 		if err != nil {
-			log.Warn().Err(err).Msg("federation reads: appservice namespaces unreadable; key queries go to Synapse")
+			wlog.Warn().Err(err).Msg("federation reads: appservice namespaces unreadable; key queries go to Synapse")
 			o.ExclusiveUnknown = true
 		}
 		o.ExclusiveUsers = re

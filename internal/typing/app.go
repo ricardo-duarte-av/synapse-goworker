@@ -67,6 +67,9 @@ type Options struct {
 	// Fallback is main, for a request while this process is not the writer.
 	Fallback http.Handler
 	Log      zerolog.Logger
+	// Worker carries the role lines (taken, dropped, a change that needs a
+	// restart): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // App is the typing writer.
@@ -121,14 +124,14 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 			a.Writer.Add(stream{st})
 		}
 		writing.Set(1)
-		a.log.Info().Msg("writing the typing stream (stream_writers.typing names this process); it starts at 0")
+		a.Worker.Info().Msg("writing the typing stream (stream_writers.typing names this process); it starts at 0")
 	case !want && have:
 		a.state.Store(nil)
 		if a.Writer != nil {
 			a.Writer.Remove(StreamName)
 		}
 		writing.Set(0)
-		a.log.Info().Strs("writers", hs.Writers.Typing).Msg("no longer writing the typing stream")
+		a.Worker.Info().Strs("writers", hs.Writers.Typing).Msg("no longer writing the typing stream")
 	}
 }
 

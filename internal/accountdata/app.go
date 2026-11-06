@@ -113,6 +113,9 @@ type Options struct {
 	// Fallback is main.
 	Fallback http.Handler
 	Log      zerolog.Logger
+	// Worker carries the role lines (taken, dropped, a change that needs a
+	// restart): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // App is the account-data writer.
@@ -158,9 +161,9 @@ func New(ctx context.Context, o Options) (*App, error) {
 		a.Writer.Add(stream{a})
 	}
 	if hs.ClientAuth.Modules > 0 {
-		a.Log.Warn().Msg("homeserver.yaml lists modules: their on_account_data_updated callbacks do not run while goworker writes account data")
+		a.Worker.Warn().Msg("homeserver.yaml lists modules: their on_account_data_updated callbacks do not run while goworker writes account data")
 	}
-	a.Log.Info().Int64("position", a.ids.Position()).
+	a.Worker.Info().Int64("position", a.ids.Position()).
 		Msg("writing the account_data stream (stream_writers.account_data names this process)")
 	return a, nil
 }
@@ -179,7 +182,7 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.AccountData, a.Instance)
 	if want != a.writing {
 		a.roleNoted.Do(func() {
-			a.Log.Warn().Strs("account_data_writers", hs.Writers.AccountData).Bool("writing", a.writing).
+			a.Worker.Warn().Strs("account_data_writers", hs.Writers.AccountData).Bool("writing", a.writing).
 				Msg("homeserver.yaml changed stream_writers.account_data; restart goworker to take or drop the account-data role")
 		})
 	}

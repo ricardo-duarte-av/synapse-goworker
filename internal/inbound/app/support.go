@@ -20,7 +20,7 @@ import (
 
 // openOriginUp builds the resetter for origins in backoff, on the write
 // role and homeserver.yaml's replication bus.
-func openOriginUp(ctx context.Context, instance string, hs *synapsecfg.Config, wdb *inbound.DB, caches *cachestream.Writer, log zerolog.Logger) (*bus.Publisher, *originup.Resetter, error) {
+func openOriginUp(ctx context.Context, instance string, hs *synapsecfg.Config, wdb *inbound.DB, caches *cachestream.Writer, log, wlog zerolog.Logger) (*bus.Publisher, *originup.Resetter, error) {
 	if !hs.Redis.Enabled {
 		return nil, nil, errors.New("homeserver.yaml has no redis, so nothing can be told the origin is up")
 	}
@@ -32,7 +32,7 @@ func openOriginUp(ctx context.Context, instance string, hs *synapsecfg.Config, w
 		return nil, nil, fmt.Errorf("replication bus: %w", err)
 	}
 	r := originup.New(originup.Options{Store: wdb, Publisher: pub, Caches: caches, Instance: instance, Log: log})
-	log.Info().Str("instance", instance).Msg("Origins in backoff are served here and marked as up")
+	wlog.Info().Str("instance", instance).Msg("Origins in backoff are served here and marked as up")
 	return pub, r, nil
 }
 

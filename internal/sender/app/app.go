@@ -75,6 +75,9 @@ type Settings struct {
 	Tag, Commit, BuildTime string
 
 	Log zerolog.Logger
+	// Worker carries the role lines (starting, the role changing):
+	// component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // role is whether this process is a federation sender, and its shard.
@@ -416,14 +419,14 @@ func (w *Worker) SetSynapse(scfg *synapsecfg.Config) {
 	w.recordRole(after)
 
 	if prev.ServerName != scfg.ServerName || prev.Redis != scfg.Redis {
-		w.log.Warn().Msg("homeserver.yaml changed server_name or redis; the sender keeps " +
+		w.cfg.Worker.Warn().Msg("homeserver.yaml changed server_name or redis; the sender keeps " +
 			"the old values until this process restarts")
 	}
 	if before.active == after.active &&
 		slices.Equal(before.shard.Instances(), after.shard.Instances()) {
 		return
 	}
-	w.log.Warn().
+	w.cfg.Worker.Warn().
 		Bool("was_sending", before.active).
 		Bool("sending", after.active).
 		Strs("senders", after.shard.Instances()).

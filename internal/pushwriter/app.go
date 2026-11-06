@@ -104,6 +104,9 @@ type Options struct {
 	// Fallback is main.
 	Fallback http.Handler
 	Log      zerolog.Logger
+	// Worker carries the role lines (taken, dropped, a change that needs a
+	// restart): component=worker, so a quiet Log does not hide them.
+	Worker zerolog.Logger
 }
 
 // App is the push-rules writer.
@@ -149,7 +152,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 	if a.Writer != nil {
 		a.Writer.Add(stream{a})
 	}
-	a.Log.Info().Int64("position", a.ids.Position()).
+	a.Worker.Info().Int64("position", a.ids.Position()).
 		Msg("writing the push_rules stream (stream_writers.push_rules names this process)")
 	return a, nil
 }
@@ -168,7 +171,7 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.PushRules, a.Instance)
 	if want != a.writing {
 		a.roleNoted.Do(func() {
-			a.Log.Warn().Strs("push_rules_writers", hs.Writers.PushRules).Bool("writing", a.writing).
+			a.Worker.Warn().Strs("push_rules_writers", hs.Writers.PushRules).Bool("writing", a.writing).
 				Msg("homeserver.yaml changed stream_writers.push_rules; restart goworker to take or drop the push-rules role")
 		})
 	}

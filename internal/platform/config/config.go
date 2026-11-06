@@ -190,15 +190,16 @@ type Log struct {
 	// Level is the default: trace, debug, info, warn, error or disabled.
 	Level string `yaml:"level"`
 	// Components overrides Level for one part, by the name its lines carry
-	// in "component": sync, federation_reads, inbound, sender, bus, proxy.
-	// Lines of the process itself (startup, homeserver.yaml reloads) take
-	// Level.
+	// in "component" (LogComponents). "worker" is the process itself:
+	// startup, listeners, homeserver.yaml reloads, and every part's role
+	// lines (taken, lost, left to main), which carry part=<name>; a part's
+	// own level does not hide those.
 	Components map[string]string `yaml:"components"`
 	Pretty     bool              `yaml:"pretty"`
 }
 
 // LogComponents are the parts whose level log.components can set.
-var LogComponents = []string{"sync", "federation_reads", "inbound", "sender", "creator", "client_auth", "typing", "receipts", "account_data", "to_device", "push_rules", "device_lists", "replication", "bus", "proxy"}
+var LogComponents = []string{"worker", "sync", "federation_reads", "inbound", "sender", "creator", "client_auth", "typing", "receipts", "account_data", "to_device", "push_rules", "device_lists", "replication", "bus", "proxy"}
 
 // LevelFor is the level for component, or the default for "".
 func (l Log) LevelFor(component string) zerolog.Level {
