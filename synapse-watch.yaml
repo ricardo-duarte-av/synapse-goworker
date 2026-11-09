@@ -49,6 +49,7 @@ components:
       - synapse/http/servlet.py
       - synapse/http/federation/matrix_federation_agent.py
       - synapse/http/matrixfederationclient.py
+      - synapse/http/proxyagent.py
       - synapse/http/site.py
       - synapse/push/bulk_push_rule_evaluator.py
       - synapse/replication/http/_base.py

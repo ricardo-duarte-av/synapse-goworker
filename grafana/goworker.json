@@ -20436,6 +20436,83 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Federation proxy (outbound_federation_restricted_to)",
+      "id": 340,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 692,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Our requests sent through another instance",
+      "description": "Federation requests this process sent through an instance outbound_federation_restricted_to names, because it is not named itself. Empty while the setting is unset or names this process. answered: the instance answered (any status: a 502 is its failure to reach the destination); failed: no instance connected, or the connection broke; refused: not sent (a blocked IP literal, or no instance to send through).",
+      "id": 341,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 693,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(goworker_federation_proxied_requests_total{job=~\"$job\", instance=~\"$instance\"}[$bucket]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

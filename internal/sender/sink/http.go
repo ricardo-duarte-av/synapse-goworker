@@ -126,7 +126,9 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 		client: &http.Client{
 			// A resolution we cannot connect through is forgotten, so the
 			// retry the destination's backoff allows resolves afresh.
-			Transport: &fedclient.ForgetOnFailure{Next: transport, Cache: fedclient.Resolutions},
+			// outbound_federation_restricted_to around the resolution: the
+			// User-Agent is set on each request (send).
+			Transport: &fedclient.ForgetOnFailure{Next: fedclient.Restrict(transport), Cache: fedclient.Resolutions},
 			// Redirects are not part of the federation protocol, and following
 			// one would send a signed transaction somewhere it was not
 			// addressed to -- the signature names the destination.

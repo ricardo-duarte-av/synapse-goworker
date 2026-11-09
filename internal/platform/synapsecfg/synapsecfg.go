@@ -80,6 +80,12 @@ type Config struct {
 	// replication request when set (replication/http/_base.py:223).
 	ReplicationSecret string
 
+	// OutboundFederationRestrictedTo is outbound_federation_restricted_to:
+	// nil when unset (every process talks to federation itself), else the
+	// instances that do, the others sending through them. An empty non-nil
+	// list lets no process federate, as Synapse's does.
+	OutboundFederationRestrictedTo []string
+
 	// TrackPresence is config.server.track_presence. When false Synapse drops
 	// inbound presence EDUs on the spot (federation_server.py:1686).
 	TrackPresence bool
@@ -236,8 +242,10 @@ type raw struct {
 		PushRules   any `yaml:"push_rules"`
 	} `yaml:"stream_writers"`
 
-	WorkerReplicationSecret     *string `yaml:"worker_replication_secret"`
-	WorkerReplicationSecretPath string  `yaml:"worker_replication_secret_path"`
+	WorkerReplicationSecret *string `yaml:"worker_replication_secret"`
+	// Absent and null are both nil; [] is a non-nil empty list.
+	OutboundFederationRestrictedTo *[]string `yaml:"outbound_federation_restricted_to"`
+	WorkerReplicationSecretPath    string    `yaml:"worker_replication_secret_path"`
 
 	// Presence.Enabled is a bool OR the string "untracked", and falls back to
 	// the legacy use_presence key (config/server.py:507).
@@ -336,6 +344,9 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.ReplicationSecret, err = replicationSecret(r, path); err != nil {
+		return nil, err
+	}
+	if cfg.OutboundFederationRestrictedTo, err = outboundRestrictedTo(r, cfg); err != nil {
 		return nil, err
 	}
 	if cfg.Database, err = database(r); err != nil {

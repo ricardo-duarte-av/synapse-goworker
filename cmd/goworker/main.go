@@ -126,6 +126,10 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 	fedclient.SetIPRanges(func() synapsecfg.IPRanges { return src.Current().FederationIPRanges })
 	// And how they check certificates (federation_verify_certificates).
 	fedclient.SetTLS(func() synapsecfg.FederationTLS { return src.Current().FederationTLS })
+	// And whether they talk to other servers themselves or through the
+	// instances outbound_federation_restricted_to names.
+	fedclient.SetOutbound(func() fedclient.Outbound { return fedclient.OutboundFor(src.Current(), cfg.InstanceName) })
+	outboundSeen := logOutbound(log, cfg.InstanceName, hs, "")
 	log.Info().Str("version", tag).Str("commit", commit).
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
@@ -887,6 +891,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 	g.Go(func() error {
 		watchHomeserver(gctx, src, sender, upstream, log, func(scfg *synapsecfg.Config) {
 			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
+			outboundSeen = logOutbound(log, cfg.InstanceName, scfg, outboundSeen)
 			if typer != nil {
 				typer.SetSynapse(scfg)
 			}
@@ -990,6 +995,33 @@ func newLogger(cfg config.Log) zerolog.Logger {
 // its own, so a part may be noisier or quieter than the process.
 func componentLogger(log zerolog.Logger, cfg config.Log, component string) zerolog.Logger {
 	return log.With().Str("component", component).Logger().Level(cfg.LevelFor(component))
+}
+
+// logOutbound says how this process's federation requests leave
+// (outbound_federation_restricted_to), when it differs from last.
+func logOutbound(log zerolog.Logger, instance string, hs *synapsecfg.Config, last string) string {
+	o := fedclient.OutboundFor(hs, instance)
+	var names []string
+	for _, v := range o.Via {
+		names = append(names, v.Name)
+	}
+	now := fmt.Sprint(hs.OutboundFederationRestrictedTo == nil, o.Direct, names)
+	if now == last {
+		return now
+	}
+	switch {
+	case hs.OutboundFederationRestrictedTo == nil:
+		log.Info().Msg("federation requests go out directly (outbound_federation_restricted_to unset)")
+	case o.Direct:
+		log.Info().Strs("restricted_to", hs.OutboundFederationRestrictedTo).
+			Msg("federation requests go out directly: outbound_federation_restricted_to names this process")
+	case len(names) == 0:
+		log.Warn().Msg("outbound_federation_restricted_to names no instance: no federation request can be sent, as in every Synapse process")
+	default:
+		log.Info().Strs("via", names).
+			Msg("federation requests go through the instances outbound_federation_restricted_to names")
+	}
+	return now
 }
 
 // workerLogger is part's logger for its role lines: component=worker, at

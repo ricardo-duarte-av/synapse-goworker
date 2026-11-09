@@ -27,9 +27,13 @@ func TestHTTPSinkBoundsItsConnectionPool(t *testing.T) {
 	if !ok {
 		t.Fatalf("transport is %T, not ForgetOnFailure", h.client.Transport)
 	}
-	rt, ok := f.Next.(*federation.ServerResolvingTransport)
+	r, ok := f.Next.(*fedclient.Restricted)
 	if !ok {
-		t.Fatalf("transport is %T, not the resolving transport", f.Next)
+		t.Fatalf("transport is %T, not Restricted (outbound_federation_restricted_to)", f.Next)
+	}
+	rt, ok := r.Direct.(*federation.ServerResolvingTransport)
+	if !ok {
+		t.Fatalf("transport is %T, not the resolving transport", r.Direct)
 	}
 
 	if rt.Transport.MaxIdleConns == 0 {

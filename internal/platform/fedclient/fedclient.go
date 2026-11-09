@@ -36,7 +36,8 @@ func New(serverName, keyLine string, allow func(string) bool, timeout time.Durat
 
 // NewMautrix is a mautrix federation client as every part's must be: the
 // shared resolution cache (Resolutions), an entry forgotten when connecting
-// through it fails, Synapse's IP filter (AllowIP) and its User-Agent. key may be nil, for a client
+// through it fails, Synapse's IP filter (AllowIP), its User-Agent, and
+// outbound_federation_restricted_to (Restrict). key may be nil, for a client
 // that only fetches published keys.
 func NewMautrix(serverName string, key *federation.SigningKey, settings exhttp.ClientSettings) *federation.Client {
 	c := federation.NewClient(serverName, key, Resolutions, settings)
@@ -47,6 +48,13 @@ func NewMautrix(serverName string, key *federation.SigningKey, settings exhttp.C
 		VerifyAsConfigured(srt.Transport)
 	}
 	useragent.Client(c)
+	// outbound_federation_restricted_to: inside the User-Agent, around
+	// the resolution.
+	if ua, ok := c.HTTP.Transport.(*useragent.Transport); ok {
+		ua.Next = Restrict(ua.Next)
+	} else {
+		c.HTTP.Transport = Restrict(c.HTTP.Transport)
+	}
 	c.HTTP.Transport = &ForgetOnFailure{Next: c.HTTP.Transport, Cache: Resolutions}
 	return c
 }

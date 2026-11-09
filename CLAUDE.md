@@ -250,6 +250,17 @@ Still per component, on purpose:
   `worker: error` does. On av, `device_lists: error` had hidden "writing
   the device_lists stream", and a running writer looked unstarted.
   TestRoleLinesAreWorkerLines holds it for new lines.
+- **outbound_federation_restricted_to is honoured** (2026-11-09). When it
+  is set and does not name `instance_name`, every federation request goes
+  through a named instance as Synapse's ProxyAgent sends it: absolute-form
+  `matrix-federation://<dest><path>`, the signed URI unchanged, `Proxy-
+  Authorization: Bearer <worker_replication_secret>`, the instances tried
+  in random order per connection (`fedclient.Restrict`). It is read from
+  the current homeserver.yaml on each request, so a re-read applies it;
+  Synapse reads it at start. A new federation client must come from
+  `fedclient.NewMautrix` or wrap its resolving transport in
+  `fedclient.Restrict`, or it keeps talking directly, unnoticed
+  (TestEveryFederationClientIsRestricted).
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 
