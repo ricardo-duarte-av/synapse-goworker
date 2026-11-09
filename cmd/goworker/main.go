@@ -345,10 +345,11 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		WriteMaxConns:  pools.InboundWrite,
 		ConnectTimeout: db.ConnectTimeout(),
 		Transactions:   limits.NewGate("inbound_transactions", lim.InboundTransactions),
-		Replication:    consumer("inbound"),
-		Caches:         caches,
-		States:         states,
-		Keys:           keys,
+		// No consumer of its own: caches answers REPLICATE for its rows, and a
+		// queue nobody reads only grows (to DefaultQueue, then resyncs).
+		Caches: caches,
+		States: states,
+		Keys:   keys,
 		// A typing or receipt EDU for its writer, when that is us.
 		LocalEDU: func(ctx context.Context, eduType, origin string, content json.RawMessage) (bool, error) {
 			if h := localEDU(eduType); h != nil {

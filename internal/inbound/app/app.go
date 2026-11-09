@@ -75,8 +75,8 @@ type Settings struct {
 	// the federation reads. Nil builds one of this component's own.
 	Keys *fedauth.Keys
 	// Replication is this path's view of the worker's one subscription, on
-	// which it answers REPLICATE for the caches rows it publishes, unless
-	// Caches is given.
+	// which it answers REPLICATE for the caches rows it publishes. Only
+	// without Caches: with it, a consumer would never be read.
 	Replication *bus.Consumer
 	// Caches is the process's caches stream, shared with every part that
 	// writes caches rows under our instance name (main answers REPLICATE
@@ -233,7 +233,7 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		out.closers = append(out.closers, stop)
 	}
 
-	if ic.MarksOriginsUp() && wdb != nil && cfg.Replication != nil {
+	if ic.MarksOriginsUp() && wdb != nil && (cfg.Replication != nil || cfg.Caches != nil) {
 		pub, r, err := openOriginUp(ctx, cfg.InstanceName, hs, wdb, cfg.Caches, log, cfg.Worker)
 		if err != nil {
 			cfg.Worker.Warn().Err(err).Msg("Inbound: origins in backoff cannot be marked up; their transactions go to Synapse")
