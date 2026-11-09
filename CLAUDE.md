@@ -38,7 +38,7 @@ The approved plan is in
 | Path | What |
 |---|---|
 | `cmd/goworker` | main: one config, five components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
-| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `replserver` (the replication listener: what other Synapse processes call at our `instance_map` address, and the tracker of their stream positions), `streamwriter` (publishing the streams we write: RDATA, POSITION, the REPLICATE answer, get_repl_stream_updates), `streamid` (MultiWriterIdGenerator for a stream we write alone), `cachestream` (the caches stream: one writer per process, so every part's rows reach the bus in ID order; started at the table's greatest ID and announced on REPLICATE, as Synapse does), `pyjson` (Python's json: dict semantics on read, Synapse's json_encoder on write), `clientreq` (what every native client endpoint does as Synapse's servlets do), `roomhosts`, `userid`, `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `pushcheck` (the push evaluator), `e2ekeys` (local users' end-to-end keys, for client and federation key queries), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
+| `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `replserver` (the replication listener: what other Synapse processes call at our `instance_map` address, and the tracker of their stream positions), `fedproxy` (the outbound federation proxy in front of it), `streamwriter` (publishing the streams we write: RDATA, POSITION, the REPLICATE answer, get_repl_stream_updates), `streamid` (MultiWriterIdGenerator for a stream we write alone), `cachestream` (the caches stream: one writer per process, so every part's rows reach the bus in ID order; started at the table's greatest ID and announced on REPLICATE, as Synapse does), `pyjson` (Python's json: dict semantics on read, Synapse's json_encoder on write), `clientreq` (what every native client endpoint does as Synapse's servlets do), `roomhosts`, `userid`, `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `pushcheck` (the push evaluator), `e2ekeys` (local users' end-to-end keys, for client and federation key queries), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
 | `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go`, `roomevent.go`, `profile.go`, `keysquery.go`), which hand back to main what they do not reproduce, a federation query included (`Deps.Fallback`) |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
@@ -260,7 +260,16 @@ Still per component, on purpose:
   Synapse reads it at start. A new federation client must come from
   `fedclient.NewMautrix` or wrap its resolving transport in
   `fedclient.Restrict`, or it keeps talking directly, unnoticed
-  (TestEveryFederationClientIsRestricted).
+  (TestEveryFederationClientIsRestricted). When it names us, we are the
+  proxy for the others (`platform/fedproxy`, ProxyResource, in front of
+  the replication listener): Synapse's 401 texts under the key `err`,
+  only User-Agent, Authorization and Content-Type forwarded, the URI byte
+  for byte, through `fedclient.Forwarding` (shared resolutions, IP
+  filter; no backoff, which is the caller's), 90 s to the answer's
+  headers, the body streamed. Listing goworker alone makes it every
+  process's only way out, joins and key fetches included: list two. The
+  replication listener must never be reachable through nginx; the
+  secret is the proxy's only check.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

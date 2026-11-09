@@ -237,7 +237,10 @@ func TestEveryFederationClientIsRestricted(t *testing.T) {
 			}
 			found++
 			rel, _ := filepath.Rel(root, path)
-			if rel == filepath.Join("internal", "platform", "fedclient", "fedclient.go") {
+			if filepath.Dir(rel) == filepath.Join("internal", "platform", "fedclient") {
+				if !strings.Contains(src, "Restrict(") {
+					t.Errorf("%s builds a federation client (%s) without Restrict", rel, call)
+				}
 				continue
 			}
 			// The offline sweeps generate traffic from wherever they run.

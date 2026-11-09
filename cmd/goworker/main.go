@@ -45,6 +45,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/edutype"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedproxy"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/httpserve"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/limits"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/proxy"
@@ -852,8 +853,16 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 				return err
 			}
 		}
+		// In front of it, the outbound federation proxy other processes
+		// use when outbound_federation_restricted_to names this one.
+		replHandler := fedproxy.New(fedproxy.Options{
+			Next:      repl,
+			Secret:    func() string { return src.Current().ReplicationSecret },
+			Transport: fedclient.Forwarding(),
+			Log:       componentLogger(base, cfg.Log, "replication"),
+		})
 		replSrv = &http.Server{
-			Handler: repl,
+			Handler: replHandler,
 			// Synapse's processes only, on the inside: a request may wait on
 			// a stream or a cached sibling, so no write timeout.
 			ReadHeaderTimeout: 20 * time.Second,
