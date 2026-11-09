@@ -704,6 +704,8 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		}
 	}
 
+	reads.SetDeviceStream(deviceStream(devLists, positions, src.Current))
+
 	logReplication(log, cfg.InstanceName, cfg.Listen.Replication, hs)
 	if checkOnly {
 		log.Info().Bool("writing_typing", typer != nil && typer.Writing()).Msg("typing writer")

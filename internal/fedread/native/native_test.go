@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/e2ekeys"
 )
 
 // missingOnly answers /get_missing_events and counts the calls.
@@ -101,6 +102,71 @@ func TestUserKeysQuery(t *testing.T) {
 		t.Errorf("appservice user: %v", err)
 	}
 	if _, status, err := ask(as, "POST", `{"device_keys":{"@a:example.org":[]}}`); err != nil || status != 200 {
+		t.Errorf("not an appservice user: %d %v", status, err)
+	}
+}
+
+// devicesOnly answers /user/devices and records whom it was asked about.
+type devicesOnly struct {
+	Resolver
+	opts  matrixstate.KeyQueryOptions
+	asked []string
+	err   error
+}
+
+func (d *devicesOnly) UserDevices(_ context.Context, userID string) ([]byte, error) {
+	d.asked = append(d.asked, userID)
+	return []byte(`{"user_id":"x"}`), d.err
+}
+func (d *devicesOnly) KeyQueryOptions() matrixstate.KeyQueryOptions { return d.opts }
+
+func TestUserDevices(t *testing.T) {
+	ask := func(r *devicesOnly, method, param string) ([]byte, int, error) {
+		b, status, _, err := Answer(context.Background(), r, "example.org",
+			Request{Endpoint: "user_devices", Method: method, Param: param})
+		return b, status, err
+	}
+	r := &devicesOnly{}
+	if _, status, err := ask(r, "GET", "%40a%3Aexample.org"); err != nil || status != 200 || fmt.Sprint(r.asked) != "[@a:example.org]" {
+		t.Fatalf("%d %v %v", status, err, r.asked)
+	}
+	// urllib.parse.unquote, then UserID.from_string and is_mine, in
+	// Synapse's words.
+	for param, want := range map[string]string{
+		"a%3Aexample.org":    `{"errcode":"M_INVALID_PARAM","error":"Expected UserID string to start with '@'"}`,
+		"%40a":               `{"errcode":"M_INVALID_PARAM","error":"Expected UserID of the form '@localname:domain'"}`,
+		"@a:elsewhere.org":   `{"errcode":"M_UNKNOWN","error":"User is not hosted on this homeserver"}`,
+		"@a:example.org:443": `{"errcode":"M_UNKNOWN","error":"User is not hosted on this homeserver"}`,
+	} {
+		r := &devicesOnly{}
+		body, status, err := ask(r, "GET", param)
+		if err != nil || status != 400 || string(body) != want || len(r.asked) != 0 {
+			t.Errorf("%s: %d %s %v", param, status, body, err)
+		}
+	}
+	for name, c := range map[string]struct {
+		method, param string
+		r             *devicesOnly
+		reason        string
+	}{
+		"HEAD":          {"HEAD", "@a:example.org", &devicesOnly{}, "method"},
+		"POST":          {"POST", "@a:example.org", &devicesOnly{}, "method"},
+		"bad escape":    {"GET", "@a%zz:example.org", &devicesOnly{}, "user_id"},
+		"not utf-8":     {"GET", "@a%ff:example.org", &devicesOnly{}, "user_id"},
+		"no position":   {"GET", "@a:example.org", &devicesOnly{err: matrixstate.ErrNoDeviceStream}, "stream_position"},
+		"bad key_json":  {"GET", "@a:example.org", &devicesOnly{err: fmt.Errorf("x: %w", e2ekeys.ErrUnsplicable)}, "key_json"},
+		"appservice":    {"GET", "@bridge_1:example.org", &devicesOnly{opts: matrixstate.KeyQueryOptions{MSC3984: true, ExclusiveUsers: regexp.MustCompile(`^@bridge_`)}}, "appservice_keys"},
+		"no namespaces": {"GET", "@a:example.org", &devicesOnly{opts: matrixstate.KeyQueryOptions{MSC3984: true, ExclusiveUnknown: true}}, "appservice_namespaces"},
+	} {
+		_, _, err := ask(c.r, c.method, c.param)
+		var left NotReproduced
+		if !errors.As(err, &left) || left.Reason != c.reason {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// MSC3984 leaves other users ours.
+	as := &devicesOnly{opts: matrixstate.KeyQueryOptions{MSC3984: true, ExclusiveUsers: regexp.MustCompile(`^@bridge_`)}}
+	if _, status, err := ask(as, "GET", "@a:example.org"); err != nil || status != 200 {
 		t.Errorf("not an appservice user: %d %v", status, err)
 	}
 }

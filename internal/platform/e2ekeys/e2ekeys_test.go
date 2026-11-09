@@ -2,6 +2,7 @@ package e2ekeys
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -92,5 +93,64 @@ func TestLocalAndCrossSigning(t *testing.T) {
 	m, _, u, _ = CrossSigning(ctx, q, users, "@a:x")
 	if gjson.GetBytes(m["@a:x"], `signatures.@a:x.ed25519:D`).Str != "device-on-master" || u["@a:x"] == nil {
 		t.Errorf("owner: %s %v", m["@a:x"], u)
+	}
+}
+
+// get_e2e_device_keys_for_federation_query's devices: keys only when a
+// non-empty dict once the owner's cross-signatures are in, a name only when
+// allowed and non-empty, hidden and keyless devices absent, and a key_json
+// Synapse would fail on left to it.
+func TestFederationDevices(t *testing.T) {
+	p := testPool(t)
+	ctx := context.Background()
+	if _, err := p.Exec(ctx, `
+		INSERT INTO devices VALUES
+			('@a:x', 'EMPTY', '', false), ('@a:x', 'EMPTYSIGNED', NULL, false),
+			('@a:x', 'NULL', 'n', false), ('@a:x', 'HIDDEN', 'h', true), ('@a:x', 'NOKEYS', 'k', false),
+			('@a:x', 'DUP', NULL, false),
+			('@b:x', 'LIST', NULL, false), ('@c:x', 'SIGLIST', NULL, false);
+		INSERT INTO e2e_device_keys_json VALUES
+			('@a:x', 'EMPTY', 1, '{}'), ('@a:x', 'EMPTYSIGNED', 1, '{}'), ('@a:x', 'NULL', 1, 'null'),
+			('@a:x', 'HIDDEN', 1, '{"k":1}'), ('@a:x', 'DUP', 1, '{"k":1,"k":2}'),
+			('@b:x', 'LIST', 1, '[1]'), ('@c:x', 'SIGLIST', 1, '{"signatures":[]}');
+		INSERT INTO e2e_cross_signing_signatures VALUES
+			('@a:x', 'ed25519:as', '@a:x', 'EMPTYSIGNED', 'sig'),
+			('@c:x', 'ed25519:cs', '@c:x', 'SIGLIST', 'sig');`); err != nil {
+		t.Fatal(err)
+	}
+	q := PoolQuerier(p)
+	got := func(names bool) map[string]string {
+		devs, err := FederationDevices(ctx, q, "@a:x", names)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, d := range devs {
+			out[gjson.GetBytes(d, "device_id").Str] = string(d)
+		}
+		return out
+	}
+	want := map[string]string{
+		"D":           `{"device_id":"D","keys":{"device_id":"D","keys":{"ed25519:D":"d"},"unsigned":{"old":1},"signatures":{"@a:x":{"ed25519:as":"self-cross"}}}}`,
+		"EMPTY":       `{"device_id":"EMPTY"}`,
+		"EMPTYSIGNED": `{"device_id":"EMPTYSIGNED","keys":{"signatures":{"@a:x":{"ed25519:as":"sig"}}}}`,
+		"NULL":        `{"device_id":"NULL"}`,
+		"DUP":         `{"device_id":"DUP","keys":{"k":2}}`,
+	}
+	if g := got(false); fmt.Sprint(g) != fmt.Sprint(want) {
+		t.Errorf("no names:\n got %v\nwant %v", g, want)
+	}
+	named := got(true)
+	if gjson.Get(named["D"], "device_display_name").Str != "Phone <1>" || gjson.Get(named["NULL"], "device_display_name").Str != "n" ||
+		gjson.Get(named["EMPTY"], "device_display_name").Exists() || gjson.Get(named["DUP"], "device_display_name").Exists() {
+		t.Errorf("names: %v", named)
+	}
+	for _, u := range []string{"@b:x", "@c:x"} {
+		if _, err := FederationDevices(ctx, q, u, false); !errors.Is(err, ErrUnsplicable) {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	if devs, err := FederationDevices(ctx, q, "@none:x", true); err != nil || devs == nil || len(devs) != 0 {
+		t.Errorf("no devices: %v %v", devs, err)
 	}
 }

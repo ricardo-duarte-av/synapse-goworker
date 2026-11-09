@@ -42,7 +42,7 @@ type nativeResult struct {
 // whole safety property of native serving: any doubt costs latency, never
 // correctness. Nothing is written until a complete answer exists, so a failure
 // halfway through cannot leave a half-written response.
-func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, roomID, eventID string, reqBody []byte) nativeResult {
+func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, roomID, eventID, param string, reqBody []byte) nativeResult {
 	if h.resolver == nil {
 		return nativeResult{Reason: "no_resolver"}
 	}
@@ -90,7 +90,7 @@ func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, 
 	defer cancel()
 
 	start := time.Now()
-	body, status, meta, err := h.answer(ctx, r.Method, endpoint, result.Origin, roomID, eventID, reqBody)
+	body, status, meta, err := h.answer(ctx, r.Method, endpoint, result.Origin, roomID, eventID, param, reqBody)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -148,7 +148,7 @@ func (h *Handler) serveNative(w http.ResponseWriter, r *http.Request, endpoint, 
 
 // answer computes the response, converting a panic into an error so a bug in
 // the native path falls back to the proxy rather than killing the connection.
-func (h *Handler) answer(ctx context.Context, method, endpoint, origin, roomID, eventID string, reqBody []byte) (body []byte, status int, meta native.Meta, err error) {
+func (h *Handler) answer(ctx context.Context, method, endpoint, origin, roomID, eventID, param string, reqBody []byte) (body []byte, status int, meta native.Meta, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			nativeFallback.WithLabelValues(endpoint, "panic").Inc()
@@ -163,6 +163,7 @@ func (h *Handler) answer(ctx context.Context, method, endpoint, origin, roomID, 
 		Origin:   origin,
 		RoomID:   roomID,
 		EventID:  eventID,
+		Param:    param,
 		Body:     reqBody,
 	})
 }

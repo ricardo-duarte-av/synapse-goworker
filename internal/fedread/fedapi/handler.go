@@ -265,7 +265,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Msg("Rate limited: delayed request")
 		}
 
-		nat := h.serveNative(w, r, endpointName, roomID, eventID, reqBody)
+		nat := h.serveNative(w, r, endpointName, roomID, eventID, route.Param, reqBody)
 		release()
 		if nat.Served {
 			metrics.RequestsTotal.WithLabelValues(endpointName, "native").Inc()
@@ -413,7 +413,8 @@ func withCache(ev *zerolog.Event, t *cache.Trace) *zerolog.Event {
 
 // roomIDFor returns the decoded room ID for the endpoints that take one.
 func roomIDFor(route Route) string {
-	if route.Endpoint == EndpointEvent {
+	switch route.Endpoint {
+	case EndpointEvent, EndpointUserKeysQuery, EndpointUserDevices:
 		return ""
 	}
 	return decodeParam(route.Param)
@@ -422,8 +423,11 @@ func roomIDFor(route Route) string {
 // eventIDFor returns the decoded event ID, which is the path parameter for
 // /event and the required query parameter for the state endpoints.
 func eventIDFor(route Route, r *http.Request) string {
-	if route.Endpoint == EndpointEvent {
+	switch route.Endpoint {
+	case EndpointEvent:
 		return decodeParam(route.Param)
+	case EndpointUserKeysQuery, EndpointUserDevices:
+		return ""
 	}
 	return r.URL.Query().Get("event_id")
 }

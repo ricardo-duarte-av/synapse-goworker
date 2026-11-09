@@ -16,7 +16,10 @@ const (
 	// EndpointUserKeysQuery is POST /user/keys/query: local users' device
 	// and cross-signing keys.
 	EndpointUserKeysQuery Endpoint = "user_keys_query"
-	EndpointUnknown       Endpoint = "unknown"
+	// EndpointUserDevices is GET /user/devices/{userId}: a local user's
+	// devices, cross-signing keys and the device_lists stream position.
+	EndpointUserDevices Endpoint = "user_devices"
+	EndpointUnknown     Endpoint = "unknown"
 )
 
 // Streams reports that an endpoint writes its answer incrementally rather
@@ -40,7 +43,8 @@ func (e Endpoint) HasRequestBody() bool {
 type Route struct {
 	Endpoint Endpoint
 	// Param is the trailing path parameter, still percent-encoded exactly as it
-	// arrived: the event ID for /event, the room ID for /state and /state_ids.
+	// arrived: the event ID for /event, the room ID for /state and /state_ids,
+	// the user ID for /user/devices.
 	Param string
 }
 
@@ -60,6 +64,8 @@ var prefixes = []struct {
 	{"/_matrix/federation/v1/get_missing_events/", EndpointGetMissingEvents},
 }
 
+const userDevicesPrefix = "/_matrix/federation/v1/user/devices/"
+
 // Match classifies an escaped request path. It reports false for anything
 // outside the three endpoints this worker serves.
 //
@@ -72,6 +78,14 @@ func Match(escapedPath string) (Route, bool) {
 	switch strings.TrimSuffix(escapedPath, "/") {
 	case "/_matrix/federation/v1/user/keys/query":
 		return Route{Endpoint: EndpointUserKeysQuery}, true
+	}
+	// /user/devices/(?P<user_id>[^/]*)$ exactly: BaseFederationServlet's
+	// pattern has no optional trailing slash, so Synapse answers one 404.
+	if param, ok := strings.CutPrefix(escapedPath, userDevicesPrefix); ok {
+		if param == "" || strings.Contains(param, "/") {
+			return Route{}, false
+		}
+		return Route{Endpoint: EndpointUserDevices, Param: param}, true
 	}
 	for _, p := range prefixes {
 		if !strings.HasPrefix(escapedPath, p.prefix) {

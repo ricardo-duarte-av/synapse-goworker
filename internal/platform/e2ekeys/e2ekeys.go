@@ -2,19 +2,22 @@
 // (storage/databases/main/end_to_end_keys.py, handlers/e2e_keys.py,
 // v1.164.2): devices' keys with their owners' cross-signatures, and
 // cross-signing keys with a requester's signatures. Client POST /keys/query
-// (sync) and federation POST /user/keys/query (the federation reads) both
-// answer from it.
+// (sync), and federation POST /user/keys/query and GET /user/devices (the
+// federation reads) answer from it.
 package e2ekeys
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyjson"
 )
 
 // Querier runs a query; name labels it for the caller's metrics.
@@ -305,6 +308,127 @@ func CrossSigning(ctx context.Context, q Querier, users []string, from string) (
 		userSigning[from] = k
 	}
 	return master, selfSigning, userSigning, nil
+}
+
+// ErrUnsplicable is a device whose stored key_json Synapse cannot add its
+// owner's cross-signatures to (keys.setdefault("signatures", {}) on a value
+// that is not a dict, or a "signatures" or its user's entry not a dict):
+// Synapse fails the request with a 500, which is left to it.
+var ErrUnsplicable = errors.New("e2ekeys: key_json cannot take its owner's cross-signatures")
+
+// FederationDevices is _get_e2e_device_keys_for_federation_query_inner
+// (end_to_end_keys.py, v1.164.1) without its cache: every device of userID
+// that has a key_json row and is not hidden, in row order, each as
+// {"device_id", "keys" (the stored keys with the owner's cross-signatures,
+// when a non-empty object), "device_display_name" (when displayNames and
+// the name is non-empty)}. A key_json of null has no keys; any other
+// non-object is ErrUnsplicable, as Synapse would fail on it at the first
+// signature, and Synapse's answer is otherwise its own.
+func FederationDevices(ctx context.Context, q Querier, userID string, displayNames bool) ([]json.RawMessage, error) {
+	rows, err := q(ctx, "FederationDevices", `
+		SELECT device_id, d.display_name, k.key_json
+		  FROM e2e_device_keys_json k
+		 INNER JOIN devices d USING (user_id, device_id)
+		 WHERE user_id = $1 AND NOT d.hidden`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("e2ekeys: federation devices: %w", err)
+	}
+	type row struct {
+		device string
+		name   *string
+		keys   []byte // nil: Python's None
+	}
+	var found []row
+	var signed []UserDevice
+	for rows.Next() {
+		var r row
+		var key *string
+		if err := rows.Scan(&r.device, &r.name, &key); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("e2ekeys: federation devices: %w", err)
+		}
+		// db_to_json(key_json) if key_json else None.
+		if key != nil && *key != "" {
+			k, err := pyjson.Dedupe([]byte(*key))
+			if err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("e2ekeys: federation devices: %s: %w", r.device, err)
+			}
+			if gjson.ParseBytes(k).Type != gjson.Null {
+				r.keys = k
+				signed = append(signed, UserDevice{UserID: userID, DeviceID: r.device})
+			}
+		}
+		found = append(found, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("e2ekeys: federation devices: %w", err)
+	}
+	sigs, err := DeviceSelfCrossSignatures(ctx, q, signed)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, 0, len(found))
+	for _, r := range found {
+		dev := []byte(`{"device_id":` + string(jsonString(r.device)) + `}`)
+		keys := r.keys
+		if s := sigs[UserDevice{UserID: userID, DeviceID: r.device}]; len(s) > 0 {
+			if keys, err = spliceOwnerSignatures(keys, userID, s); err != nil {
+				return nil, fmt.Errorf("%w: %s", err, r.device)
+			}
+		} else if keys != nil && !gjson.ParseBytes(keys).IsObject() {
+			// No signature to fail on, but `if keys:` over a list, a
+			// string or a number is Python's truthiness, not ours.
+			return nil, fmt.Errorf("%w: %s", ErrUnsplicable, r.device)
+		}
+		if nonEmptyObject(keys) {
+			if dev, err = sjson.SetRawBytes(dev, "keys", keys); err != nil {
+				return nil, err
+			}
+		}
+		if displayNames && r.name != nil && *r.name != "" {
+			if dev, err = sjson.SetRawBytes(dev, "device_display_name", jsonString(*r.name)); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, dev)
+	}
+	return out, nil
+}
+
+// spliceOwnerSignatures is get_e2e_device_keys_and_signatures' merge:
+// keys.setdefault("signatures", {}).setdefault(user, {})[key_id] = sig.
+func spliceOwnerSignatures(keys []byte, user string, sigs []Signature) ([]byte, error) {
+	v := gjson.ParseBytes(keys)
+	if !v.IsObject() {
+		return nil, ErrUnsplicable
+	}
+	if s := v.Get("signatures"); s.Exists() {
+		if !s.IsObject() {
+			return nil, ErrUnsplicable
+		}
+		if u := s.Get(gjson.Escape(user)); u.Exists() && !u.IsObject() {
+			return nil, ErrUnsplicable
+		}
+	}
+	var err error
+	for _, s := range sigs {
+		if keys, err = sjson.SetBytes(keys, "signatures."+gjson.Escape(user)+"."+gjson.Escape(s.KeyID), s.Signature); err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
+}
+
+// nonEmptyObject is `if keys:` for a dict (or None).
+func nonEmptyObject(raw []byte) bool {
+	if raw == nil {
+		return false
+	}
+	empty := true
+	gjson.ParseBytes(raw).ForEach(func(_, _ gjson.Result) bool { empty = false; return false })
+	return !empty
 }
 
 // jsonString encodes s without escaping <, > and &, as Synapse's encoder.

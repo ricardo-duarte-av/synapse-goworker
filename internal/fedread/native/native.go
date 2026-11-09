@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/e2ekeys"
 )
 
 // Resolver computes native answers.
@@ -28,6 +31,7 @@ type Resolver interface {
 	Event(ctx context.Context, origin, serverName, eventID string) (*matrixstate.TransactionResponse, error)
 	GetMissingEvents(ctx context.Context, origin, serverName, roomID string, earliest, latest []string, limit int) (*matrixstate.MissingEventsResponse, error)
 	UserKeys(ctx context.Context, users []string, devices map[string][]string) ([]byte, error)
+	UserDevices(ctx context.Context, userID string) ([]byte, error)
 	KeyQueryOptions() matrixstate.KeyQueryOptions
 	State(ctx context.Context, w io.Writer, origin, roomID, eventID string) (matrixstate.StateResult, error)
 }
@@ -40,6 +44,9 @@ type Request struct {
 	Origin  string
 	RoomID  string
 	EventID string
+	// Param is the trailing path parameter as it arrived, percent-encoded:
+	// /user/devices' user ID, which Synapse unquotes itself.
+	Param string
 	// Body is the raw request body, for endpoints whose answer depends on it.
 	// Carried as bytes rather than parsed, so every caller parses it
 	// identically.
@@ -102,6 +109,9 @@ func Answer(ctx context.Context, r Resolver, serverName string, request Request)
 
 	case "user_keys_query":
 		return userKeysQuery(ctx, r, serverName, request)
+
+	case "user_devices":
+		return userDevices(ctx, r, serverName, request)
 
 	case "get_missing_events":
 		var body MissingEventsRequest
@@ -258,6 +268,59 @@ func userKeysQuery(ctx context.Context, r Resolver, serverName string, request R
 	}
 	body, err := r.UserKeys(ctx, users, devices)
 	if err != nil {
+		return nil, 0, Meta{}, err
+	}
+	return body, http.StatusOK, Meta{}, nil
+}
+
+// UserID.from_string's refusals (types/__init__.py), as SynapseError bodies.
+var (
+	userIDNoSigil = []byte(`{"errcode":"M_INVALID_PARAM","error":"Expected UserID string to start with '@'"}`)
+	userIDNoColon = []byte(`{"errcode":"M_INVALID_PARAM","error":"Expected UserID of the form '@localname:domain'"}`)
+)
+
+// userDevices is FederationUserDevicesQueryServlet.on_GET over
+// on_federation_query_user_devices (handlers/device.py, v1.164.1): the
+// path's user ID unquoted, UserID.from_string's 400s, a user not ours
+// Synapse's 400, then the user's devices. Left to Synapse: another method
+// (HEAD included, which it answers as GET without a body), a parameter Go
+// and urllib.parse.unquote might decode differently (a malformed escape,
+// bytes that are not UTF-8), a device list stream position we do not
+// know, a key_json Synapse fails on, and under MSC3984 a user an
+// appservice owns exclusively.
+func userDevices(ctx context.Context, r Resolver, serverName string, request Request) ([]byte, int, Meta, error) {
+	if request.Method != "GET" {
+		return nil, 0, Meta{}, NotReproduced{Reason: "method"}
+	}
+	userID, err := url.PathUnescape(request.Param)
+	if err != nil || !utf8.ValidString(userID) {
+		return nil, 0, Meta{}, NotReproduced{Reason: "user_id"}
+	}
+	if !strings.HasPrefix(userID, "@") {
+		return userIDNoSigil, http.StatusBadRequest, Meta{}, nil
+	}
+	_, domain, ok := strings.Cut(userID, ":")
+	if !ok {
+		return userIDNoColon, http.StatusBadRequest, Meta{}, nil
+	}
+	if domain != serverName {
+		return notHosted, http.StatusBadRequest, Meta{}, nil
+	}
+	if o := r.KeyQueryOptions(); o.MSC3984 {
+		if o.ExclusiveUnknown {
+			return nil, 0, Meta{}, NotReproduced{Reason: "appservice_namespaces"}
+		}
+		if o.ExclusiveUsers != nil && o.ExclusiveUsers.MatchString(userID) {
+			return nil, 0, Meta{}, NotReproduced{Reason: "appservice_keys"}
+		}
+	}
+	body, err := r.UserDevices(ctx, userID)
+	switch {
+	case errors.Is(err, matrixstate.ErrNoDeviceStream):
+		return nil, 0, Meta{}, NotReproduced{Reason: "stream_position"}
+	case errors.Is(err, e2ekeys.ErrUnsplicable):
+		return nil, 0, Meta{}, NotReproduced{Reason: "key_json"}
+	case err != nil:
 		return nil, 0, Meta{}, err
 	}
 	return body, http.StatusOK, Meta{}, nil

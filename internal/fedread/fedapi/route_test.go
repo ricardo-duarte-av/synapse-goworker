@@ -119,3 +119,21 @@ func TestMatchUserKeysQuery(t *testing.T) {
 		}
 	}
 }
+
+// /user/devices/(?P<user_id>[^/]*)$: the parameter as it arrived, and no
+// trailing slash (Synapse's pattern has none, so it answers 404).
+func TestMatchUserDevices(t *testing.T) {
+	for path, want := range map[string]string{
+		"/_matrix/federation/v1/user/devices/%40a%3Aexample.org": "%40a%3Aexample.org",
+		"/_matrix/federation/v1/user/devices/@a:example.org":     "@a:example.org",
+		"/_matrix/federation/v1/user/devices/@a:example.org/":    "",
+		"/_matrix/federation/v1/user/devices/":                   "",
+		"/_matrix/federation/v1/user/devices/@a/b":               "",
+		"/_matrix/federation/v2/user/devices/@a:example.org":     "",
+	} {
+		r, got := Match(path)
+		if got != (want != "") || (got && (r.Endpoint != EndpointUserDevices || r.Param != want)) {
+			t.Errorf("%s: %+v %v", path, r, got)
+		}
+	}
+}

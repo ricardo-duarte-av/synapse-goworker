@@ -228,6 +228,15 @@ func (a *App) poke() {
 // Writing reports whether this process writes device lists.
 func (a *App) Writing() bool { return a.writing }
 
+// Position is the device_lists stream's current token while this process
+// writes it (get_device_stream_token on the writer), and false otherwise.
+func (a *App) Position() (int64, bool) {
+	if a == nil || !a.writing {
+		return 0, false
+	}
+	return a.ids.Position(), true
+}
+
 // SetSynapse notes a re-read: the role is not changed until restart.
 func (a *App) SetSynapse(hs *synapsecfg.Config) {
 	want := slices.Contains(hs.Writers.DeviceLists, a.Instance)

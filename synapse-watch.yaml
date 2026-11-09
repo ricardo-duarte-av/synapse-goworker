@@ -265,6 +265,9 @@ components:
       - synapse/events/utils.py
       - synapse/federation/federation_server.py
       - synapse/federation/transport/server/federation.py
+      - synapse/handlers/device.py
+      - synapse/handlers/e2e_keys.py
+      - synapse/storage/databases/main/end_to_end_keys.py
 
   sender:
     code: internal/sender

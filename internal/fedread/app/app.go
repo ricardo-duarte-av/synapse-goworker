@@ -159,6 +159,11 @@ func New(ctx context.Context, cfg Settings) (*FedRead, error) {
 	return f, nil
 }
 
+// SetDeviceStream gives GET /user/devices the device_lists stream's
+// position; until then, and while it reports none, those requests are
+// main's.
+func (f *FedRead) SetDeviceStream(d matrixstate.DeviceStream) { f.resolver.SetDeviceStream(d) }
+
 // EventVisibleToServer is filter_events_for_server for one local event, with
 // redact=False and filter_out_erased_senders=True: whether server may be sent
 // it. The outbound sender asks it of the sticky events it catches a

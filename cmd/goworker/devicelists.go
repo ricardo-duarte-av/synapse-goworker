@@ -12,10 +12,12 @@ import (
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/accountdata"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/devicelists"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/fedread/matrixstate"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
 	inboundlocks "github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/inbound"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/fedclient"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pdustore"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/statecache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/todevice"
@@ -141,5 +143,32 @@ func toDeviceToken(td *todevice.App, ddb *devicelists.DB) func() int64 {
 		}
 		n, _ := ddb.ToDeviceMax(context.Background())
 		return n
+	}
+}
+
+// deviceStream is get_device_stream_token().stream for GET /user/devices:
+// our generator's position while we write device_lists; otherwise the
+// lowest position the bus has shown us of the writers homeserver.yaml
+// names now (a follower's persisted-upto token), known only once every
+// one of them has been seen since start. Unknown sends the request to main.
+func deviceStream(dl *devicelists.App, positions *replserver.Tracker, hs func() *synapsecfg.Config) matrixstate.DeviceStream {
+	return func() (int64, bool) {
+		if pos, ok := dl.Position(); ok {
+			return pos, true
+		}
+		if positions == nil {
+			return 0, false
+		}
+		var low int64
+		for i, w := range hs().Writers.DeviceLists {
+			pos, ok := positions.Seen(devicelists.StreamName, w)
+			if !ok {
+				return 0, false
+			}
+			if i == 0 || pos < low {
+				low = pos
+			}
+		}
+		return low, len(hs().Writers.DeviceLists) > 0
 	}
 }
