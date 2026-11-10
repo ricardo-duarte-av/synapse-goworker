@@ -19,7 +19,16 @@
 reviewed: v1.164.2
 
 # Ported or dismissed past a component's reviewed tag:
-handled: []
+# v1.165.0, dismissed (2026-11-10):
+# - Server Announcements (experimental_features.server_announcements, off on
+#   both hosts): every check is on the configured rooms, so with none
+#   configured nothing changes. 20372 20407 20412 20423 20427 20448 20465
+#   20467
+# - 20425 (MSC4143 stable): /rtc/transports, /versions and room upgrades are
+#   main's; we only see a new constant.
+# - 20422: backported in v1.164.1, ported then (dc3369f).
+# - 20369: a background index on users. 20359, 20417: no behaviour.
+handled: [20359, 20369, 20372, 20407, 20412, 20417, 20422, 20423, 20425, 20427, 20448, 20465, 20467]
 
 components:
   # Shared by every part: tables we read and write.

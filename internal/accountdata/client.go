@@ -135,6 +135,16 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		a.Fallback.ServeHTTP(w, r)
 		return
 	}
+	// With server announcement rooms configured (Synapse 1.165), TagServlet
+	// lets their synthetic members tag them and refuses to remove
+	// m.server_notice from them; neither is reproduced here. Main checks,
+	// then writes through our add_tag_to_room/remove_tag_from_room
+	// replication endpoints as usual.
+	if rt.endpoint == epTag && a.Synapse().Announcements.Configured() {
+		requests.WithLabelValues(rt.endpoint, "server_announcements_to_main").Inc()
+		a.Fallback.ServeHTTP(w, r)
+		return
+	}
 	ans := a.handle(r.Context(), r, rt)
 	requests.WithLabelValues(rt.endpoint, ans.outcome).Inc()
 	if ans.err != nil || ans.body == nil {

@@ -270,6 +270,13 @@ Still per component, on purpose:
   process's only way out, joins and key fetches included: list two. The
   replication listener must never be reachable through nginx; the
   secret is the proxy's only check.
+- **Server announcement rooms are main's** (2026-11-10). Synapse 1.165's
+  experimental `server_announcements` (rooms delivered to every local user
+  as a synthetic join) is not reproduced. While homeserver.yaml configures
+  any room, read on each request, sync's routes (bar profile and key
+  queries) and tag writes go to main; main writes tags through our
+  account-data writer's replication endpoints. Off on both hosts; port it
+  rather than widen the guard if it is ever wanted.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

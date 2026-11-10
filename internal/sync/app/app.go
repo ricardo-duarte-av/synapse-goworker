@@ -223,13 +223,16 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		},
 	}
 	s.pushFeatures = deps.PushRuleFeatures
+	// Server announcement rooms are main's while configured (Synapse 1.165).
+	announcements := func() bool { return cfg.Synapse.Current().Announcements.Configured() }
+	toMain := func(h http.Handler) http.Handler { return handlers.AnnouncementsToMain(deps, announcements, h) }
 	s.routes = server.Routes{
-		RoomInitialSync: handlers.RoomInitialSync(deps),
-		InitialSync:     handlers.InitialSync(deps),
-		Events:          handlers.Events(deps),
-		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
-		RoomState:       handlers.RoomState(deps),
-		RoomEvent:       handlers.RoomEvent(deps),
+		RoomInitialSync: toMain(handlers.RoomInitialSync(deps)),
+		InitialSync:     toMain(handlers.InitialSync(deps)),
+		Events:          toMain(handlers.Events(deps)),
+		Sync:            toMain(initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps))),
+		RoomState:       toMain(handlers.RoomState(deps)),
+		RoomEvent:       toMain(handlers.RoomEvent(deps)),
 		Profile: handlers.Profile(deps, handlers.ProfileDeps{
 			Settings:       cfg.Synapse.Current().Profile,
 			Limiter:        ratelimit.New(cfg.Synapse.Current().Profile.Rc, nil),
@@ -240,7 +243,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		KeysQuery: handlers.KeysQuery(deps, keysDeps(cfg.Synapse.Current(), cfg.Worker)),
 	}
 	if s.sliding != nil {
-		s.routes.SlidingSync = handlers.SlidingSync(deps)
+		s.routes.SlidingSync = toMain(handlers.SlidingSync(deps))
 	}
 	return s, nil
 }

@@ -527,3 +527,21 @@ func TestIgnoredIn(t *testing.T) {
 		t.Error("a list accepted")
 	}
 }
+
+// With server announcement rooms configured, tag writes are main's (it lets
+// synthetic members tag and keeps m.server_notice); reads stay here.
+func TestTagsToMainWithAnnouncements(t *testing.T) {
+	w := newWorld(t, false)
+	if code, _ := w.do(t, "PUT", pTags+"/u.work", `{}`); code != 200 {
+		t.Fatalf("PUT without announcements: %d", code)
+	}
+	w.hs.Announcements.Rooms = 1
+	for _, m := range []string{"PUT", "DELETE"} {
+		if code, _ := w.do(t, m, pTags+"/u.work", `{}`); code != 299 {
+			t.Errorf("%s with announcements: %d, want main's", m, code)
+		}
+	}
+	if code, _ := w.do(t, "GET", pTags, ""); code != 200 {
+		t.Errorf("GET tags with announcements: %d", code)
+	}
+}

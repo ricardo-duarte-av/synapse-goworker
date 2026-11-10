@@ -131,6 +131,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 	// instances outbound_federation_restricted_to names.
 	fedclient.SetOutbound(func() fedclient.Outbound { return fedclient.OutboundFor(src.Current(), cfg.InstanceName) })
 	outboundSeen := logOutbound(log, cfg.InstanceName, hs, "")
+	announcementsSeen := logAnnouncements(log, hs, false, true)
 	log.Info().Str("version", tag).Str("commit", commit).
 		Str("server_name", hs.ServerName).Str("instance_name", cfg.InstanceName).
 		Int("memory_limit_mb", cfg.Memory.LimitMB).Msg("starting goworker")
@@ -904,6 +905,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		watchHomeserver(gctx, src, sender, upstream, log, func(scfg *synapsecfg.Config) {
 			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
 			outboundSeen = logOutbound(log, cfg.InstanceName, scfg, outboundSeen)
+			announcementsSeen = logAnnouncements(log, scfg, announcementsSeen, false)
 			if typer != nil {
 				typer.SetSynapse(scfg)
 			}
@@ -1032,6 +1034,23 @@ func logOutbound(log zerolog.Logger, instance string, hs *synapsecfg.Config, las
 	default:
 		log.Info().Strs("via", names).
 			Msg("federation requests go through the instances outbound_federation_restricted_to names")
+	}
+	return now
+}
+
+// logAnnouncements says, at start and when a re-read changes it, whether
+// server announcement rooms send their requests to main. Returns whether
+// they are configured.
+func logAnnouncements(log zerolog.Logger, hs *synapsecfg.Config, last, start bool) bool {
+	now := hs.Announcements.Configured()
+	switch {
+	case now && (start || !last):
+		log.Warn().Int("rooms", hs.Announcements.Rooms).
+			Msg("experimental_features.server_announcements configures rooms: /sync, sliding sync, /events, " +
+				"initialSync, room state and event reads, and tag writes go to main, which delivers them")
+	case !now && last:
+		log.Info().Msg("experimental_features.server_announcements no longer configures rooms: " +
+			"sync, room reads and tag writes are served here again")
 	}
 	return now
 }

@@ -112,6 +112,8 @@ type Config struct {
 
 	// Experimental is experimental_features, as given.
 	Experimental map[string]any
+	// Announcements is experimental_features.server_announcements.
+	Announcements Announcements
 
 	// AppServiceFiles are app_service_config_files, resolved to readable
 	// paths (beside homeserver.yaml when Synapse's own path is absent).
@@ -363,6 +365,9 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 	cfg.TrackPresence = trackPresence(r)
 	cfg.Experimental = lastWins(&r.ExperimentalFeatures)
+	if cfg.Announcements, err = announcements(cfg.Experimental, r.ServerName); err != nil {
+		return nil, err
+	}
 	if cfg.Membership, err = membership(b, r.ServerName); err != nil {
 		return nil, err
 	}
