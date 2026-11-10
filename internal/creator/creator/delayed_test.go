@@ -155,7 +155,7 @@ func TestDelayedSuspended(t *testing.T) {
 	}
 }
 
-// RoomDelayedEventRestServlet (v1.164): the delay and the content in the
+// RoomDelayedEventRestServlet (v1.165): the delay and the content in the
 // body, the strict model's types, and the rest as a delayed send.
 func TestRoomDelayedEventServlet(t *testing.T) {
 	put := func(h *harness, typ, txn, query, body string) (*httptest.ResponseRecorder, Outcome) {
@@ -187,19 +187,38 @@ func TestRoomDelayedEventServlet(t *testing.T) {
 		h.w.delayed[0].StickyDurationMS == nil || *h.w.delayed[0].StickyDurationMS != 60000 || h.w.delayed[0].StateKey != nil {
 		t.Errorf("sticky: %+v %+v", out, h.w.delayed)
 	}
-	for name, tc := range map[string]struct{ query, body, want string }{
-		"conflicting sticky": {"?org.matrix.msc4354.sticky_duration_ms=5", `{"delay_ms":1,"content":{},"org.matrix.msc4354.sticky_duration_ms":6}`,
-			`400 {"errcode":"M_INVALID_PARAM","error":"Conflicting values given for org.matrix.msc4354.sticky_duration_ms"}`},
-		"sticky state": {"", `{"delay_ms":1,"content":{},"state_key":"","org.matrix.msc4354.sticky_duration_ms":6}`,
-			`400 {"errcode":"M_INVALID_PARAM","error":"Sticky state events are not allowed. Cannot specify both ` + "`state_key` and `sticky_duration_ms`" + `"}`},
-		"sticky not positive": {"?org.matrix.msc4354.sticky_duration_ms=-5", `{"delay_ms":1,"content":{}}`,
-			`400 {"errcode":"M_INVALID_PARAM","error":"org.matrix.msc4354.sticky_duration_ms must be strictly positive"}`},
+	// Since v1.165 (#20378) the query's duration is ignored: only the body's
+	// counts.
+	for name, tc := range map[string]struct {
+		query, body string
+		want        *int64
+	}{
+		"query ignored":     {"?org.matrix.msc4354.sticky_duration_ms=5", `{"delay_ms":1,"content":{"msgtype":"m.text","body":"x"},"org.matrix.msc4354.sticky_duration_ms":6}`, new6()},
+		"query alone":       {"?org.matrix.msc4354.sticky_duration_ms=-5", `{"delay_ms":1,"content":{"msgtype":"m.text","body":"x"}}`, nil},
+		"query not integer": {"?org.matrix.msc4354.sticky_duration_ms=x", `{"delay_ms":1,"content":{"msgtype":"m.text","body":"x"}}`, nil},
 	} {
 		h := newHarness(t)
 		h.c.o.Sticky = true
-		rec, out := put(h, "m.room.message", "r", tc.query, tc.body)
-		if got := itoaStatus(rec.Code) + " " + rec.Body.String(); out.Refused == "" || got != tc.want {
-			t.Errorf("%s: %+v %s", name, out, got)
+		_, out := put(h, "m.room.message", "q", tc.query, tc.body)
+		if out.Result != "delayed" || len(h.w.delayed) != 1 {
+			t.Fatalf("%s: %+v", name, out)
+		}
+		if got := h.w.delayed[0].StickyDurationMS; (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("%s: sticky %v", name, got)
+		}
+	}
+	// The model refuses a duration that is not strictly positive, and one
+	// beside a state_key (its model_validator): pydantic's messages, main's.
+	for name, body := range map[string]string{
+		"sticky state":        `{"delay_ms":1,"content":{},"state_key":"","org.matrix.msc4354.sticky_duration_ms":6}`,
+		"sticky not positive": `{"delay_ms":1,"content":{},"org.matrix.msc4354.sticky_duration_ms":0}`,
+		"sticky negative":     `{"delay_ms":1,"content":{},"org.matrix.msc4354.sticky_duration_ms":-5}`,
+		"sticky string":       `{"delay_ms":1,"content":{},"org.matrix.msc4354.sticky_duration_ms":"6"}`,
+	} {
+		h := newHarness(t)
+		h.c.o.Sticky = true
+		if _, out := put(h, "m.room.message", "r", "", body); out.Fallback != "delayed_body" {
+			t.Errorf("%s: %+v", name, out)
 		}
 	}
 	// What the strict model refuses is Synapse's: its message is pydantic's.
@@ -216,3 +235,5 @@ func TestRoomDelayedEventServlet(t *testing.T) {
 		t.Errorf("disabled: %+v %d", out, rec.Code)
 	}
 }
+
+func new6() *int64 { n := int64(6); return &n }

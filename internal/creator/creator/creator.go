@@ -1468,8 +1468,8 @@ func (l *roomLocks) lock(room string) func() {
 // DelayedEventsHandler.add: refused when delayed events are off, then the
 // body as the strict model reads it (DelayedEventBodyModel, and
 // StickyDelayedEventBodyModel under MSC4354: delay_ms a positive integer,
-// content an object, state_key a string, the sticky duration from the
-// query or the body), then the appservice's ts. A body the model refuses is
+// content an object, state_key a string, the sticky duration a positive
+// integer from the body), then the appservice's ts. A body the model refuses is
 // Synapse's: its message is pydantic's.
 func (c *Creator) parseDelayedEvent(rq *requester, body []byte, q map[string][]string, in *input) (*input, *stop) {
 	if !c.o.Delayed.Enabled() {
@@ -1488,34 +1488,17 @@ func (c *Creator) parseDelayedEvent(rq *requester, body []byte, q map[string][]s
 		in.stateKey = &key
 	}
 	if c.o.Sticky {
-		var sticky *int64
-		if v, ok := q[StickyParam]; ok && len(v) > 0 {
-			n, st := parseSignedIntegerParam(StickyParam, v[0])
-			if st != nil {
-				return nil, st
-			}
-			sticky = &n
-		}
+		// StickyDelayedEventBodyModel (v1.165, #20378): the duration from the
+		// body alone, the query's ignored; a strictly positive integer; and
+		// not beside a state_key (its model_validator). Each refusal is
+		// pydantic's message, so main's to answer.
 		if b := root.Get(gjson.Escape(StickyParam)); b.Exists() {
-			if !strictInt(b) {
+			if !strictInt(b) || b.Int() <= 0 || in.stateKey != nil {
 				return nil, fb("delayed_body")
 			}
 			n := b.Int()
-			switch {
-			case sticky == nil:
-				sticky = &n
-			case *sticky != n:
-				return nil, badRequest("bad_param", "Conflicting values given for "+StickyParam, "M_INVALID_PARAM").stop()
-			}
+			in.sticky = &n
 		}
-		if sticky != nil && *sticky <= 0 {
-			return nil, badRequest("bad_param", StickyParam+" must be strictly positive", "M_INVALID_PARAM").stop()
-		}
-		if sticky != nil && in.stateKey != nil {
-			return nil, badRequest("sticky_state",
-				"Sticky state events are not allowed. Cannot specify both `state_key` and `sticky_duration_ms`", "M_INVALID_PARAM").stop()
-		}
-		in.sticky = sticky
 	}
 	if st := appserviceTS(rq, q, in); st != nil {
 		return nil, st
