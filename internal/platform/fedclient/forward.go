@@ -18,7 +18,11 @@ import (
 // matrix-federation:// request and resolves, filters and connects as
 // every client here does: the shared Resolutions, AllowIP on every
 // address dialled, .well-known through the filter, certificates as
-// federation_verify_certificates says. A request without a User-Agent
+// federation_verify_certificates says. Through Resolutions, our TTLs
+// govern the other processes' traffic too, not Synapse's: a resolution
+// reached without a .well-known delegation is kept 5 minutes, not an
+// hour (resolveNoDelegationTTL, resolvecache.go), and one we cannot
+// connect through is forgotten at once (ForgetOnFailure below). A request without a User-Agent
 // gets HTTP() (MatrixFederationAgent's, the suffix included); one with
 // keeps it. It does not decompress (no Accept-Encoding is added, as
 // Twisted's agent adds none), retry, or back off: the caller's limiter
