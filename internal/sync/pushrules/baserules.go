@@ -3,8 +3,10 @@
 package pushrules
 
 // This is a port of Synapse's built-in push ruleset,
-// rust/src/push/base_rules.rs, at v1.159.0-18-g3db77e80a5. It is extracted
-// mechanically rather than typed out: the conditions serialise through serde,
+// rust/src/push/base_rules.rs, at v1.159.0-18-g3db77e80a5, with v1.165.0's
+// #20366 (the RTC rules' type test is event_property_is) applied by hand and
+// held to the dump from Synapse itself by TestBaseRulesMatchTheDump. It is
+// extracted mechanically rather than typed out: the conditions serialise through serde,
 // and a hand transcription of forty rules would be a long list of silent
 // opportunities to be subtly wrong.
 //
@@ -103,7 +105,7 @@ var baseAppendOverride = []Rule{
 		RuleID:        "global/override/.org.matrix.msc4075.rule.rtc.invite_for_me",
 		PriorityClass: 5,
 		Conditions: []string{
-			"{\"kind\":\"event_match\",\"key\":\"type\",\"pattern\":\"org.matrix.msc4075.rtc.notification\"}",
+			"{\"kind\":\"event_property_is\",\"key\":\"type\",\"value\":\"org.matrix.msc4075.rtc.notification\"}",
 			"{\"kind\":\"event_property_contains\",\"key\":\"content.m\\\\.mentions.user_ids\",\"value_type\":\"user_id\"}",
 		},
 		Actions: []string{
@@ -116,7 +118,7 @@ var baseAppendOverride = []Rule{
 		RuleID:        "global/override/.org.matrix.msc4075.rule.rtc.invite_for_room",
 		PriorityClass: 5,
 		Conditions: []string{
-			"{\"kind\":\"event_match\",\"key\":\"type\",\"pattern\":\"org.matrix.msc4075.rtc.notification\"}",
+			"{\"kind\":\"event_property_is\",\"key\":\"type\",\"value\":\"org.matrix.msc4075.rtc.notification\"}",
 			"{\"kind\":\"event_property_is\",\"key\":\"content.m\\\\.mentions.room\",\"value\":true}",
 			"{\"kind\":\"sender_notification_permission\",\"key\":\"room\"}",
 		},

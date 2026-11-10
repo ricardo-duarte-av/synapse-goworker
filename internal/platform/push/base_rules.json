@@ -1,5 +1,5 @@
 {
- "synapse_version": "1.163.0",
+ "synapse_version": "1.165.0",
  "rules": [
   {
    "rule_id": "global/override/.m.rule.master",
@@ -116,9 +116,9 @@
    "priority_class": 5,
    "conditions": [
     {
-     "kind": "event_match",
+     "kind": "event_property_is",
      "key": "type",
-     "pattern": "org.matrix.msc4075.rtc.notification"
+     "value": "org.matrix.msc4075.rtc.notification"
     },
     {
      "kind": "event_property_contains",
@@ -141,9 +141,9 @@
    "priority_class": 5,
    "conditions": [
     {
-     "kind": "event_match",
+     "kind": "event_property_is",
      "key": "type",
-     "pattern": "org.matrix.msc4075.rtc.notification"
+     "value": "org.matrix.msc4075.rtc.notification"
     },
     {
      "kind": "event_property_is",

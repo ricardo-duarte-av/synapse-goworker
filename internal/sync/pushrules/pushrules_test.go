@@ -2,6 +2,7 @@ package pushrules
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -228,4 +229,62 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// The base rules here are the ones platform/push dumped from Synapse
+// (PushRules([]).rules(), version in the file), in the same order: two
+// copies that drifted would answer GET /pushrules and account data
+// differently from what the evaluator runs.
+func TestBaseRulesMatchTheDump(t *testing.T) {
+	raw, err := os.ReadFile("../../platform/push/base_rules.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dump struct {
+		Rules []struct {
+			RuleID         string            `json:"rule_id"`
+			PriorityClass  int               `json:"priority_class"`
+			Conditions     []json.RawMessage `json:"conditions"`
+			Actions        []json.RawMessage `json:"actions"`
+			DefaultEnabled bool              `json:"default_enabled"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &dump); err != nil {
+		t.Fatal(err)
+	}
+	var ours []Rule
+	for _, g := range [][]Rule{basePrependOverride, baseAppendOverride, baseAppendContent,
+		baseAppendPostcontent, baseAppendUnderride} {
+		ours = append(ours, g...)
+	}
+	canon := func(raws []json.RawMessage) string {
+		var out []any
+		for _, r := range raws {
+			var v any
+			if err := json.Unmarshal(r, &v); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, v)
+		}
+		b, _ := json.Marshal(out)
+		return string(b)
+	}
+	strs := func(ss []string) []json.RawMessage {
+		var out []json.RawMessage
+		for _, s := range ss {
+			out = append(out, json.RawMessage(s))
+		}
+		return out
+	}
+	if len(ours) != len(dump.Rules) {
+		t.Fatalf("%d base rules here, %d in the dump", len(ours), len(dump.Rules))
+	}
+	for i, d := range dump.Rules {
+		o := ours[i]
+		if o.RuleID != d.RuleID || o.PriorityClass != d.PriorityClass || o.DefaultEnabled != d.DefaultEnabled ||
+			canon(strs(o.Conditions)) != canon(d.Conditions) || canon(strs(o.Actions)) != canon(d.Actions) {
+			t.Errorf("rule %d: here %s %v %v, dump %s %s %s", i, o.RuleID, o.Conditions, o.Actions,
+				d.RuleID, canon(d.Conditions), canon(d.Actions))
+		}
+	}
 }

@@ -384,7 +384,7 @@ func TestThreadSubscription(t *testing.T) {
 	}
 }
 
-// MSC4075's RTC invite rules (Synapse 1.163), ported from base_rules.rs's
+// MSC4075's RTC invite rules (Synapse 1.165), ported from base_rules.rs's
 // tests: the generic mention rules are disabled so that they cannot mask
 // them, as they have the same actions and come right after.
 func TestRTCInviteRules(t *testing.T) {
@@ -430,6 +430,9 @@ func TestRTCInviteRules(t *testing.T) {
 		{"invite for the room notifies with permission", true, rtc, nil, true, 50, ring},
 		{"invite for the room requires permission", true, rtc, nil, true, 0, ""},
 		{"other event types are ignored", true, "org.example.other", []string{alice}, true, 50, ""},
+		// event_property_is since Synapse 1.165 (#20366): exact, where
+		// event_match was a case-insensitive glob.
+		{"the type must match exactly", true, "Org.Matrix.MSC4075.RTC.Notification", []string{alice}, false, 0, ""},
 		{"omitted when msc4075 is disabled", false, rtc, []string{alice}, true, 50, ""},
 	} {
 		if got := run(rules(c.msc4075), c.typ, c.users, c.room, c.senderLevel); got != c.want {
