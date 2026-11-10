@@ -4,13 +4,15 @@
 // This is server-side state with no representation in the database or in any
 // token, which makes it the one part of a /sync response that a second
 // implementation cannot reproduce from the same inputs: our cache and
-// Synapse's are filled by different traffic and will disagree. Two things keep
-// that bounded. An initial sync clears the cache before using it, so it is
-// always deterministic. And the whole per-device cache expires 30 minutes
-// after it was created -- not after it was last used -- so both sides
-// periodically forget everything and re-send.
+// Synapse's are filled by different traffic and will disagree. Three things
+// keep that bounded. An initial sync clears the cache before using it, so it
+// is always deterministic. Each request forgets what was recorded after its
+// since, which the client never processed (SentMembers). And the whole
+// per-device cache expires 30 minutes after it was created -- not after it
+// was last used -- so both sides periodically forget everything and re-send.
 //
-// Port of the `lazy_loaded_members_cache` in synapse/handlers/sync.py.
+// Port of the `lazy_loaded_members_cache` (SentMembers) and the
+// `lazy_loaded_profile_fields_cache` (Members) in synapse/handlers/sync.py.
 package lazyload
 
 import (
@@ -46,21 +48,38 @@ type Key struct {
 	DeviceID string
 }
 
-// Cache holds one member cache per device.
-type Cache struct {
-	mu           sync.Mutex
-	entries      map[Key]*Members
-	maxPerDevice int
-	ttl          time.Duration
-	lastPrune    time.Time
-	now          func() time.Time
+// Sessions holds one T per device, each forgotten DefaultTTL (or the TTL
+// given) after it was created: Synapse's ExpiringCache without
+// reset_expiry_on_get.
+type Sessions[T any] struct {
+	mu        sync.Mutex
+	entries   map[Key]session[T]
+	ttl       time.Duration
+	lastPrune time.Time
+	now       func() time.Time
+	make      func() *T
 }
 
-// Members is one device's record of the members it has been sent.
-type Members struct {
-	mu      sync.Mutex
-	lru     *lru.Cache[string, string]
+type session[T any] struct {
+	v       *T
 	created time.Time
+}
+
+func newSessions[T any](ttl time.Duration, make func() *T) *Sessions[T] {
+	if ttl <= 0 {
+		ttl = DefaultTTL
+	}
+	return &Sessions[T]{entries: map[Key]session[T]{}, ttl: ttl, now: time.Now, make: make}
+}
+
+// Cache holds one profile-field or member cache per device, as an LRU of
+// user ID to the last thing sent.
+type Cache = Sessions[Members]
+
+// Members is one device's record of what it has been sent.
+type Members struct {
+	mu  sync.Mutex
+	lru *lru.Cache[string, string]
 }
 
 // New builds a cache. A non-positive size or TTL takes the default.
@@ -68,19 +87,11 @@ func New(maxPerDevice int, ttl time.Duration) *Cache {
 	if maxPerDevice <= 0 {
 		maxPerDevice = DefaultMaxPerDevice
 	}
-	if ttl <= 0 {
-		ttl = DefaultTTL
-	}
-	return &Cache{
-		entries:      map[Key]*Members{},
-		maxPerDevice: maxPerDevice,
-		ttl:          ttl,
-		now:          time.Now,
-	}
+	return newSessions(ttl, func() *Members { return &Members{lru: lru.New[string, string](maxPerDevice)} })
 }
 
-// For returns the member cache for one session, creating it if needed.
-func (c *Cache) For(key Key) *Members {
+// For returns the cache for one session, creating it if needed.
+func (c *Sessions[T]) For(key Key) *T {
 	if c == nil {
 		return nil
 	}
@@ -90,13 +101,13 @@ func (c *Cache) For(key Key) *Members {
 	now := c.now()
 	c.pruneLocked(now)
 
-	m, ok := c.entries[key]
-	if ok && now.Sub(m.created) < c.ttl {
-		return m
+	e, ok := c.entries[key]
+	if ok && now.Sub(e.created) < c.ttl {
+		return e.v
 	}
-	m = &Members{lru: lru.New[string, string](c.maxPerDevice), created: now}
-	c.entries[key] = m
-	return m
+	e = session[T]{v: c.make(), created: now}
+	c.entries[key] = e
+	return e.v
 }
 
 // pruneLocked drops expired sessions.
@@ -104,20 +115,20 @@ func (c *Cache) For(key Key) *Members {
 // Synapse runs this on a timer at half the expiry interval. Doing it on access
 // instead avoids a goroutine, and the rate limit keeps a busy server from
 // walking the whole map on every request.
-func (c *Cache) pruneLocked(now time.Time) {
+func (c *Sessions[T]) pruneLocked(now time.Time) {
 	if now.Sub(c.lastPrune) < c.ttl/2 {
 		return
 	}
 	c.lastPrune = now
-	for k, m := range c.entries {
-		if now.Sub(m.created) >= c.ttl {
+	for k, e := range c.entries {
+		if now.Sub(e.created) >= c.ttl {
 			delete(c.entries, k)
 		}
 	}
 }
 
 // Len reports how many sessions are cached, for metrics and tests.
-func (c *Cache) Len() int {
+func (c *Sessions[T]) Len() int {
 	if c == nil {
 		return 0
 	}

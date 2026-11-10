@@ -46,10 +46,10 @@ type Caches struct {
 	// LazyLoadMembersCacheSize is how many member events one device's
 	// lazy-loading cache remembers.
 	//
-	// Synapse asks for 100 and multiplies by `caches.global_factor`, whose
-	// default is 0.5 -- so a default deployment remembers 50. Set this to
-	// match the reference server, or lazy-loading syncs will differ in how
-	// many member events they repeat.
+	// Unset is Synapse's LAZY_LOADED_MEMBERS_CACHE_MAX_SIZE, 100, which
+	// caches.global_factor does not scale (since v1.164). Change it only
+	// to match a reference server that differs, or lazy-loading syncs will
+	// differ in how many member events they repeat.
 	LazyLoadMembersCacheSize int `yaml:"lazy_load_members_cache_size"`
 	// LazyLoadMembersCacheTTL is how long a device's cache lives, measured
 	// from creation rather than last use, as Synapse's ExpiringCache does.

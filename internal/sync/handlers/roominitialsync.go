@@ -57,7 +57,7 @@ type Deps struct {
 	Notifier *notifier.Notifier
 	// LazyLoad remembers which member events each device has been sent, so a
 	// lazy-loading sync does not repeat them.
-	LazyLoad *lazyload.Cache
+	LazyLoad *lazyload.MemberCache
 	// Inbox deletes acknowledged to-device messages. Nil when to_device is not
 	// configured, in which case the section is omitted entirely rather than
 	// served without ever being cleared.

@@ -80,14 +80,14 @@ func keepOnlyMembers(state map[store.StateKey]string, members map[string]bool) m
 }
 
 // dedupeLazyMembers removes members the client has already been sent, and
-// records the ones it is about to be sent.
+// records the ones it is about to be sent at at, the response's next_batch
+// room position.
 //
 // Synapse's block at the end of compute_state_delta, and the reason a
 // lazy-loading incremental sync is not reproducible from the database alone:
-// the answer depends on what this process happened to send earlier. An initial
-// sync clears the cache first, which is what makes that case deterministic --
-// the client has "had amnesia", in Synapse's words, so the server must forget
-// too.
+// the answer depends on what this process happened to send earlier. The
+// cache is trimmed at the start of each request (startLazyMembers), and an
+// initial sync empties it, which is what makes that case deterministic.
 //
 // With `include_redundant_members` the whole step is skipped, cache population
 // included. That is Synapse's behaviour and not an oversight to tidy up: a
@@ -95,38 +95,51 @@ func keepOnlyMembers(state map[store.StateKey]string, members map[string]bool) m
 // recording what it was sent would start deduplicating it as soon as it
 // stopped asking.
 //
-// A key in changed -- its state changed since the client's last sync -- is
-// sent even if the cache says it was sent already: the client may be retrying
-// a sync whose answer it never received (#20289).
+// A full-state block (an initial sync, a newly joined room, full_state=true)
+// is recorded but not filtered: the client is seeing these memberships for
+// the first time, and a concurrent sync for the same device could have
+// recorded them since the cache was emptied (Synapse #20433, v1.165). A key
+// in changed -- its state changed since the client's last sync -- is sent
+// even if the cache says it was sent already: the client may be retrying a
+// sync whose answer it never received (#20289).
 func dedupeLazyMembers(d Deps, f *filter.Collection, verdictUserID, deviceID string,
 	stateIDs map[store.StateKey]string, changed map[store.StateKey]bool,
-	messages []store.TimelineEvent, initial bool) {
+	messages []store.TimelineEvent, fullState bool, at streamtoken.RoomKey) {
 
 	if !f.LazyLoadMembers() || f.IncludeRedundantMembers() {
 		return
 	}
 	cache := d.LazyLoad.For(lazyload.Key{UserID: verdictUserID, DeviceID: deviceID})
-	if initial {
-		cache.Clear()
-	} else {
+	if !fullState {
 		for k, id := range stateIDs {
-			if k.Type == memberType && !changed[k] && cache.Sent(k.StateKey) == id {
+			if k.Type == memberType && !changed[k] && cache.WasSent(k.StateKey, id) {
 				delete(stateIDs, k)
 			}
 		}
 	}
 	for k, id := range stateIDs {
 		if k.Type == memberType {
-			cache.Record(k.StateKey, id)
+			cache.MarkSent(k.StateKey, id, at)
 		}
 	}
 	// The timeline's own member events count as sent: the client will see them
 	// there, so repeating them in a later state block would be waste.
 	for _, ev := range messages {
 		if ev.IsState && ev.Type == memberType {
-			cache.Record(ev.StateKey, ev.EventID)
+			cache.MarkSent(ev.StateKey, ev.EventID, at)
 		}
 	}
+}
+
+// startLazyMembers is start_request, at the start of each pass of a
+// lazy-loading sync (Synapse calls it from _generate_sync_entry_for_rooms):
+// the members recorded after since were in responses the client never
+// processed, and an initial sync (since nil) forgets everything.
+func startLazyMembers(d Deps, f *filter.Collection, userID, deviceID string, since *streamtoken.RoomKey) {
+	if !f.LazyLoadMembers() {
+		return
+	}
+	d.LazyLoad.For(lazyload.Key{UserID: userID, DeviceID: deviceID}).StartRequest(since)
 }
 
 // roomSummary builds the `summary` block: member counts, and the heroes a
@@ -140,7 +153,7 @@ func dedupeLazyMembers(d Deps, f *filter.Collection, verdictUserID, deviceID str
 // have a user ID to display and no profile to display it with.
 func roomSummary(ctx context.Context, d Deps, roomID, userID, deviceID string,
 	f *filter.Collection, stateIDs map[store.StateKey]string,
-	messages []store.TimelineEvent, endKey streamtoken.RoomKey) (map[string]any, error) {
+	messages []store.TimelineEvent, endKey, at streamtoken.RoomKey) (map[string]any, error) {
 
 	// Synapse asks for the last event in the room up to the sync point and
 	// gives up if there is none, so a room with no visible history has no
@@ -203,11 +216,11 @@ func roomSummary(ctx context.Context, d Deps, roomID, userID, deviceID string,
 	cache := d.LazyLoad.For(lazyload.Key{UserID: userID, DeviceID: deviceID})
 	for _, hero := range heroes {
 		id := memberIDs[hero]
-		if id == "" || existing[hero] || cache.Sent(hero) == id {
+		if id == "" || existing[hero] || cache.WasSent(hero, id) {
 			continue
 		}
 		stateIDs[store.StateKey{Type: memberType, StateKey: hero}] = id
-		cache.Record(hero, id)
+		cache.MarkSent(hero, id, at)
 	}
 	return summary, nil
 }

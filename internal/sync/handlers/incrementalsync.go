@@ -51,6 +51,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		return nil, http.StatusBadRequest, mxErr
 	}
 	now = now.AtLeast(since)
+	startLazyMembers(d, f, verdict.UserID, verdict.DeviceID, &since.Room)
 
 	// The guarded caches may only answer for a token that replication has
 	// caught up to. Set once per pass, from the token this response will
@@ -734,8 +735,8 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 		changed  map[store.StateKey]bool
 	)
 	if fullState {
-		// The full-sync block, against the client's since: the lazy-loaded
-		// members it was already sent are still held back.
+		// The full-sync block: its lazy-loaded members are all sent, as on
+		// an initial sync (Synapse #20433).
 		stateIDs, err = fullStateBlock(ctx, d, room, messages, now.Room, stateMembers, useStateAfter, true)
 		if err != nil {
 			return nil, err
@@ -754,13 +755,13 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 			return nil, err
 		}
 	}
-	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, false)
+	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, fullState, now.Room)
 
 	summary := map[string]any{}
 	var summaryValue any = summary
 	if wantSummary(f, messages, stateIDs, limited, false) {
 		computed, err := roomSummary(ctx, d, room.RoomID, userID, deviceID, f, stateIDs,
-			messages, now.Room)
+			messages, now.Room, now.Room)
 		if err != nil {
 			return nil, err
 		}
@@ -1340,7 +1341,7 @@ func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID, deviceID str
 		}
 		// compute_state_delta dedupes lazy-loaded members for a left room
 		// as for a joined one.
-		dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, false)
+		dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, fullState, now.Room)
 	}
 
 	var roomAD []store.AccountDataEntry

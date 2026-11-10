@@ -209,7 +209,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		FilterTimelineLimit:  cfg.Sync.TimelineLimitCap(),
 		Replication:          s.sub,
 		Notifier:             notif,
-		LazyLoad:             lazyload.New(c.LazyLoadMembersCacheSize, c.LazyLoadMembersCacheTTL),
+		LazyLoad:             lazyload.NewMembers(c.LazyLoadMembersCacheSize, c.LazyLoadMembersCacheTTL),
 		Inbox:                s.inbox,
 		Presence:             presenceClient,
 		PushRuleFeatures: pushrules.Features{

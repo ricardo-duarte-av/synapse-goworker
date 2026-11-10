@@ -341,3 +341,24 @@ func formatVectorClock(stream int64, instances Instances) string {
 	}
 	return b.String()
 }
+
+// IsBeforeOrEq is AbstractMultiWriterStreamToken.is_before_or_eq, which
+// RoomStreamToken does not override: every writer's position in k is at or
+// before its position in other, a writer absent from a map being at that
+// key's Stream. The topological part is not compared.
+func (k RoomKey) IsBeforeOrEq(other RoomKey) bool {
+	if k.Stream > other.Stream {
+		return false
+	}
+	for _, e := range k.Instances {
+		if e.Pos > other.StreamPosForInstance(e.ID) {
+			return false
+		}
+	}
+	for _, e := range other.Instances {
+		if k.StreamPosForInstance(e.ID) > e.Pos {
+			return false
+		}
+	}
+	return true
+}

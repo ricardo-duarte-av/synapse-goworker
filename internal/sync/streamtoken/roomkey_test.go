@@ -138,3 +138,29 @@ func TestRoomKeyRejects(t *testing.T) {
 		}
 	}
 }
+
+// AbstractMultiWriterStreamToken.is_before_or_eq: every writer, a writer
+// absent from one side at that side's minimum.
+func TestIsBeforeOrEq(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"s5", "s5", true},
+		{"s5", "s6", true},
+		{"s6", "s5", false},
+		{"s5", "m5~2.7", true},
+		{"m5~2.7", "s5", false},
+		{"m5~2.7", "s7", true},
+		{"m5~2.7", "m6~3.9", false}, // writer 2 is at 6 in b
+		{"m5~2.6", "m6~3.9", true},
+		{"m6~3.9", "m5~2.7", false},
+		{"t3-5", "s5", true}, // topological part ignored
+	} {
+		a, _ := ParseRoomKey(c.a)
+		b, _ := ParseRoomKey(c.b)
+		if got := a.IsBeforeOrEq(b); got != c.want {
+			t.Errorf("%s <= %s: %v", c.a, c.b, got)
+		}
+	}
+}

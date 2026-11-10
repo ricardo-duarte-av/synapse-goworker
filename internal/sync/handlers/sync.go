@@ -111,6 +111,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 	if mxErr != nil {
 		return nil, http.StatusBadRequest, mxErr
 	}
+	startLazyMembers(d, f, verdict.UserID, verdict.DeviceID, nil)
 
 	// The guarded caches may only answer for a token that replication has
 	// caught up to. Set once per pass, from the token this response will
@@ -610,7 +611,7 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		return nil, err
 	}
 	// A full-state block has no changed keys (_compute_state_delta_for_full_sync).
-	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, nil, messages, initial)
+	dedupeLazyMembers(d, f, userID, deviceID, stateIDs, nil, messages, true, now.Room)
 
 	// The summary is computed BEFORE the state block is loaded, because it can
 	// add to it: a hero whose membership the client has never been sent is
@@ -620,7 +621,7 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 	var summaryValue any = summary
 	if !archived && wantSummary(f, messages, stateIDs, limited, initial) {
 		computed, err := roomSummary(ctx, d, room.RoomID, userID, deviceID, f, stateIDs,
-			messages, endKey)
+			messages, endKey, now.Room)
 		if err != nil {
 			return nil, err
 		}
