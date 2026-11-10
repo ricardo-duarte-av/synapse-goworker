@@ -268,6 +268,28 @@ Each step is independent and reversible by undoing it.
     To move it back, set the list to the old writer, restart every Synapse
     process and goworker.
 
+12. **Presence**, while `presence.enabled: false` (goworker refuses the
+    role otherwise). Nothing changes for clients: with presence disabled
+    Synapse's writer only announces its positions and ignores every
+    update.
+    - The client endpoints need no role. nginx: point
+      `^/_matrix/client/(api/v1|r0|v3|unstable)/presence/` at goworker,
+      and reload. Check "Presence writer" on the dashboard: requests `ok`,
+      GETs answer `{"presence":"offline"}`.
+    - homeserver.yaml: `stream_writers.presence: [<goworker's
+      instance_name>]` (Synapse allows exactly one).
+    - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
+      included), then **goworker straight after**: its log says "writing
+      the presence stream". It marks offline any presence_stream state that
+      is not offline, as Synapse's writer does at start ("Stale states
+      marked offline"); on both hosts there were none on 2026-11-10.
+    - Check: "Writing presence" is 1; `stream_positions` has
+      `(presence_stream, <goworker>)` at `presence_stream_sequence`'s
+      value; no "replication request failed" lines for presence.
+
+    To move it back, set the list to the old writer, restart every Synapse
+    process and goworker. Before enabling presence, move it back first.
+
 ## Afterwards
 
 - Remove the old containers.

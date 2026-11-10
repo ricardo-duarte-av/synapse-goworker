@@ -56,6 +56,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/streamwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/useragent"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/presencewriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/pushwriter"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/receipts"
 	senderapp "github.com/ricardo-duarte-av/synapse-goworker/internal/sender/app"
@@ -315,6 +316,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		receipt  *receipts.App
 		toDevice *todevice.App
 		pushRule *pushwriter.App
+		presence *presencewriter.App
 		devLists *devicelists.App
 	)
 	// localEDU is the handler in this process for an EDU type, while it
@@ -331,6 +333,8 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 			return devLists.ReceiveDeviceListUpdate
 		case (eduType == edutype.SigningKeyUpdate || eduType == edutype.UnstableSigningKeyUpdate) && devLists != nil && devLists.Writing():
 			return devLists.ReceiveSigningKeyUpdate
+		case eduType == edutype.Presence && presence != nil && presence.Writing():
+			return presence.ReceiveEDU
 		}
 		return nil
 	}
@@ -632,6 +636,37 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		}
 	}
 
+	// Presence: the client endpoints while presence is disabled, and the
+	// writer when stream_writers.presence names us at start (refused while
+	// presence is enabled). Not under -check: taking the role writes
+	// stream_positions.
+	if checkOnly {
+		if slices.Contains(hs.Writers.Presence, cfg.InstanceName) {
+			log.Info().Msg("presence writer: stream_writers.presence names this process (not started under -check)")
+		}
+	} else if prdb, err := presencewriter.Open(ctx, dsn, pools.Presence, db.ConnectTimeout()); err != nil {
+		degraded.WithLabelValues("presence").Set(1)
+		log.Warn().Err(err).Msg("presence unavailable; presence requests are proxied to main")
+	} else {
+		closers = append(closers, prdb.Close)
+		presence, err = presencewriter.New(ctx, presencewriter.Options{
+			Instance: cfg.InstanceName,
+			Synapse:  src.Current,
+			Auth:     clientAuth,
+			Store:    prdb,
+			Pool:     streamid.PG{Pool: prdb.Pool()},
+			Writer:   streams,
+			Fallback: fallback(upstream),
+			Log:      componentLogger(base, cfg.Log, "presence"),
+			Worker:   workerLogger(base, cfg.Log, "presence"),
+		})
+		if err != nil {
+			presence = nil
+			degraded.WithLabelValues("presence").Set(1)
+			log.Warn().Err(err).Msg("presence writer unavailable; presence requests are proxied to main")
+		}
+	}
+
 	// The device-lists writer: it writes when stream_writers.device_lists
 	// names us alone at start.
 	switch {
@@ -754,6 +789,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		ReceiptsMatch:  receipts.Match,
 		ToDeviceMatch:  todevice.Match,
 		PushRulesMatch: pushwriter.Match,
+		PresenceMatch:  presencewriter.Match,
 		DevicesMatch: func(method, p string) bool {
 			return devLists != nil && devLists.Writing() && devicelists.MatchDevices(method, p)
 		},
@@ -795,6 +831,9 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 	}
 	if pushRule != nil {
 		router.PushRules = pushRule.Handler()
+	}
+	if presence != nil {
+		router.Presence = presence.Handler()
 	}
 	if devLists != nil {
 		router.Devices = devLists.DevicesHandler()
@@ -850,7 +889,14 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 				}
 			}
 		}
-		if typer != nil || receipt != nil || toDevice != nil || devLists != nil {
+		if presence != nil && presence.Writing() {
+			for _, e := range presence.Endpoints() {
+				if err := repl.Register(e); err != nil {
+					return err
+				}
+			}
+		}
+		if typer != nil || receipt != nil || toDevice != nil || devLists != nil || (presence != nil && presence.Writing()) {
 			// One fed_send_edu, as one Synapse process has: for each EDU type
 			// whose stream this process writes.
 			if err := repl.Register(replserver.FedSendEDU(localEDU)); err != nil {
@@ -901,6 +947,9 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 	if devLists != nil {
 		g.Go(func() error { return devLists.Run(gctx) })
 	}
+	if presence != nil {
+		g.Go(func() error { return presence.Run(gctx) })
+	}
 	g.Go(func() error {
 		watchHomeserver(gctx, src, sender, upstream, log, func(scfg *synapsecfg.Config) {
 			logReplication(log, cfg.InstanceName, cfg.Listen.Replication, scfg)
@@ -923,6 +972,9 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 			}
 			if devLists != nil {
 				devLists.SetSynapse(scfg)
+			}
+			if presence != nil {
+				presence.SetSynapse(scfg)
 			}
 		})
 		return gctx.Err()

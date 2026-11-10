@@ -175,6 +175,9 @@ type Config struct {
 	Profile Profile
 	// RcKeyRequests is rc_key_requests (20/s, burst 100).
 	RcKeyRequests Ratelimit
+	// RcPresence is rc_presence.per_user (0.1/s, burst 1), PUT
+	// /presence/{userId}/status's limiter.
+	RcPresence Ratelimit
 	// DontNotifyNewDevicesFor is dont_notify_new_devices_for: users whose
 	// new devices send no device list update.
 	DontNotifyNewDevicesFor []string
@@ -382,6 +385,9 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.RcKeyRequests, err = keyRequests(b); err != nil {
+		return nil, err
+	}
+	if cfg.RcPresence, err = presenceRatelimit(b); err != nil {
 		return nil, err
 	}
 	if cfg.Profile, err = profileSettings(b); err != nil {

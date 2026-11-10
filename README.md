@@ -121,6 +121,20 @@ and the remote device lists (their EDUs, resyncs over federation, and the
 retry of stale ones). The client endpoints that change devices and keys
 are not native yet. See docs/cutover.md.
 
+### Presence
+
+Presence is disabled on both homeservers, and goworker reproduces only that
+mode. While homeserver.yaml has `presence.enabled: false` it answers
+`GET` and `PUT /_matrix/client/*/presence/{userId}/status` itself, as
+Synapse does then: GET is always `offline`, PUT is `rc_presence.per_user`
+and its body's checks, and nothing is stored. When goworker starts while
+`stream_writers.presence` names `instance_name` (and presence is disabled),
+it is also Synapse's presence writer: the presence and presence_federation
+streams, the two replication endpoints other processes call on it, and, at
+start, marking offline any state left from when presence was enabled. With
+presence enabled or `untracked` it refuses the role and sends the client
+endpoints to main. See docs/cutover.md.
+
 ### Federation ping (MSC4524)
 
 [MSC4524](https://github.com/matrix-org/matrix-spec-proposals/pull/4524)

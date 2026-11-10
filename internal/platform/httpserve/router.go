@@ -45,6 +45,10 @@ type Router struct {
 	// ToDevice serves PUT /sendToDevice/..., which ToDeviceMatch accepts.
 	ToDevice      http.Handler
 	ToDeviceMatch func(method, escapedPath string) bool
+	// Presence serves GET and PUT .../presence/{userId}/status, which
+	// PresenceMatch accepts.
+	Presence      http.Handler
+	PresenceMatch func(method, escapedPath string) bool
 	// AccountData serves account data and tags, which AccountDataMatch
 	// accepts.
 	AccountData      http.Handler
@@ -82,6 +86,8 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.PushRules.ServeHTTP(w, r)
 	case rt.ToDevice != nil && rt.ToDeviceMatch != nil && rt.ToDeviceMatch(r.Method, p):
 		rt.ToDevice.ServeHTTP(w, r)
+	case rt.Presence != nil && rt.PresenceMatch != nil && rt.PresenceMatch(r.Method, p):
+		rt.Presence.ServeHTTP(w, r)
 	case rt.AccountData != nil && rt.AccountDataMatch != nil && rt.AccountDataMatch(r.Method, p):
 		rt.AccountData.ServeHTTP(w, r)
 	case rt.Creator != nil && rt.CreatorMatch != nil && rt.CreatorMatch(r.Method, p):

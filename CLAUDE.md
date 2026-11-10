@@ -17,8 +17,8 @@ The approved plan is in
   on 2026-11-04 (nothing mirrored changed), and to v1.165.0 on 2026-11-10
   while both hosts still ran 1.164.1: from b912f42 on, goworker answers as
   1.165.0 does (push rules, sliding sync's sticky extension, lazy members,
-  delayed events), so deploy it together with the hosts' upgrade; check
-  with `docker exec <synapse container> python -c 'import synapse;
+  delayed events). Both hosts went to 1.165.0 with goworker 465942f
+  that evening. Check the deployed version with `docker exec <synapse container> python -c 'import synapse;
   print(synapse.__version__)'` and diff the tags for what you port.
   `synapse-watch.yaml` says which Synapse paths each part mirrors, the tag
   each was last reviewed against, and the Synapse PRs `handled` past it.
@@ -53,6 +53,7 @@ The approved plan is in
 | `internal/todevice` | the to-device writer: PUT `.../sendToDevice/...` (Synapse's transaction cache, `rc_key_requests`), `m.direct_to_device` EDUs (in-process from inbound, `fed_send_edu`), the to_device stream (`device_inbox`, `device_federation_outbox`; destinations to our sender in-process); writes when `stream_writers.to_device` names `instance_name` **at start** |
 | `internal/pushwriter` | the push-rules writer: PUT/DELETE/GET under `/pushrules/`, `copy_push_rules` (room upgrades), the push_rules stream (`push_rules_stream`, as "push_rules_stream" in stream_positions); writes when `stream_writers.push_rules` names `instance_name` **at start** |
 | `internal/devicelists` | the device-lists writer (phase 6): the five replication endpoints, the device_lists stream, the conversion of changes in rooms to outbound pokes (our sender poked in-process), remote device list and signing key EDUs, resyncs over federation with the 30 s retry loop, partial-state rooms; writes when `stream_writers.device_lists` names `instance_name` alone **at start**. The client endpoints (stage 3) are native: GET /devices, GET, PUT and DELETE /devices/{id}, POST /delete_devices, and POST /keys/upload, /keys/signatures/upload and /keys/device_signing/upload (one-time keys under inbound's worker locks, so with inbound not writing it goes to main; signatures with Python's semantics on the unvalidated body, its 500s included, and Synapse's emulated upsert while `e2e_cross_signing_signatures_add_key_id_to_index` is pending; the deletes and device_signing with Synapse's user-interactive auth for the password stage (ui_auth_sessions, bcrypt with NFKC and the pepper), and to main when SSO, a password provider or a module is configured or a stage needs a checker we do not run; pushers removed by main over replication, MSC3890's settings through the account-data writer, NEW_ACTIVE_TASK for main's to-device cleanup; device_signing's first upload without UIA, MSC3967); api/v1 and the dehydrated-device paths go to main |
+| `internal/presencewriter` | presence while `presence.enabled: false` only: GET/PUT `.../presence/{userId}/status` whenever presence is disabled (read on each request; GET always offline, PUT `rc_presence.per_user` and the body's checks); the writer when `stream_writers.presence` names `instance_name` **at start**: the presence stream (`presence_stream`), presence_federation at 0, `presence_set_state`/`bump_presence_active_time` (their errors, then nothing), `fed_send_edu` m.presence dropped, stale states marked offline at start; refuses the role while presence is enabled or `untracked` |
 | `internal/fedping` | MSC4524 ping/pong (not in Synapse; main's 404 is its "disabled"); started from the metrics listener's `/debug/federation/ping` |
 | `cmd/goevent-e2e` | the creator's live suite, in its test rooms only |
 | `cmd/*sweep` | offline tools; they generate traffic, nothing judges it |
@@ -280,6 +281,25 @@ Still per component, on purpose:
   queries) and tag writes go to main; main writes tags through our
   account-data writer's replication endpoints. Off on both hosts; port it
   rather than widen the guard if it is ever wanted.
+- **The presence writer, disabled mode only** (2026-11-10, issue #4).
+  Both hosts run `presence.enabled: false`, where Synapse's writer does
+  next to nothing: it announces POSITION for presence and
+  presence_federation (0, in memory), validates `presence_set_state` (its
+  400 "Invalid presence state" and KeyError 500s come before the "not
+  tracked" return), and at start marks offline every presence_stream state
+  that is not (`_mark_stale_presence_as_offline`, 500 IDs a write; nothing
+  goes over federation, since the sender's send_presence_to_destinations
+  returns while presence is not tracked). goworker does exactly that, and
+  refuses the role while presence is enabled or `untracked`: the state
+  machine, its timers, USER_SYNC, incoming EDUs and the fan-out are not
+  ported. Note that `stream_writers` names main as `master`, not `main`.
+  Checked against a throwaway Synapse 1.165.0 main as the reference writer:
+  identical stale-marking rows, IDs, stream_positions and RDATA/POSITION
+  lines; 62 of 65 responses byte-equal (client GET/PUT with their 400s,
+  403, 429 and auth errors, the replication endpoints' 400s and 500s,
+  fed_send_edu), the other three get_repl_stream_updates answers equal but
+  for key order (streamwriter's, every stream's); main followed our stream
+  through both restarts.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

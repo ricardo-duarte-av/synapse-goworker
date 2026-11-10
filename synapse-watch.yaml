@@ -216,6 +216,24 @@ components:
       - synapse/storage/util/id_generators.py
       - synapse/util/json.py
 
+  # Presence disabled only: the writer's start, its two replication
+  # endpoints and the client servlet, each up to its "not tracked" return.
+  presence:
+    code: internal/presencewriter
+    synapse:
+      - synapse/api/ratelimiting.py
+      - synapse/config/ratelimiting.py
+      - synapse/config/server.py
+      - synapse/federation/federation_server.py
+      - synapse/handlers/presence.py
+      - synapse/replication/http/presence.py
+      - synapse/replication/tcp/handler.py
+      - synapse/replication/tcp/streams/_base.py
+      - synapse/rest/client/presence.py
+      - synapse/storage/databases/main/presence.py
+      - synapse/storage/util/id_generators.py
+      - synapse/types/__init__.py
+
   device_lists:
     code: internal/devicelists
     synapse:
