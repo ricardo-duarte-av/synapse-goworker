@@ -371,6 +371,7 @@ func parse(b []byte, path string) (*Config, error) {
 	if cfg.Membership, err = membership(b, r.ServerName); err != nil {
 		return nil, err
 	}
+	cfg.Membership.AnnouncementManagerMXID = cfg.Announcements.ManagerMXID
 	if cfg.FederationTLS, err = federationTLS(b); err != nil {
 		return nil, err
 	}

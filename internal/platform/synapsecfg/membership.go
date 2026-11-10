@@ -13,6 +13,10 @@ type Membership struct {
 	// ServerNoticesMXID is server_notices.system_mxid_localpart as a user ID,
 	// empty when server notices are off.
 	ServerNoticesMXID string
+	// AnnouncementManagerMXID is server announcements' room_management_mxid
+	// (Announcements.ManagerMXID), which cannot be invited even with the
+	// feature off (v1.165.0).
+	AnnouncementManagerMXID string
 	// BlockNonAdminInvites is block_non_admin_invites.
 	BlockNonAdminInvites bool
 	// AllowPerRoomProfiles is allow_per_room_profiles, default true.

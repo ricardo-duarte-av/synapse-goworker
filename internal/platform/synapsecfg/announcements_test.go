@@ -20,6 +20,10 @@ func TestAnnouncements(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := mustParse(t, "server_name: x\n"+tc.yaml).Announcements
+			cfg := mustParse(t, "server_name: x\n"+tc.yaml)
+			if cfg.Membership.AnnouncementManagerMXID != a.ManagerMXID {
+				t.Errorf("Membership.AnnouncementManagerMXID %q", cfg.Membership.AnnouncementManagerMXID)
+			}
 			if a.Configured() != tc.configured || a.ManagerMXID != tc.manager {
 				t.Errorf("got %+v, want configured=%v manager %s", a, tc.configured, tc.manager)
 			}

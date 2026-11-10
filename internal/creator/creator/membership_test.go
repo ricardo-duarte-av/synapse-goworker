@@ -157,7 +157,9 @@ func TestMembershipFallbacks(t *testing.T) {
 		"third party signed":    {nil, memberReq("join", ""), `{"third_party_signed":{}}`, "third_party_signed"},
 		"invite config": {func(h *harness) { h.f.accountData = map[string]bool{other + " " + invitePermissionConfig: true} },
 			memberReq("invite", ""), `{"user_id":"` + other + `"}`, "invite_config"},
-		"blocked room":  {func(h *harness) { h.f.blocked = true }, memberReq("join", ""), ``, "refused:room_blocked"},
+		"blocked room": {func(h *harness) { h.f.blocked = true }, memberReq("join", ""), ``, "refused:room_blocked"},
+		"invite of the announcement manager": {func(h *harness) { h.c.o.Membership.AnnouncementManagerMXID = other },
+			memberReq("invite", ""), `{"user_id":"` + other + `"}`, "refused:announcement_manager"},
 		"not an object": {nil, memberReq("leave", ""), `[]`, "refused:not_object"},
 		"restricted join": {func(h *harness) {
 			h.f.addState(t, "m.room.join_rules", "", `{"join_rule":"restricted","allow":[]}`)

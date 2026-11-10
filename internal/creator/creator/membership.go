@@ -594,8 +594,15 @@ func (c *Creator) checkMembershipRequest(ctx context.Context, req route.Request,
 		}
 	}
 	if m.membership == "invite" {
+		// "block any attempts to invite server identities": the server
+		// notices user and, since v1.165.0, the announcement rooms' manager,
+		// whose ID exists whether or not any room is configured.
 		if sn != "" && m.target == sn {
 			return (&refusal{reason: "server_notices", status: http.StatusForbidden, errcode: "M_UNKNOWN",
+				msg: "Cannot invite this user"}).stop()
+		}
+		if am := c.o.Membership.AnnouncementManagerMXID; am != "" && m.target == am {
+			return (&refusal{reason: "announcement_manager", status: http.StatusForbidden, errcode: "M_UNKNOWN",
 				msg: "Cannot invite this user"}).stop()
 		}
 		if !rq.Admin {
