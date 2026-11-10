@@ -113,13 +113,20 @@ func stickySection(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return nil, nil, err
 		}
-		body, err := clientevent.Serialize(stored, timeNow, cfg)
+		// One that has stopped being sticky since it was selected is left
+		// out (#20349).
+		body, ok, err := clientevent.SerializeStickyOnly(stored, timeNow, cfg)
 		if err != nil {
 			return nil, nil, err
 		}
-		out = append(out, body)
+		if ok {
+			out = append(out, body)
+		}
 	}
-	if len(out) == 0 {
+	// Synapse tests room.sticky, before serialisation drops the expired:
+	// a room whose sticky events all ran out meanwhile keeps the section,
+	// empty.
+	if len(visible) == 0 {
 		return nil, senders, nil
 	}
 	return map[string]any{"events": out}, senders, nil

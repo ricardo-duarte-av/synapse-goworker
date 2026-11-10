@@ -1160,11 +1160,15 @@ func stickyEventsExtension(
 			if err := eventfilter.AttachRedaction(&stored, redactions, in.NowMS, cfg); err != nil {
 				return nil, err
 			}
-			body, err := clientevent.Serialize(stored, in.NowMS, cfg)
+			// One that has stopped being sticky since it was selected is
+			// left out (#20349).
+			body, ok, err := clientevent.SerializeStickyOnly(stored, in.NowMS, cfg)
 			if err != nil {
 				return nil, err
 			}
-			rendered = append(rendered, body)
+			if ok {
+				rendered = append(rendered, body)
+			}
 		}
 		if rendered == nil {
 			rendered = []json.RawMessage{}

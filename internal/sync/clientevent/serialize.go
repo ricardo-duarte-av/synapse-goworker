@@ -107,6 +107,22 @@ func applyStickyTTL(out []byte, ev Stored, nowMS int64) ([]byte, error) {
 	return out, nil
 }
 
+// SerializeStickyOnly is Serialize with SerializeEventFilter(sticky_only=True)
+// (Synapse 1.165, #20349): an event that is not sticky, or whose stickiness
+// ran out by nowMS -- between being selected and being serialised, or while
+// a response was cached -- is left out (ok false). That is exactly an event
+// Serialize gave no msc4354_sticky_duration_ttl_ms; with MSC4354 off,
+// nothing is filtered, as Rust's check sits inside msc4354_enabled.
+func SerializeStickyOnly(ev Stored, nowMS int64, cfg Config) (out []byte, ok bool, err error) {
+	if out, err = Serialize(ev, nowMS, cfg); err != nil {
+		return nil, false, err
+	}
+	if cfg.MSC4354Enabled && !gjson.GetBytes(out, "unsigned.msc4354_sticky_duration_ttl_ms").Exists() {
+		return nil, false, nil
+	}
+	return out, true, nil
+}
+
 // persistedUnsignedFields is the complete set of `unsigned` keys Synapse keeps
 // when loading an event. rust/src/events/unsigned.rs.
 var persistedUnsignedFields = [...]string{

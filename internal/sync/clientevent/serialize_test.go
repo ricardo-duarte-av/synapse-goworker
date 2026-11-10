@@ -425,3 +425,31 @@ func TestUnsignedIsAlwaysPresent(t *testing.T) {
 		t.Errorf("unsigned = %v, want empty", unsigned)
 	}
 }
+
+// SerializeEventFilter(sticky_only=True) (#20349): kept while sticky at
+// nowMS, dropped once expired or never sticky; nothing dropped with MSC4354
+// off.
+func TestSerializeStickyOnly(t *testing.T) {
+	ev := Stored{EventID: "$e", Type: "m.room.message", ReceivedTS: 1000,
+		JSON: []byte(`{"type":"m.room.message","sender":"@u:e","content":{},"origin_server_ts":1000,` +
+			`"msc4354_sticky":{"duration_ms":5000},"unsigned":{}}`)}
+	plain := Stored{EventID: "$p", Type: "m.room.message", ReceivedTS: 1000,
+		JSON: []byte(`{"type":"m.room.message","sender":"@u:e","content":{},"origin_server_ts":1000,"unsigned":{}}`)}
+	for _, c := range []struct {
+		name    string
+		ev      Stored
+		now     int64
+		enabled bool
+		want    bool
+	}{
+		{"still sticky", ev, 5999, true, true},
+		{"expired at serialisation", ev, 6000, true, false},
+		{"not sticky", plain, 2000, true, false},
+		{"msc4354 off", ev, 9000, false, true},
+	} {
+		_, ok, err := SerializeStickyOnly(c.ev, c.now, Config{Format: FormatV2, MSC4354Enabled: c.enabled})
+		if err != nil || ok != c.want {
+			t.Errorf("%s: ok %v err %v", c.name, ok, err)
+		}
+	}
+}
