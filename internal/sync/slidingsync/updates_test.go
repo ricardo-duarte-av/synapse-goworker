@@ -125,9 +125,14 @@ func TestAlwaysPresentExtensionFieldsAreNotNews(t *testing.T) {
 		}
 	})
 
-	t.Run("sticky next_batch alone", func(t *testing.T) {
-		if stickyEventsIsNews(&stickyEventsJSON{NextBatch: "sticky_4637"}) {
-			t.Error("a moved sticky next_batch counted as news")
+	t.Run("sticky rooms", func(t *testing.T) {
+		if stickyEventsIsNews(&stickyEventsJSON{Rooms: map[string]stickyRoomJSON{}}) {
+			t.Error("no sticky rooms counted as news")
+		}
+		// A room whose events were all in its timeline still counts:
+		// Synapse decides before its servlet removes them.
+		if !stickyEventsIsNews(&stickyEventsJSON{Rooms: map[string]stickyRoomJSON{"!a:e": {Events: []json.RawMessage{}}}}) {
+			t.Error("a sticky room is news")
 		}
 	})
 

@@ -125,6 +125,17 @@ func (m *RoomStatusMap) RecordUnsentRooms(roomIDs []string, fromToken string) {
 	}
 }
 
+// RecordPartiallySentRooms marks rooms as sent only up to lastToken, so the
+// next response resumes from there: record_partially_sent_rooms (Synapse
+// 1.165), for the sticky events extension, which pages by its limit. Unlike
+// RecordSentRooms it always writes, as Synapse's does, so an unchanged
+// PREVIOUSLY still counts as an update.
+func (m *RoomStatusMap) RecordPartiallySentRooms(roomIDs []string, lastToken string) {
+	for _, roomID := range roomIDs {
+		m.set(roomID, Previously(lastToken))
+	}
+}
+
 func (m *RoomStatusMap) set(roomID string, hs HaveSent) {
 	if m.updates == nil {
 		m.updates = make(map[string]HaveSent)
@@ -255,6 +266,8 @@ type PerConnectionState struct {
 	Rooms       RoomStatusMap
 	Receipts    RoomStatusMap
 	AccountData RoomStatusMap
+	// StickyEvents is the sticky events extension's (Synapse 1.165, #20363).
+	StickyEvents RoomStatusMap
 
 	RoomConfigs map[string]RoomSyncConfig
 
@@ -292,7 +305,8 @@ func (p *PerConnectionState) RoomConfigUpdates() map[string]RoomSyncConfig {
 // per device. A response that changed nothing must reuse the client's position.
 func (p *PerConnectionState) HasUpdates(nowMS int64) bool {
 	if len(p.Rooms.Updates()) > 0 || len(p.Receipts.Updates()) > 0 ||
-		len(p.AccountData.Updates()) > 0 || len(p.roomConfigUpdates) > 0 {
+		len(p.AccountData.Updates()) > 0 || len(p.StickyEvents.Updates()) > 0 ||
+		len(p.roomConfigUpdates) > 0 {
 		return true
 	}
 	for _, lm := range p.LazyMembership {

@@ -94,6 +94,37 @@ func (s *Store) StickyEvents(ctx context.Context, roomIDs []string,
 	return max(from, to), byRoom, nil
 }
 
+// StickyRoomsBetween is get_rooms_with_sticky_events_between (Synapse
+// 1.165): those of roomIDs with a row in sticky_events -- expired ones
+// awaiting cleanup included -- whose stream position is after from and at
+// or before to.
+func (s *Store) StickyRoomsBetween(ctx context.Context, roomIDs []string, from, to int64) (map[string]bool, error) {
+	if len(roomIDs) == 0 || to <= from {
+		return nil, nil
+	}
+	rows, err := s.query(ctx, "StickyRoomsBetween", `
+		SELECT DISTINCT room_id
+		  FROM sticky_events
+		 WHERE $1 < stream_id AND stream_id <= $2
+		   AND room_id = ANY($3)`, from, to, roomIDs)
+	if err != nil {
+		return nil, fmt.Errorf("store: sticky rooms: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var roomID string
+		if err := rows.Scan(&roomID); err != nil {
+			return nil, fmt.Errorf("store: sticky rooms: %w", err)
+		}
+		out[roomID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: sticky rooms: %w", err)
+	}
+	return out, nil
+}
+
 // StickyMaxAllocated is the sticky events id generator's
 // get_max_allocated_token: the sequence's last value, less one if none was
 // ever taken.

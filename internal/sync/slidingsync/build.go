@@ -127,9 +127,10 @@ func Build(ctx context.Context, d Deps, req BuildRequest) (*Response, error) {
 		return nil, err
 	}
 	next := &slidingstore.PerConnectionState{
-		Rooms:       slidingstore.NewRoomStatusMap(prev.Rooms.All()),
-		Receipts:    slidingstore.NewRoomStatusMap(prev.Receipts.All()),
-		AccountData: slidingstore.NewRoomStatusMap(prev.AccountData.All()),
+		Rooms:        slidingstore.NewRoomStatusMap(prev.Rooms.All()),
+		Receipts:     slidingstore.NewRoomStatusMap(prev.Receipts.All()),
+		AccountData:  slidingstore.NewRoomStatusMap(prev.AccountData.All()),
+		StickyEvents: slidingstore.NewRoomStatusMap(prev.StickyEvents.All()),
 	}
 	for roomID, cfg := range prev.RoomConfigs {
 		if next.RoomConfigs == nil {
@@ -277,8 +278,8 @@ func Build(ctx context.Context, d Deps, req BuildRequest) (*Response, error) {
 	extensions, extensionsAreNews, err := buildExtensions(ctx, d, extensionInputs{
 		UserID: req.UserID, DeviceID: req.DeviceID, Request: req.Request,
 		From: req.From, Now: req.Now, NowMS: req.NowMS,
-		Lists: lists.Lists, Subscribed: subscribed, AllRooms: lists.AllRooms,
-		Rooms: roomResults, Membership: lists.Membership,
+		Lists: lists.Lists, Subscribed: subscribed,
+		Rooms: roomResults, Membership: lists.Membership, NewlyJoined: lists.NewlyJoined,
 		Previous: prev, New: next,
 	})
 	if err != nil {

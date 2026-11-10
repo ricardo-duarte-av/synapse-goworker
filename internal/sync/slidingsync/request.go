@@ -12,6 +12,7 @@ package slidingsync
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -148,14 +149,15 @@ type ThreadSubscriptionsExtension struct {
 	Limit   int  `json:"limit"`
 }
 
+// StickyEventsExtension is MSC4354/MSC4480's, as Synapse 1.165 reads it
+// (#20363): scoped like receipts by lists and rooms, paged through the
+// connection position rather than a `since` of its own (an old client's
+// `since` is ignored, as pydantic ignores an unknown field).
 type StickyEventsExtension struct {
-	Enabled bool   `json:"enabled"`
-	Limit   int    `json:"limit"`
-	Since   string `json:"since"`
-	// SinceSet distinguishes an absent `since` from an empty one. Synapse uses
-	// a sentinel type for the same reason: absent means "everything current",
-	// where a token means "changes after this".
-	SinceSet bool `json:"-"`
+	ExtensionScope
+	// Limit is NonNegativeStrictInt, default 100: an explicit 0 is kept
+	// (nothing is read, and every room resumes where it was).
+	Limit int `json:"limit"`
 }
 
 type ProfilesExtension struct {
@@ -177,6 +179,9 @@ func ParseRequest(body []byte) (*Request, error) {
 		}
 	}
 	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if err := validateExtensionNulls(body); err != nil {
 		return nil, err
 	}
 	req.applyDefaults(body)
@@ -237,17 +242,11 @@ func (r *Request) applyDefaults(body []byte) {
 	if e.ThreadSubscriptions != nil && e.ThreadSubscriptions.Limit == 0 {
 		e.ThreadSubscriptions.Limit = 100
 	}
-	if e.StickyEvents != nil {
-		if e.StickyEvents.Limit == 0 {
-			e.StickyEvents.Limit = 100
-		}
-		// `since` absent and `since` empty mean different things, and
-		// encoding/json cannot tell them apart on a string. Re-read the raw
-		// body for this one field.
-		e.StickyEvents.SinceSet = stickySinceIsPresent(body)
+	if e.StickyEvents != nil && !extensionHas(body, "org.matrix.msc4354.sticky_events", "limit") {
+		e.StickyEvents.Limit = 100
 	}
 	for _, s := range []*ExtensionScope{
-		scopeOf(e.AccountData), scopeOf(e.Receipts), scopeOf(e.Typing),
+		scopeOf(e.AccountData), scopeOf(e.Receipts), scopeOf(e.Typing), scopeOf(e.StickyEvents),
 	} {
 		if s == nil {
 			continue
@@ -278,19 +277,76 @@ func scopeOf(v any) *ExtensionScope {
 			return nil
 		}
 		return &t.ExtensionScope
+	case *StickyEventsExtension:
+		if t == nil {
+			return nil
+		}
+		return &t.ExtensionScope
 	}
 	return nil
 }
 
-func stickySinceIsPresent(body []byte) bool {
+// rawExtensions is the body's extensions, field by field, for what
+// encoding/json cannot tell apart: an absent field from a zero or a null.
+func rawExtensions(body []byte) map[string]map[string]json.RawMessage {
 	var probe struct {
-		Extensions struct {
-			Sticky map[string]json.RawMessage `json:"org.matrix.msc4354.sticky_events"`
-		} `json:"extensions"`
+		Extensions map[string]map[string]json.RawMessage `json:"extensions"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
-		return false
+		return nil
 	}
-	_, ok := probe.Extensions.Sticky["since"]
+	return probe.Extensions
+}
+
+// extensionHas reports whether the body sets field in extension name.
+func extensionHas(body []byte, name, field string) bool {
+	_, ok := rawExtensions(body)[name][field]
 	return ok
+}
+
+// nonNullable are the extension fields an explicit null fails since Synapse
+// 1.165 (#20363 made them StrictBool and list[StrictStr] rather than
+// Optional); before, a null was a falsy None. to_device's enabled still
+// takes one. sticky_events' limit (NonNegativeStrictInt) never did.
+var nonNullable = map[string][]string{
+	"e2ee":         {"enabled"},
+	"account_data": {"enabled", "lists", "rooms"},
+	"receipts":     {"enabled", "lists", "rooms"},
+	"typing":       {"enabled", "lists", "rooms"},
+	"io.element.msc4308.thread_subscriptions": {"enabled"},
+	"org.matrix.msc4354.sticky_events":        {"enabled", "limit", "lists", "rooms"},
+}
+
+// validateExtensionNulls refuses what the model refuses that encoding/json
+// would take as a zero value: an explicit null where none is allowed, and a
+// negative sticky events limit.
+func validateExtensionNulls(body []byte) error {
+	raw := rawExtensions(body)
+	for _, name := range sortedStrings(nonNullable) {
+		ext, ok := raw[name]
+		if !ok {
+			continue
+		}
+		for _, field := range nonNullable[name] {
+			if v, ok := ext[field]; ok && strings.TrimSpace(string(v)) == "null" {
+				return fmt.Errorf("extensions.%s.%s: Input should not be null", name, field)
+			}
+		}
+	}
+	if v, ok := raw["org.matrix.msc4354.sticky_events"]["limit"]; ok {
+		var n int64
+		if json.Unmarshal(v, &n) == nil && n < 0 {
+			return fmt.Errorf("extensions.org.matrix.msc4354.sticky_events.limit: Input should be greater than or equal to 0")
+		}
+	}
+	return nil
+}
+
+func sortedStrings[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

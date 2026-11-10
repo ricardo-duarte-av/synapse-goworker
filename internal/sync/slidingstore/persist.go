@@ -249,6 +249,7 @@ func upsertStreams(ctx context.Context, tx pgx.Tx, position int64, state *PerCon
 		{StreamRooms, &state.Rooms},
 		{StreamReceipts, &state.Receipts},
 		{StreamAccountData, &state.AccountData},
+		{StreamStickyEvents, &state.StickyEvents},
 	} {
 		for roomID, hs := range s.m.All() {
 			rows = append(rows, row{s.name, roomID, hs})

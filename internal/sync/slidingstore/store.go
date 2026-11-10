@@ -379,6 +379,7 @@ func (s *Store) loadState(
 	rooms := map[string]HaveSent{}
 	receipts := map[string]HaveSent{}
 	accountData := map[string]HaveSent{}
+	stickyEvents := map[string]HaveSent{}
 	rows, err = tx.Query(ctx, `
 		SELECT stream, room_id, room_status, last_token
 		  FROM gosync.sliding_sync_connection_streams
@@ -404,6 +405,8 @@ func (s *Store) loadState(
 			receipts[roomID] = hs
 		case StreamAccountData:
 			accountData[roomID] = hs
+		case StreamStickyEvents:
+			stickyEvents[roomID] = hs
 		}
 		// An unrecognised stream name is ignored rather than rejected: a future
 		// version writing a fourth stream must not make this one refuse every
@@ -415,10 +418,11 @@ func (s *Store) loadState(
 	}
 
 	return &PerConnectionState{
-		Rooms:       NewRoomStatusMap(rooms),
-		Receipts:    NewRoomStatusMap(receipts),
-		AccountData: NewRoomStatusMap(accountData),
-		RoomConfigs: roomConfigs,
+		Rooms:        NewRoomStatusMap(rooms),
+		Receipts:     NewRoomStatusMap(receipts),
+		AccountData:  NewRoomStatusMap(accountData),
+		StickyEvents: NewRoomStatusMap(stickyEvents),
+		RoomConfigs:  roomConfigs,
 	}, nil
 }
 
@@ -427,6 +431,9 @@ const (
 	StreamRooms       = "rooms"
 	StreamReceipts    = "receipts"
 	StreamAccountData = "account_data"
+	// StreamStickyEvents is Synapse's "sticky_events" (1.165); its last
+	// tokens are sticky stream positions.
+	StreamStickyEvents = "sticky_events"
 )
 
 // Counts is the size of the connection store, for metrics.

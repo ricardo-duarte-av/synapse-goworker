@@ -3,10 +3,8 @@ package slidingsync
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/tidwall/gjson"
 
@@ -45,10 +43,9 @@ type extensionInputs struct {
 	// what the reserved `lists`/`rooms` extension keys select from.
 	Lists      map[string]ListResult
 	Subscribed map[string]bool
-	// AllRooms is every room the client is interested in, INCLUDING those
-	// outside the window. Sticky events are scoped to it rather than to the
-	// window, because a sticky event in a room just off-screen still matters.
-	AllRooms map[string]bool
+	// NewlyJoined is the rooms joined inside the token range, which the
+	// sticky events extension sends from scratch.
+	NewlyJoined map[string]bool
 	// Rooms is what was described this time, for the receipts extension's
 	// "re-send receipts for a room sent from scratch" rule.
 	Rooms map[string]*RoomResult
@@ -143,7 +140,9 @@ func buildExtensions(
 			news = news || threadSubscriptionsIsNews(v)
 		}
 	}
-	if ext.StickyEvents != nil && ext.StickyEvents.Enabled && d.MSC4354Enabled {
+	// Called with the extension off too: rooms that gain sticky events
+	// meanwhile are tracked (Synapse 1.165).
+	if d.MSC4354Enabled {
 		v, err := stickyEventsExtension(ctx, d, in, ext.StickyEvents)
 		if err != nil {
 			return nil, false, err
@@ -207,7 +206,8 @@ func threadSubscriptionsIsNews(v *threadSubscriptionsJSON) bool {
 	return len(v.Subscribed) > 0 || len(v.Unsubscribed) > 0 || v.PrevBatch != nil
 }
 
-// stickyEventsIsNews: the `next_batch` alone is not news, same as to_device.
+// stickyEventsIsNews: a room with an event the user may see, whether or not
+// the timeline then carries it (StickyEventsExtension.__bool__).
 func stickyEventsIsNews(v *stickyEventsJSON) bool { return len(v.Rooms) > 0 }
 
 func set(out map[string]json.RawMessage, key string, v any) error {
@@ -990,129 +990,53 @@ func threadSubscriptionsExtension(
 	return out, nil
 }
 
-// --- sticky events (MSC4354) ---
+// --- sticky events (MSC4354 / MSC4480) ---
 
 type stickyEventsJSON struct {
-	NextBatch string                    `json:"next_batch"`
-	Rooms     map[string]stickyRoomJSON `json:"rooms,omitempty"`
+	Rooms map[string]stickyRoomJSON `json:"rooms"`
 }
 
 type stickyRoomJSON struct {
 	Events []json.RawMessage `json:"events"`
 }
 
-// stickyFutureToken is Synapse's SlidingSyncUnknownPosition message for it.
-const stickyFutureToken = "The `org.matrix.msc4354.sticky_events` extension `since` token is considered " +
-	"invalid because it includes stream positions greater than the furthest " +
-	"persisted position across all of the workers. This indicates either a Synapse " +
-	"programming error (as we should never hand out invalid future tokens), database " +
-	"was rolled back, or a fabricated `from` token. If you've modified the token, " +
-	"you can try paginating from the beginning again."
-
-// stickyEventsExtension serves events that linger for a while.
+// stickyEventsExtension is get_sticky_events_extension_response (Synapse
+// 1.165, #20363 and #20431). It returns nil, and the extension is left out,
+// when it is off or no room has a sticky event the user may see; it is
+// called with req nil (off) too, because rooms that gain sticky events
+// while out of scope are still tracked, so turning it back on, or a room
+// coming back into scope, delivers what was missed.
 //
-// Two things separate it from the room-scoped extensions. It is scoped to every
-// room the client is interested in rather than to the window, because a sticky
-// event in a room just off-screen still matters. And history visibility is NOT
-// applied: MSC4354 says any joined user may see a sticky event for as long as
-// it is sticky, so the events bypass the filter rather than being checked by it.
+// There is no `since` of its own: the connection position carries it. Each
+// in-scope room is read from the start of the stream (its first time, a
+// newly joined room, or one sent from scratch), from where it was left
+// (PREVIOUSLY), or from the request's pos (LIVE). The limit is shared,
+// rooms in groups by where they start; a group the budget runs out in is
+// left PREVIOUSLY at the position it reached, so the next response goes on
+// from there without holding the pos back.
 //
-// Events already in a room's timeline are dropped here: the client learns about
-// them either way, and duplicating them is exactly the spam the MSC worries
-// about.
+// Events already in a room's timeline are dropped when serialising, and
+// may leave a room with an empty list: the decision to send a room is made
+// before that, as Synapse's servlet makes it after the handler.
 func stickyEventsExtension(
 	ctx context.Context, d Deps, in extensionInputs, req *StickyEventsExtension,
 ) (*stickyEventsJSON, error) {
-
-	// The token is `sticky_<n>`, prefixed so it cannot be confused with the
-	// other tokens a sliding sync response carries -- the thread-subscriptions
-	// one is `ts<n>` and the room key is `s<n>`, which are otherwise easy to
-	// swap by accident. Ours emitted a bare `s<n>` first and the reference
-	// caught it.
-	var from int64
-	if req.SinceSet && req.Since != "" {
-		raw, ok := strings.CutPrefix(req.Since, stickyTokenPrefix)
-		if !ok {
-			return nil, fmt.Errorf("sticky events since token %q is not %s<n>",
-				req.Since, stickyTokenPrefix)
-		}
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("sticky events since token %q: %w", req.Since, err)
-		}
-		from = n
+	if req == nil || !req.Enabled {
+		return nil, recordStickyOutOfScope(ctx, d, in, nil)
 	}
-	// A since past this worker's position is a lagging worker or a token
-	// from the future; past everything allocated, the latter, and the
-	// connection is reset (#20186).
-	if from > in.Now.StickyEvents {
-		allocated, err := d.Store.StickyMaxAllocated(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if allocated < from {
-			return nil, slidingstore.UnknownPositionError{Message: stickyFutureToken}
-		}
-	}
-	limit := req.Limit
-	if limit <= 0 || limit > stickyMaxEventsInSync {
-		limit = stickyMaxEventsInSync
+	relevant := relevantRooms(in, &req.ExtensionScope)
+	if len(relevant) == 0 {
+		return nil, recordStickyOutOfScope(ctx, d, in, nil)
 	}
 
-	roomIDs := sortedKeys(in.AllRooms)
-	to, byRoom, err := d.Store.StickyEvents(ctx, roomIDs, from, in.Now.StickyEvents, in.NowMS, limit)
+	byRoom, err := selectStickyEvents(ctx, d, in, req, relevant)
 	if err != nil {
 		return nil, err
 	}
 
-	out := &stickyEventsJSON{NextBatch: stickyTokenPrefix + strconv.FormatInt(to, 10)}
-	if len(byRoom) == 0 {
-		// Omitted entirely rather than sent empty. Synapse's encoder tests the
-		// extension for truthiness, and an extension with no rooms is falsy --
-		// so a client polling a server with no sticky events never sees the
-		// key at all.
-		return nil, nil
-	}
-	// From here the extension IS present, because a room was found with sticky
-	// events in range. Deduplication against the timeline happens below and
-	// may empty a room's list, but it does not remove the room and it does not
-	// change that decision: in Synapse the dedup lives in the REST serialiser,
-	// which runs AFTER the truthiness check the notifier uses. So a sticky
-	// event already in the timeline still counts as news and still leaves an
-	// empty `events` array behind. Verified against the reference, which
-	// returns exactly that.
-
-	var wanted []string
-	for _, ids := range byRoom {
-		wanted = append(wanted, ids...)
-	}
-	if len(wanted) == 0 {
-		return out, nil
-	}
-
-	out.Rooms = map[string]stickyRoomJSON{}
+	out := &stickyEventsJSON{Rooms: map[string]stickyRoomJSON{}}
 	for _, roomID := range sortedKeys(boolSet(byRoom)) {
-		room := in.Rooms[roomID]
-		inTimeline := map[string]bool{}
-		if room != nil {
-			for _, ev := range room.Timeline {
-				inTimeline[gjson.GetBytes(ev, "event_id").String()] = true
-			}
-		}
-
-		var ids []string
-		for _, id := range byRoom[roomID] {
-			if !inTimeline[id] {
-				ids = append(ids, id)
-			}
-		}
-		if len(ids) == 0 {
-			// Every sticky event for this room is already in its timeline. The
-			// room stays, with nothing in it -- see above.
-			out.Rooms[roomID] = stickyRoomJSON{Events: []json.RawMessage{}}
-			continue
-		}
-
+		ids := byRoom[roomID]
 		version := ""
 		if r, ok := in.Membership[roomID]; ok {
 			version = r.RoomVersion
@@ -1121,7 +1045,6 @@ func stickyEventsExtension(
 		if err != nil {
 			return nil, err
 		}
-
 		loaded := make([]store.TimelineEvent, 0, len(ids))
 		for _, id := range ids {
 			ev, ok := events[id]
@@ -1144,15 +1067,28 @@ func stickyEventsExtension(
 		if err != nil {
 			return nil, err
 		}
+		if len(filtered.Events) == 0 {
+			// Nothing this user may see: the room is not sent at all.
+			continue
+		}
 
+		// Already in the room's timeline: the client learns of them there.
+		inTimeline := map[string]bool{}
+		if room := in.Rooms[roomID]; room != nil {
+			for _, ev := range room.Timeline {
+				inTimeline[gjson.GetBytes(ev, "event_id").String()] = true
+			}
+		}
 		redactions, err := d.Store.Redactions(ctx, ids)
 		if err != nil {
 			return nil, err
 		}
-
 		cfg := d.EventConfigAdmin(in.UserID, in.DeviceID, 0, filtered.AdminMetadata)
-		var rendered []json.RawMessage
+		rendered := []json.RawMessage{}
 		for i, ev := range filtered.Events {
+			if inTimeline[ev.EventID] {
+				continue
+			}
 			stored := ev.Stored
 			if i < len(filtered.Memberships) {
 				stored.Membership = filtered.Memberships[i]
@@ -1170,19 +1106,137 @@ func stickyEventsExtension(
 				rendered = append(rendered, body)
 			}
 		}
-		if rendered == nil {
-			rendered = []json.RawMessage{}
-		}
 		out.Rooms[roomID] = stickyRoomJSON{Events: rendered}
+	}
+
+	if err := recordStickyOutOfScope(ctx, d, in, relevant); err != nil {
+		return nil, err
+	}
+	if len(out.Rooms) == 0 {
+		return nil, nil
 	}
 	return out, nil
 }
 
+// selectStickyEvents reads the sticky events of the in-scope rooms, by
+// group and within the limit, and records in in.New how far each room was
+// sent: the first half of get_sticky_events_extension_response.
+func selectStickyEvents(ctx context.Context, d Deps, in extensionInputs,
+	req *StickyEventsExtension, relevant map[string]bool) (map[string][]string, error) {
+
+	var initial []string
+	previously := map[string][]string{} // last token -> rooms
+	var live []string
+	for _, roomID := range sortedKeys(relevant) {
+		if in.From == nil || in.NewlyJoined[roomID] {
+			initial = append(initial, roomID)
+			continue
+		}
+		if room := in.Rooms[roomID]; room != nil && room.Initial {
+			initial = append(initial, roomID)
+			continue
+		}
+		switch status := in.Previous.StickyEvents.HaveSentRoom(roomID); status.Status {
+		case slidingstore.FlagLive:
+			live = append(live, roomID)
+		case slidingstore.FlagPreviously:
+			previously[status.LastToken] = append(previously[status.LastToken], roomID)
+		default:
+			initial = append(initial, roomID)
+		}
+	}
+
+	type group struct {
+		rooms []string
+		from  int64
+		token string // as recorded
+	}
+	var groups []group
+	if len(initial) > 0 {
+		// StreamToken.START: every unexpired sticky event.
+		groups = append(groups, group{initial, 0, "0"})
+	}
+	for _, token := range sortedKeys(boolSet(previously)) {
+		from, err := stickyPosition(token)
+		if err != nil {
+			// A position we did not write: start the rooms over, which
+			// re-sends rather than skips.
+			groups = append(groups, group{previously[token], 0, token})
+			continue
+		}
+		groups = append(groups, group{previously[token], from, token})
+	}
+	if len(live) > 0 {
+		from := in.From.StickyEvents
+		groups = append(groups, group{live, from, strconv.FormatInt(from, 10)})
+	}
+
+	remaining := min(req.Limit, stickyMaxEventsInSync)
+	byRoom := map[string][]string{}
+	for _, g := range groups {
+		if remaining <= 0 {
+			// Out of budget: these rooms resume where they would have
+			// started.
+			in.New.StickyEvents.RecordPartiallySentRooms(g.rooms, g.token)
+			continue
+		}
+		readTo, rows, err := d.Store.StickyEvents(ctx, g.rooms, g.from, in.Now.StickyEvents, in.NowMS, remaining)
+		if err != nil {
+			return nil, err
+		}
+		read := 0
+		for roomID, ids := range rows {
+			byRoom[roomID] = append(byRoom[roomID], ids...)
+			read += len(ids)
+		}
+		if read >= remaining {
+			in.New.StickyEvents.RecordPartiallySentRooms(g.rooms, strconv.FormatInt(readTo, 10))
+		} else {
+			in.New.StickyEvents.RecordSentRooms(g.rooms)
+		}
+		remaining -= read
+	}
+
+	return byRoom, nil
+}
+
+// recordStickyOutOfScope is _record_sticky_events_in_out_of_scope_rooms:
+// a LIVE room outside relevant that gained sticky events (expired ones
+// awaiting cleanup included) since the request's pos goes PREVIOUSLY at
+// that pos, to be caught up when it is back in scope. PREVIOUSLY rooms
+// keep their position and NEVER rooms will get everything anyway.
+func recordStickyOutOfScope(ctx context.Context, d Deps, in extensionInputs, relevant map[string]bool) error {
+	if in.From == nil {
+		return nil
+	}
+	var outOfScope []string
+	for roomID, hs := range in.Previous.StickyEvents.All() {
+		if hs.Status == slidingstore.FlagLive && !relevant[roomID] {
+			outOfScope = append(outOfScope, roomID)
+		}
+	}
+	sort.Strings(outOfScope)
+	changed, err := d.Store.StickyRoomsBetween(ctx, outOfScope, in.From.StickyEvents, in.Now.StickyEvents)
+	if err != nil {
+		return err
+	}
+	in.New.StickyEvents.RecordUnsentRooms(sortedKeys(changed), strconv.FormatInt(in.From.StickyEvents, 10))
+	return nil
+}
+
+// stickyPosition reads a sticky stream position as Synapse records it, a
+// MultiWriterStreamToken: with one events writer, a bare integer. A vector
+// clock (several writers) is read at its minimum, which can only re-send.
+func stickyPosition(token string) (int64, error) {
+	mw, err := streamtoken.ParseMultiWriter(token)
+	if err != nil {
+		return 0, err
+	}
+	return mw.Stream, nil
+}
+
 // stickyMaxEventsInSync is Synapse's StickyEvent.MAX_EVENTS_IN_SYNC.
 const stickyMaxEventsInSync = 100
-
-// stickyTokenPrefix is the `sticky_` in `sticky_<n>`.
-const stickyTokenPrefix = "sticky_"
 
 // pushRulesEvent renders the synthesised m.push_rules account data event.
 func pushRulesEvent(ctx context.Context, d Deps, userID string) (json.RawMessage, error) {
