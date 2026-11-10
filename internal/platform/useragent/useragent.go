@@ -32,7 +32,7 @@ import (
 
 // Fallback is sent until main has been heard from: the Synapse version
 // every part was last reviewed against (synapse-watch.yaml).
-const Fallback = "Synapse/1.164.2"
+const Fallback = "Synapse/1.165.0"
 
 var (
 	server atomic.Pointer[string]

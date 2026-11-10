@@ -16,19 +16,21 @@
 # (issue #1) ported or dismissed commit by commit; the decisions are in
 # the commit that moved this. v1.164.2 (2026-11-04): its one change restores
 # the unstable MSC2965 /auth_metadata path, which nothing here mirrors.
-reviewed: v1.164.2
+# v1.165.0 (2026-11-10), deployed with the hosts' upgrade to it:
+# - ported: 20349 (expired sticky events dropped), 20363 and 20431 (sliding
+#   sync's sticky extension on the global pos), 20366 (RTC push rules),
+#   20372's invite refusal of the announcement manager, 20378 (delayed
+#   events' sticky body), 20433 (lazy members in full-state blocks; with
+#   #20289's positions, missed at v1.164.1);
+# - Server Announcements (experimental, off on both hosts) is handed to main
+#   while configured, not ported: 20372 20407 20412 20423 20427 20448 20465
+#   20467;
+# - dismissed: 20425 (MSC4143 stable: main's endpoints), 20422 (in v1.164.1
+#   already, ported then), 20369 (an index), 20359 and 20417 (no behaviour).
+reviewed: v1.165.0
 
 # Ported or dismissed past a component's reviewed tag:
-# v1.165.0, dismissed (2026-11-10):
-# - Server Announcements (experimental_features.server_announcements, off on
-#   both hosts): every check is on the configured rooms, so with none
-#   configured nothing changes. 20372 20407 20412 20423 20427 20448 20465
-#   20467
-# - 20425 (MSC4143 stable): /rtc/transports, /versions and room upgrades are
-#   main's; we only see a new constant.
-# - 20422: backported in v1.164.1, ported then (dc3369f).
-# - 20369: a background index on users. 20359, 20417: no behaviour.
-handled: [20359, 20369, 20372, 20407, 20412, 20417, 20422, 20423, 20425, 20427, 20448, 20465, 20467]
+handled: []
 
 components:
   # Shared by every part: tables we read and write.
@@ -90,6 +92,7 @@ components:
     synapse:
       - synapse/api/filtering.py
       - synapse/api/ratelimiting.py
+      - synapse/events/utils.py
       - synapse/handlers/e2e_keys.py
       - synapse/handlers/events.py
       - synapse/handlers/initial_sync.py
@@ -115,6 +118,7 @@ components:
       - synapse/storage/databases/main/relations.py
       - synapse/storage/databases/main/roommember.py
       - synapse/storage/databases/main/sliding_sync.py
+      - synapse/storage/databases/main/sticky_events.py
       - synapse/storage/databases/main/transactions.py
       - synapse/util/retryutils.py
       - synapse/types/handlers/sliding_sync.py

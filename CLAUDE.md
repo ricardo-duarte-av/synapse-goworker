@@ -13,8 +13,11 @@ The approved plan is in
   (`git show v1.164.1:<path>`), not the checkout, which runs ahead. On
   2026-10-28 aguiarvieira.pt ran 1.164.1 and matrixbridg.es 1.164.0. Every
   part was reviewed to v1.164.1 on 2026-10-29 (the creator ported against
-  it, the others caught up from v1.159 commit by commit), and to v1.164.2
-  on 2026-11-04 (nothing mirrored changed); check
+  it, the others caught up from v1.159 commit by commit), to v1.164.2
+  on 2026-11-04 (nothing mirrored changed), and to v1.165.0 on 2026-11-10
+  while both hosts still ran 1.164.1: from b912f42 on, goworker answers as
+  1.165.0 does (push rules, sliding sync's sticky extension, lazy members,
+  delayed events), so deploy it together with the hosts' upgrade; check
   with `docker exec <synapse container> python -c 'import synapse;
   print(synapse.__version__)'` and diff the tags for what you port.
   `synapse-watch.yaml` says which Synapse paths each part mirrors, the tag
