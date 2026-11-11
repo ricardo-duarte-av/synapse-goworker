@@ -75,13 +75,15 @@ type Settings struct {
 
 // Sync is the assembled client sync path.
 type Sync struct {
-	cfg     Settings
-	log     zerolog.Logger
-	db      *store.Store
-	inbox   *deviceinbox.Deleter
-	sliding *slidingstore.Store
-	sub     *replication.Subscriber
-	routes  server.Routes
+	cfg Settings
+	log zerolog.Logger
+	db  *store.Store
+	// presenceHook is the presence writer in this process, once set.
+	presenceHook *handlers.PresenceHook
+	inbox        *deviceinbox.Deleter
+	sliding      *slidingstore.Store
+	sub          *replication.Subscriber
+	routes       server.Routes
 	// presence relays to the presence writer; nil with presence off.
 	presence *presence.Client
 	// pushFeatures are the flags the push rules are built under.
@@ -93,13 +95,17 @@ type Sync struct {
 // process has one _last_sent_presence. Nil when presence is off.
 func (s *Sync) Presence() *presence.Client { return s.presence }
 
+// SetPresenceWriter makes syncs tell the presence writer in this process
+// directly (user_syncing on the writer), rather than relay to it.
+func (s *Sync) SetPresenceWriter(f handlers.PresenceSyncing) { s.presenceHook.Set(f) }
+
 // New connects and assembles the sync path.
 func New(ctx context.Context, cfg Settings) (*Sync, error) {
 	if err := cfg.Sync.Validate(); err != nil {
 		return nil, err
 	}
 	log, c := cfg.Log, cfg.Sync.Caches
-	s := &Sync{cfg: cfg, log: log}
+	s := &Sync{cfg: cfg, log: log, presenceHook: &handlers.PresenceHook{}}
 	metrics.BuildInfo.WithLabelValues(cfg.Tag).Set(1)
 
 	openCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout+20*time.Second)
@@ -212,6 +218,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		LazyLoad:             lazyload.NewMembers(c.LazyLoadMembersCacheSize, c.LazyLoadMembersCacheTTL),
 		Inbox:                s.inbox,
 		Presence:             presenceClient,
+		PresenceWriter:       s.presenceHook,
 		PushRuleFeatures: pushrules.Features{
 			MSC1767Enabled:             flag("msc1767_enabled", false),
 			MSC3381PollsEnabled:        flag("msc3381_polls_enabled", false),

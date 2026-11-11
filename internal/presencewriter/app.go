@@ -48,7 +48,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog"
+	"github.com/tidwall/gjson"
 
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientreq"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/ratelimit"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/replserver"
@@ -121,7 +123,17 @@ type Options struct {
 	Fallback http.Handler
 	// Now is time.Now when nil.
 	Now func() time.Time
-	Log zerolog.Logger
+	// What the writer needs while presence is enabled; without any of
+	// them it refuses the role then.
+	Rooms RoomStore
+	// SendPresence hands states to this process's federation sender
+	// (send_presence_to_destinations), which keeps to its shard.
+	SendPresence func(states []Presence, destinations []string)
+	// EventsPosition is the events stream's current token, for joins.
+	EventsPosition func(ctx context.Context) (int64, error)
+	// Lines carries USER_SYNC and CLEAR_USER_SYNC from other processes.
+	Lines *bus.Consumer
+	Log   zerolog.Logger
 	// Worker carries the role lines: component=worker, so a quiet Log does
 	// not hide them.
 	Worker zerolog.Logger
@@ -134,8 +146,13 @@ type App struct {
 	writing bool
 	// stale is what _get_active_presence found at start, for Run.
 	stale []State
-	// perUser is rc_presence.per_user, as homeserver.yaml gave it at start.
-	perUser *ratelimit.Limiter
+	// perUser is rc_presence.per_user, as homeserver.yaml gave it at start:
+	// the PUT servlet's limiter; syncLimiter is the sync servlet's, a
+	// Ratelimiter of its own over the same settings.
+	perUser     *ratelimit.Limiter
+	syncLimiter *ratelimit.Limiter
+	// tr is the writer's state while presence is enabled.
+	tr *tracker
 
 	roleNoted     sync.Once
 	enabledNoted  sync.Once
@@ -148,7 +165,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 		o.Now = time.Now
 	}
 	hs := o.Synapse()
-	a := &App{Options: o, perUser: ratelimit.New(hs.RcPresence, o.Now)}
+	a := &App{Options: o, perUser: ratelimit.New(hs.RcPresence, o.Now), syncLimiter: ratelimit.New(hs.RcPresence, o.Now)}
 	if !slices.Contains(hs.Writers.Presence, o.Instance) {
 		writing.Set(0)
 		return a, nil
@@ -156,9 +173,14 @@ func New(ctx context.Context, o Options) (*App, error) {
 	switch {
 	case len(hs.Writers.Presence) != 1:
 		return nil, fmt.Errorf("presencewriter: stream_writers.presence %v: there is only ever one writer", hs.Writers.Presence)
-	case hs.PresenceEnabled:
-		return nil, errors.New("presencewriter: stream_writers.presence names this process, and goworker writes presence " +
-			"only while presence.enabled is false; leave the role to a Synapse process")
+	case hs.PresenceEnabled && (hs.ClientAuth.Modules > 0 || hs.PresenceRouter):
+		return nil, errors.New("presencewriter: presence is enabled and homeserver.yaml loads modules, one of which may " +
+			"route presence; goworker does not run them: leave the role to a Synapse process")
+	case hs.PresenceEnabled && !slices.Equal(hs.SenderInstances, []string{o.Instance}):
+		return nil, fmt.Errorf("presencewriter: presence is enabled and federation_sender_instances is %v: goworker "+
+			"writes presence only as the one federation sender (it keeps no presence_federation queue for others)", hs.SenderInstances)
+	case hs.PresenceEnabled && (o.Rooms == nil || o.EventsPosition == nil):
+		return nil, errors.New("presencewriter: presence is enabled and the writer has no room store")
 	case o.Writer == nil:
 		return nil, errors.New("presencewriter: the presence writer needs homeserver.yaml's redis")
 	}
@@ -177,13 +199,39 @@ func New(ctx context.Context, o Options) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("presencewriter: active presence: %w", err)
 	}
-	a.stale = stale
 	a.writing = true
 	writing.Set(1)
+	if hs.PresenceEnabled {
+		excluded := map[string]struct{}{}
+		for _, r := range hs.ExcludeRoomsFromPresence {
+			excluded[r] = struct{}{}
+		}
+		a.tr = &tracker{
+			a: a, track: hs.TrackPresence, server: hs.ServerName, excluded: excluded,
+			t: timers{idle: hs.IdleTimeout.Milliseconds(), syncOnline: hs.SyncOnlineTimeout.Milliseconds(),
+				lastActiveGranularity: hs.LastActiveGranularity.Milliseconds()},
+			current: map[string]Presence{}, devices: map[string]map[devKey]*device{},
+			unpersisted: map[string]struct{}{}, syncs: map[userDevice]int{},
+			external: map[string]map[userDevice]struct{}{}, externalUpdated: map[string]int64{},
+		}
+		if a.tr.eventPos, err = o.EventsPosition(ctx); err != nil {
+			return nil, fmt.Errorf("presencewriter: events position: %w", err)
+		}
+		a.tr.start(stale)
+	} else {
+		a.stale = stale
+	}
 	o.Writer.Add(stream{a})
 	o.Writer.Add(federationStream{})
-	a.Worker.Info().Int64("position", a.ids.Position()).Int("stale", len(stale)).
-		Msg("writing the presence stream (stream_writers.presence names this process; presence is disabled)")
+	mode := "disabled"
+	switch {
+	case hs.TrackPresence:
+		mode = "enabled"
+	case hs.PresenceEnabled:
+		mode = "untracked"
+	}
+	a.Worker.Info().Int64("position", a.ids.Position()).Int("active", len(stale)).Str("presence", mode).
+		Msg("writing the presence stream (stream_writers.presence names this process)")
 	return a, nil
 }
 
@@ -199,10 +247,10 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 				Msg("homeserver.yaml changed stream_writers.presence; restart goworker to take or drop the presence role")
 		})
 	}
-	if a.writing && hs.PresenceEnabled {
+	if a.writing && hs.PresenceEnabled != (a.tr != nil) {
 		a.enabledNoted.Do(func() {
-			a.Worker.Warn().Msg("homeserver.yaml enables presence while goworker writes it; goworker does not " +
-				"reproduce enabled presence: name a Synapse process in stream_writers.presence and restart")
+			a.Worker.Warn().Bool("presence_enabled", hs.PresenceEnabled).
+				Msg("homeserver.yaml changed presence.enabled; restart goworker (and every Synapse process) to apply it")
 		})
 	}
 }
@@ -210,6 +258,10 @@ func (a *App) SetSynapse(hs *synapsecfg.Config) {
 // Run is what the writer does after start: _mark_stale_presence_as_offline,
 // once, when there is anything to mark.
 func (a *App) Run(ctx context.Context) error {
+	if a.tr != nil {
+		a.tr.run(ctx, a.Lines)
+		return nil
+	}
 	if !a.writing || len(a.stale) == 0 {
 		return nil
 	}
@@ -300,7 +352,7 @@ var errInternal = errors.New("presencewriter: internal error")
 // PresenceHandler.set_state while presence is not tracked: its arguments
 // read in order (a missing one is a KeyError), the state's presence
 // checked, then nothing.
-func (a *App) setState(_ context.Context, req replserver.Request) (int, map[string]any, error) {
+func (a *App) setState(ctx context.Context, req replserver.Request) (int, map[string]any, error) {
 	const ep = "presence_set_state"
 	if perr := userid.Check(req.Args["user_id"]); perr != nil {
 		replicationCalls.WithLabelValues(ep, "refused").Inc()
@@ -328,25 +380,81 @@ func (a *App) setState(_ context.Context, req replserver.Request) (int, map[stri
 		replicationCalls.WithLabelValues(ep, "refused").Inc()
 		return 0, nil, &replserver.Error{Code: http.StatusBadRequest, Errcode: "M_UNKNOWN", Msg: "Invalid presence state"}
 	}
-	replicationCalls.WithLabelValues(ep, "ignored").Inc()
+	if !a.Tracking() {
+		replicationCalls.WithLabelValues(ep, "ignored").Inc()
+		return http.StatusOK, map[string]any{}, nil
+	}
+	msg, err := statusMsg(state["status_msg"])
+	if err != nil {
+		replicationCalls.WithLabelValues(ep, "error").Inc()
+		return 0, nil, err
+	}
+	var dev devKey
+	var deviceID *string
+	if raw, ok := req.Content["device_id"]; ok && json.Unmarshal(raw, &deviceID) == nil {
+		dev = deviceKey(deviceID)
+	}
+	sources.WithLabelValues("set_state").Inc()
+	a.tr.op.Lock()
+	err = a.tr.setState(ctx, req.Args["user_id"], dev, presence, msg,
+		truthyJSON(gjson.ParseBytes(req.Content["force_notify"])), truthyJSON(gjson.ParseBytes(req.Content["is_sync"])))
+	a.tr.op.Unlock()
+	if err != nil {
+		replicationCalls.WithLabelValues(ep, "error").Inc()
+		return 0, nil, err
+	}
+	replicationCalls.WithLabelValues(ep, "handled").Inc()
 	return http.StatusOK, map[string]any{}, nil
+}
+
+// statusMsg is state.get("status_msg"): a string or None. Anything else
+// Synapse would try to store; refused here.
+func statusMsg(raw json.RawMessage) (*string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, fmt.Errorf("%w: status_msg %s", errInternal, raw)
+	}
+	return &s, nil
 }
 
 // bump is ReplicationBumpPresenceActiveTime._handle_request with
 // bump_presence_active_time while presence is not tracked.
-func (a *App) bump(_ context.Context, req replserver.Request) (int, map[string]any, error) {
+func (a *App) bump(ctx context.Context, req replserver.Request) (int, map[string]any, error) {
 	const ep = "bump_presence_active_time"
 	if perr := userid.Check(req.Args["user_id"]); perr != nil {
 		replicationCalls.WithLabelValues(ep, "refused").Inc()
 		return 0, nil, &replserver.Error{Code: http.StatusBadRequest, Errcode: "M_INVALID_PARAM", Msg: perr.Msg}
 	}
-	replicationCalls.WithLabelValues(ep, "ignored").Inc()
+	if !a.Tracking() {
+		replicationCalls.WithLabelValues(ep, "ignored").Inc()
+		return http.StatusOK, map[string]any{}, nil
+	}
+	var deviceID *string
+	if raw, ok := req.Content["device_id"]; ok {
+		_ = json.Unmarshal(raw, &deviceID)
+	}
+	sources.WithLabelValues("bump").Inc()
+	a.tr.op.Lock()
+	err := a.tr.bump(ctx, req.Args["user_id"], deviceKey(deviceID))
+	a.tr.op.Unlock()
+	if err != nil {
+		replicationCalls.WithLabelValues(ep, "error").Inc()
+		return 0, nil, err
+	}
+	replicationCalls.WithLabelValues(ep, "handled").Inc()
 	return http.StatusOK, map[string]any{}, nil
 }
 
 // ReceiveEDU is on_edu for m.presence while presence is not tracked: it
 // returns before any handler.
-func (a *App) ReceiveEDU(context.Context, string, json.RawMessage) error {
+func (a *App) ReceiveEDU(ctx context.Context, origin string, content json.RawMessage) error {
+	if a.Tracking() {
+		replicationCalls.WithLabelValues("fed_send_edu", "handled").Inc()
+		return a.presenceEDU(ctx, origin, content)
+	}
 	replicationCalls.WithLabelValues("fed_send_edu", "ignored").Inc()
 	return nil
 }

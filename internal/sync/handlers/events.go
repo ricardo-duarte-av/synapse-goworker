@@ -14,6 +14,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/metrics"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/presence"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/server"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/store"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/streamtoken"
@@ -161,6 +162,15 @@ func eventStream(r *http.Request, d Deps, verdict clientauth.Verdict, ann *serve
 	req := eventStreamRequest{
 		userID: verdict.UserID, roomIDs: roomIDs, explicitRoom: roomID,
 		isPeeking: isPeeking, limit: limit, timeNow: timeNow, cfg: cfg,
+	}
+
+	// EventStreamHandler.get_stream wraps the stream in user_syncing, with
+	// affect_presence = not a guest, as online, and no ratelimit. Only the
+	// presence writer in this process hears it; the relay never sent it.
+	if !verdict.IsGuest {
+		if hook := d.PresenceWriter.get(); hook != nil {
+			defer hook(ctx, verdict, presence.StateOnline, false)()
+		}
 	}
 
 	chunk, end, err := eventStreamChunk(ctx, d, req, from, now)

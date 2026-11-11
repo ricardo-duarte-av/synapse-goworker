@@ -10,6 +10,7 @@ import (
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/metrics"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/replication"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/sender"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/store"
 )
 
 // handler turns replication rows into work.
@@ -327,6 +328,31 @@ func (w *Worker) ReceiptRow(roomID, receiptType, userID, eventID, threadID strin
 			w.log.Error().Err(err).Str("room", roomID).Msg("failed to route a receipt")
 		}
 	}()
+}
+
+// PresenceStates are states the presence writer in this process sends to
+// destinations (send_presence_to_destinations, as Synapse's writer calls
+// its own federation sender). Its rows on the bus are dropped as echoes;
+// the shard filter applies as for every row.
+//
+// They are queued to one goroutine, in order: the writer does not wait on
+// the sender's first look at a destination's backoff, and a newer state
+// never overtakes an older one of the same user.
+func (w *Worker) PresenceStates(states []store.PresenceState, destinations []string) {
+	w.presenceOnce.Do(func() {
+		w.presenceQ = make(chan presenceBatch, 4096)
+		go func() {
+			for b := range w.presenceQ {
+				w.ephemeral.SendPresence(b.states, b.destinations)
+			}
+		}()
+	})
+	w.presenceQ <- presenceBatch{states, destinations}
+}
+
+type presenceBatch struct {
+	states       []store.PresenceState
+	destinations []string
 }
 
 // ToDeviceDestinations are the destinations the to-device writer in this

@@ -2,6 +2,7 @@ package presencewriter
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -45,9 +46,9 @@ func (a *App) Handler() http.Handler { return http.HandlerFunc(a.serve) }
 
 func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
-	if a.Synapse().PresenceEnabled {
+	if a.tr == nil && a.Synapse().PresenceEnabled {
 		// The enabled servlet reads and sets state through a presence
-		// handler goworker does not have.
+		// handler, which goworker has only as the writer.
 		requests.WithLabelValues(method, "to_main").Inc()
 		a.enabledToMain.Do(func() {
 			a.Worker.Info().Msg("presence is enabled in homeserver.yaml; presence requests go to main")
@@ -76,9 +77,19 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if method == http.MethodGet {
-		// on_GET with presence disabled: before any visibility check.
-		requests.WithLabelValues(method, "ok").Inc()
-		clientreq.Write(w, nil, map[string]any{"presence": "offline"})
+		if a.tr == nil {
+			// on_GET with presence disabled: before any visibility check.
+			requests.WithLabelValues(method, "ok").Inc()
+			clientreq.Write(w, nil, map[string]any{"presence": "offline"})
+			return
+		}
+		body, outcome, cerr := a.get(ctx, v, target)
+		requests.WithLabelValues(method, outcome).Inc()
+		if cerr != nil {
+			clientreq.Write(w, cerr, nil)
+			return
+		}
+		clientreq.WriteRaw(w, body)
 		return
 	}
 	outcome, cerr := a.put(ctx, r, v, target)
@@ -107,20 +118,89 @@ func (a *App) put(ctx context.Context, r *http.Request, v clientauth.Verdict, ta
 		return "refused", cerr
 	}
 	unparsable := clientreq.New(http.StatusBadRequest, "M_UNKNOWN", "Unable to parse state")
-	if _, ok := content["presence"]; !ok {
+	presenceRaw, ok := content["presence"]
+	if !ok {
 		return "refused", unparsable
 	}
 	delete(content, "presence")
+	var msgRaw json.RawMessage
 	if msg, ok := content["status_msg"]; ok {
 		if len(msg) == 0 || msg[0] != '"' {
 			return "refused", clientreq.New(http.StatusBadRequest, "M_UNKNOWN", "status_msg must be a string.")
 		}
+		msgRaw = msg
 		delete(content, "status_msg")
 	}
 	if len(content) > 0 {
 		return "refused", unparsable
 	}
+	if !a.Tracking() {
+		return "ok", nil
+	}
+	// set_state(user, requester.device_id, state).
+	var presence string
+	if json.Unmarshal(presenceRaw, &presence) != nil || !a.validPresence(presence) {
+		return "refused", clientreq.New(http.StatusBadRequest, "M_UNKNOWN", "Invalid presence state")
+	}
+	var msg *string
+	if msgRaw != nil {
+		var m string
+		_ = json.Unmarshal(msgRaw, &m)
+		msg = &m
+	}
+	sources.WithLabelValues("set_state").Inc()
+	a.tr.op.Lock()
+	err = a.tr.setState(ctx, v.UserID, devOf(v.DeviceID), presence, msg, false, false)
+	a.tr.op.Unlock()
+	if err != nil {
+		a.Log.Error().Err(err).Str("user_id", v.UserID).Msg("presence: set_state")
+		return "error", clientreq.Internal
+	}
 	return "ok", nil
+}
+
+// get is on_GET with presence enabled: someone else's presence only if a
+// room is shared (excluded rooms aside), then get_state, formatted without
+// the user ID.
+func (a *App) get(ctx context.Context, v clientauth.Verdict, target string) ([]byte, string, *clientreq.Error) {
+	if v.UserID != target {
+		ok, err := a.isVisible(ctx, target, v.UserID)
+		if err != nil {
+			a.Log.Error().Err(err).Msg("presence: is_visible")
+			return nil, "error", clientreq.Internal
+		}
+		if !ok {
+			return nil, "refused", clientreq.New(http.StatusForbidden, "M_FORBIDDEN", "You are not allowed to see their presence.")
+		}
+	}
+	states, err := a.tr.currentStates(ctx, []string{target})
+	if err != nil {
+		a.Log.Error().Err(err).Msg("presence: get_state")
+		return nil, "error", clientreq.Internal
+	}
+	return formatPresence(states[target], a.Now().UnixMilli(), false).encode(), "ok", nil
+}
+
+// isVisible is is_visible: the two share a room not excluded.
+func (a *App) isVisible(ctx context.Context, observed, observer string) (bool, error) {
+	mine, err := a.Rooms.RoomsForUser(ctx, observer)
+	if err != nil {
+		return false, err
+	}
+	theirs, err := a.Rooms.RoomsForUser(ctx, observed)
+	if err != nil {
+		return false, err
+	}
+	set := map[string]struct{}{}
+	for _, r := range mine {
+		set[r] = struct{}{}
+	}
+	for _, r := range theirs {
+		if _, ok := set[r]; ok && !has(a.tr.excluded, r) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // allowed is Ratelimiter.ratelimit(requester) for rc_presence.per_user,

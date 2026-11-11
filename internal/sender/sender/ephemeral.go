@@ -295,6 +295,37 @@ func (e *Ephemeral) HandlePresence(ctx context.Context, destination string, user
 	return nil
 }
 
+// SendPresence is send_presence_to_destinations with the states given, as
+// the presence writer in this process calls it: each destination this
+// shard sends to, that is not us and is due (filter_destinations_by_retry_
+// limiter), gets the states merged into its pending m.presence EDU. The
+// writer's states are its own memory, which a federation ping does not
+// write to the database, so they are not read back.
+func (e *Ephemeral) SendPresence(states []store.PresenceState, destinations []string) {
+	if !e.trackPresence || len(states) == 0 {
+		return
+	}
+	for _, d := range destinations {
+		if d == e.serverName || !e.shouldHandle(d) || !e.due(d) {
+			continue
+		}
+		q := e.queues.Get(d)
+		for _, st := range states {
+			q.EnqueuePresence(queue.PresenceEntry{
+				UserID: st.UserID,
+				Encode: func(nowMS int64) json.RawMessage {
+					body, err := json.Marshal(formatPresenceAt(st, nowMS))
+					if err != nil {
+						return json.RawMessage(`{}`)
+					}
+					return body
+				},
+			})
+		}
+		e.queues.Wake(q)
+	}
+}
+
 // formatPresence is Synapse's format_user_presence_state (presence.py:1935).
 //
 // Every field but presence is conditional, and the conditions are the point:

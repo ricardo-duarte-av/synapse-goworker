@@ -318,6 +318,10 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		pushRule *pushwriter.App
 		presence *presencewriter.App
 		devLists *devicelists.App
+		// bumps is bump_presence_active_time for typing and receipts: the
+		// presence writer in this process once it tracks presence, the
+		// relay to another writer otherwise.
+		bumps = &presenceBumps{relay: clientSync.Presence()}
 	)
 	// localEDU is the handler in this process for an EDU type, while it
 	// writes that type's stream: for inbound's /send, and fed_send_edu.
@@ -429,10 +433,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		log.Warn().Err(err).Msg("typing writer unavailable; typing requests are proxied to main")
 	} else {
 		closers = append(closers, tdb.Close)
-		var pres typing.Presence
-		if pc := clientSync.Presence(); pc != nil {
-			pres = pc
-		}
+		var pres typing.Presence = bumps
 		typer = typing.New(typing.Options{
 			Instance: cfg.InstanceName,
 			Synapse:  src.Current,
@@ -504,10 +505,7 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 			break
 		}
 		closers = append(closers, rdb.Close)
-		var pres receipts.Presence
-		if pc := clientSync.Presence(); pc != nil {
-			pres = pc
-		}
+		var pres receipts.Presence = bumps
 		receipt, err = receipts.New(ctx, receipts.Options{
 			Instance: cfg.InstanceName,
 			Synapse:  src.Current,
@@ -649,6 +647,12 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 		log.Warn().Err(err).Msg("presence unavailable; presence requests are proxied to main")
 	} else {
 		closers = append(closers, prdb.Close)
+		var lines *bus.Consumer
+		if hs.TrackPresence && consumer != nil && slices.Contains(hs.Writers.Presence, cfg.InstanceName) {
+			// USER_SYNC and CLEAR_USER_SYNC from other processes.
+			lines = consumer("presence")
+		}
+		eventWriters := hs.Writers.Events
 		presence, err = presencewriter.New(ctx, presencewriter.Options{
 			Instance: cfg.InstanceName,
 			Synapse:  src.Current,
@@ -656,6 +660,15 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 			Store:    prdb,
 			Pool:     streamid.PG{Pool: prdb.Pool()},
 			Writer:   streams,
+			Rooms:    prdb,
+			// send_presence_to_destinations on our own sender.
+			SendPresence: func(states []presencewriter.Presence, destinations []string) {
+				sender.PresenceStates(senderPresence(states), destinations)
+			},
+			EventsPosition: func(ctx context.Context) (int64, error) {
+				return eventsPosition(ctx, prdb.Pool(), positions, eventWriters)
+			},
+			Lines:    lines,
 			Fallback: fallback(upstream),
 			Log:      componentLogger(base, cfg.Log, "presence"),
 			Worker:   workerLogger(base, cfg.Log, "presence"),
@@ -664,6 +677,10 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 			presence = nil
 			degraded.WithLabelValues("presence").Set(1)
 			log.Warn().Err(err).Msg("presence writer unavailable; presence requests are proxied to main")
+		} else if presence.Tracking() {
+			// The writer is ours: syncs, typing and receipts tell it directly.
+			clientSync.SetPresenceWriter(presence.UserSyncing)
+			bumps.writer = presence
 		}
 	}
 

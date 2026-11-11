@@ -67,6 +67,9 @@ type Deps struct {
 	// Nil when presence is not configured, in which case every account this
 	// worker serves appears permanently offline -- see internal/presence.
 	Presence *presence.Client
+	// PresenceWriter, once set, is the presence writer in this process: a
+	// sync tells it directly, as Synapse's writer process tells itself.
+	PresenceWriter *PresenceHook
 
 	// Sliding holds sliding sync's per-connection state. Nil when sliding sync
 	// is not configured, in which case the endpoint is not registered at all.

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/matrixerr"
@@ -36,6 +37,30 @@ func parseSetPresence(r *http.Request) (string, *matrixerr.Error) {
 		}
 	}
 	return v, nil
+}
+
+// PresenceSyncing is PresenceHandler.user_syncing on the writer's process:
+// called before the sync waits, with the sync servlet's rc_presence check
+// when ratelimited; what it returns ends the sync.
+type PresenceSyncing func(ctx context.Context, v clientauth.Verdict, setPresence string, ratelimited bool) func()
+
+// PresenceHook holds the presence writer in this process, set once it is
+// known (it starts after sync). Nil, or empty, is none.
+type PresenceHook struct {
+	f atomic.Pointer[PresenceSyncing]
+}
+
+// Set installs the writer.
+func (h *PresenceHook) Set(f PresenceSyncing) { h.f.Store(&f) }
+
+func (h *PresenceHook) get() PresenceSyncing {
+	if h == nil {
+		return nil
+	}
+	if f := h.f.Load(); f != nil {
+		return *f
+	}
+	return nil
 }
 
 // relayPresence tells the presence writer this user is syncing.

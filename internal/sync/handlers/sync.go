@@ -75,9 +75,14 @@ func Sync(d Deps) http.Handler {
 			refuse(w, ann, http.StatusBadRequest, *mxErr)
 			return
 		}
-		// Relayed once per request, around the sync, where Synapse wraps the
-		// wait in presence_handler.user_syncing().
-		relayPresence(r.Context(), d, verdict, setPresence)
+		// Around the sync, where Synapse wraps the wait in
+		// presence_handler.user_syncing(): the writer in this process, or
+		// the relay to it.
+		if hook := d.PresenceWriter.get(); hook != nil {
+			defer hook(r.Context(), verdict, setPresence, true)()
+		} else {
+			relayPresence(r.Context(), d, verdict, setPresence)
+		}
 
 		if since := r.URL.Query().Get("since"); since != "" {
 			if ann != nil {

@@ -141,6 +141,14 @@ type Config struct {
 	// which decide how often a syncing user is re-announced.
 	SyncOnlineTimeout     time.Duration
 	LastActiveGranularity time.Duration
+	// IdleTimeout is presence.idle_timeout (5 minutes).
+	IdleTimeout time.Duration
+	// ExcludeRoomsFromPresence is exclude_rooms_from_presence: rooms that
+	// on their own do not route presence between their members.
+	ExcludeRoomsFromPresence []string
+	// PresenceRouter is presence.presence_router being set: the legacy way
+	// to load a presence router module.
+	PresenceRouter bool
 
 	// ClientAuth is what decides how Synapse authenticates a client's
 	// access token.
@@ -258,8 +266,11 @@ type raw struct {
 		Enabled               any `yaml:"enabled"`
 		SyncOnlineTimeout     any `yaml:"sync_online_timeout"`
 		LastActiveGranularity any `yaml:"last_active_granularity"`
+		IdleTimeout           any `yaml:"idle_timeout"`
+		PresenceRouter        any `yaml:"presence_router"`
 	} `yaml:"presence"`
-	UsePresence any `yaml:"use_presence"`
+	ExcludeRoomsFromPresence []string `yaml:"exclude_rooms_from_presence"`
+	UsePresence              any      `yaml:"use_presence"`
 
 	FederationDomainWhitelist []string `yaml:"federation_domain_whitelist"`
 
@@ -422,6 +433,8 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 	cfg.AllowDeviceNameLookup = r.AllowDeviceNameLookup != nil && *r.AllowDeviceNameLookup
 	cfg.PresenceEnabled = presenceEnabled(r)
+	cfg.ExcludeRoomsFromPresence = r.ExcludeRoomsFromPresence
+	cfg.PresenceRouter = truthy(r.Presence.PresenceRouter)
 	cfg.ClientAuth = ClientAuth{
 		Delegated:              r.MatrixAuthenticationService.Enabled || msc3861(cfg.Experimental),
 		AccountValidity:        r.AccountValidity.Enabled,
@@ -440,6 +453,7 @@ func parse(b []byte, path string) (*Config, error) {
 		{r.Federation.MaxLongRetryDelay, "federation.max_long_retry_delay", &cfg.MaxLongRetryDelay, DefaultMaxLongRetryDelay},
 		{r.Presence.SyncOnlineTimeout, "presence.sync_online_timeout", &cfg.SyncOnlineTimeout, DefaultSyncOnlineTimeout},
 		{r.Presence.LastActiveGranularity, "presence.last_active_granularity", &cfg.LastActiveGranularity, DefaultLastActiveGranularity},
+		{r.Presence.IdleTimeout, "presence.idle_timeout", &cfg.IdleTimeout, DefaultIdleTimeout},
 	} {
 		*d.dst = d.def
 		if d.v != nil {
@@ -722,6 +736,7 @@ const (
 	DefaultMaxLongRetryDelay     = 60 * time.Second
 	DefaultSyncOnlineTimeout     = 30 * time.Second
 	DefaultLastActiveGranularity = 60 * time.Second
+	DefaultIdleTimeout           = 5 * time.Minute
 )
 
 // senderInstances is federation_sender_instances with Synapse's defaults.

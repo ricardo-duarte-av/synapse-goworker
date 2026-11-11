@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -115,8 +116,11 @@ type Worker struct {
 	catchup   *sender.CatchUp
 	hosts     *destinations.CachedRoomHosts
 	ephemeral *sender.Ephemeral
-	typing    *sender.Typing
-	sub       *replication.Subscriber
+	// presenceQ carries the presence writer's states to SendPresence.
+	presenceOnce sync.Once
+	presenceQ    chan presenceBatch
+	typing       *sender.Typing
+	sub          *replication.Subscriber
 }
 
 // New connects and assembles the sender. It does not start sending; Run
