@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"time"
@@ -46,6 +47,11 @@ type Manager struct {
 	mu    sync.RWMutex
 	dests map[string]*Destination
 
+	// wakeups, wakeupMaxDelay and sleep are the staggered wake-up (WakeLater).
+	wakeups        wakeups
+	wakeupMaxDelay time.Duration
+	sleep          func(ctx context.Context, d time.Duration) bool
+
 	// base is the context transmission loops run under.
 	//
 	// It MUST outlive whatever fed the queue. An earlier version passed the
@@ -84,6 +90,9 @@ type ManagerConfig struct {
 	// Sticky is the MSC4354 sticky event backlog every destination drains;
 	// nil when the MSC is off.
 	Sticky StickySource
+	// WakeupMaxDelay is the longest pause between two staggered wake-ups
+	// (WakeLater); zero takes Synapse's default, 20 ms.
+	WakeupMaxDelay time.Duration
 }
 
 // NewManager builds a Manager.
@@ -92,24 +101,31 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 2000
 	}
+	wakeupMaxDelay := cfg.WakeupMaxDelay
+	if wakeupMaxDelay <= 0 {
+		wakeupMaxDelay = 20 * time.Millisecond
+	}
 	return &Manager{
-		limits:        cfg.Limits,
-		signer:        cfg.Signer,
-		ids:           cfg.IDs,
-		sink:          cfg.Sink,
-		log:           cfg.Log,
-		sem:           make(chan struct{}, maxConcurrent),
-		onSuccess:     cfg.OnSuccess,
-		onEDUsSent:    cfg.OnEDUsSent,
-		onOutcome:     cfg.OnOutcome,
-		due:           cfg.Due,
-		batch:         cfg.Batch,
-		longBackoff:   cfg.LongBackoff,
-		onEDUsDropped: cfg.OnEDUsDropped,
-		onRateLimited: cfg.OnRateLimited,
-		sticky:        cfg.Sticky,
-		dests:         map[string]*Destination{},
-		base:          context.Background(),
+		limits:         cfg.Limits,
+		signer:         cfg.Signer,
+		ids:            cfg.IDs,
+		sink:           cfg.Sink,
+		log:            cfg.Log,
+		sem:            make(chan struct{}, maxConcurrent),
+		onSuccess:      cfg.OnSuccess,
+		onEDUsSent:     cfg.OnEDUsSent,
+		onOutcome:      cfg.OnOutcome,
+		due:            cfg.Due,
+		batch:          cfg.Batch,
+		longBackoff:    cfg.LongBackoff,
+		onEDUsDropped:  cfg.OnEDUsDropped,
+		onRateLimited:  cfg.OnRateLimited,
+		sticky:         cfg.Sticky,
+		dests:          map[string]*Destination{},
+		base:           context.Background(),
+		wakeups:        wakeups{order: list.New(), at: map[string]*list.Element{}},
+		wakeupMaxDelay: wakeupMaxDelay,
+		sleep:          sleepCtx,
 	}
 }
 

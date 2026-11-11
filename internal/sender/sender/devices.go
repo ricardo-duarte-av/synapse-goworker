@@ -222,7 +222,9 @@ func (d *Devices) deviceListsFor(ctx context.Context, server string, current int
 		}
 		q.EnqueueMarkedEDU(m)
 	}
-	d.queues.Wake(q)
+	// Device list updates are staggered: Synapse sends them with
+	// send_device_messages(immediate=False), through the wake-up queue.
+	d.queues.WakeLater(q)
 
 	return d.cursors.Set(ctx, name, highest)
 }

@@ -207,6 +207,12 @@ func TestTypingNeverSendsToOurselves(t *testing.T) {
 func TestTypingClobbersPerRoomAndUser(t *testing.T) {
 	hosts := &fixedHosts{hosts: []string{"remote.example"}}
 	ty, m := newQueuedTyping(t, hosts)
+	// Held busy, so no transaction takes the start before the stop arrives:
+	// one in flight is sealed and rightly not replaced (6932c25), which made
+	// this test fail whenever the loop won that race.
+	if !m.Get("remote.example").TryStart() {
+		t.Fatal("destination already running")
+	}
 
 	ty.HandleRows(1, []TypingRow{{RoomID: "!r", UserIDs: []string{"@alice:example.com"}}})
 	ty.HandleRows(2, []TypingRow{{RoomID: "!r", UserIDs: []string{}}})

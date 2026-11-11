@@ -2,7 +2,10 @@ package sender
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
@@ -37,6 +40,18 @@ type fakeEphemeralStore struct {
 	partialAtJoin []string
 	presence      map[string]store.PresenceState
 	presenceReads int
+	// meta is get_metadata_for_event's row, by event ID.
+	meta map[string]eventMeta
+}
+
+type eventMeta struct {
+	sender     string
+	receivedTS *int64
+}
+
+func (f *fakeEphemeralStore) EventMetadata(_ context.Context, _, eventID string) (string, *int64, bool, error) {
+	m, ok := f.meta[eventID]
+	return m.sender, m.receivedTS, ok, nil
 }
 
 // partialAtJoin, when set, makes this a room still being joined.
@@ -274,5 +289,106 @@ func TestReceiptsUsePartialStateApproximation(t *testing.T) {
 	}
 	if _, edus := m.Get("example.com").Pending(); edus != 0 {
 		t.Error("queued a receipt for our own server")
+	}
+}
+
+// staggerQueues is ephemeralQueues with a pause long enough that what the
+// wake-up queue holds can be asserted on.
+func staggerQueues(t *testing.T) *queue.Manager {
+	t.Helper()
+	signer, err := txn.NewSigner("example.com",
+		"ed25519 a_Yofy AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := queue.NewManager(queue.ManagerConfig{
+		Signer: signer,
+		IDs:    txn.NewIDGenerator(txn.DefaultIDPrefix),
+		Sink:   &typingSink{edus: map[string][]gjson.Result{}, block: make(chan struct{})},
+		Log:    zerolog.Nop(), MaxConcurrent: 64, WakeupMaxDelay: time.Hour,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	m.Start(ctx)
+	return m
+}
+
+// send_read_receipt: a room of ten servers or more, for an event received
+// over a minute ago, wakes only the event's sender's server at once; the
+// rest go through the wake-up queue. Fewer servers, or a recent event, wake
+// all at once; an event Synapse cannot find raises, and nothing is queued.
+func TestReceiptStaggering(t *testing.T) {
+	var hosts []string
+	for i := range 12 {
+		hosts = append(hosts, fmt.Sprintf("h%02d.example", i))
+	}
+	old := time.Now().Add(-2 * time.Minute).UnixMilli()
+	recent := time.Now().Add(-10 * time.Second).UnixMilli()
+	rcpt := func(event string) ReceiptUpdate {
+		return ReceiptUpdate{RoomID: "!r:example.com", ReceiptType: "m.read", UserID: "@alice:example.com",
+			EventID: event, Data: []byte(`{"ts":1}`)}
+	}
+	run := func(hosts []string, event string, meta map[string]eventMeta) (*queue.Manager, error) {
+		st := &fakeEphemeralStore{hosts: append(slices.Clone(hosts), "example.com"), meta: meta}
+		m := staggerQueues(t)
+		e := NewEphemeral(EphemeralConfig{
+			Store: st, Queues: m, Log: zerolog.Nop(), ServerName: "example.com",
+			ShouldHandle: func(string) bool { return true }, TrackPresence: true,
+		})
+		return m, e.HandleReceipt(context.Background(), rcpt(event))
+	}
+	meta := map[string]eventMeta{
+		"$old":    {sender: "@bob:h03.example", receivedTS: &old},
+		"$recent": {sender: "@bob:h03.example", receivedTS: &recent},
+		"$null":   {sender: "@bob:h03.example"},
+	}
+
+	m, err := run(hosts, "$old", meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delayed []string
+	for _, h := range hosts {
+		if h != "h03.example" {
+			delayed = append(delayed, h)
+		}
+	}
+	// The first delayed one is woken at once; the rest wait their turn.
+	for deadline := time.Now().Add(5 * time.Second); !slices.Equal(m.Staggered(), delayed[1:]); {
+		if time.Now().After(deadline) {
+			t.Fatalf("staggered %v, want %v", m.Staggered(), delayed[1:])
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for _, h := range hosts {
+		if _, edus := m.Get(h).Pending(); edus != 1 {
+			t.Errorf("%s: %d EDUs queued", h, edus)
+		}
+	}
+
+	for _, c := range []struct {
+		name  string
+		hosts []string
+		event string
+	}{{"recent", hosts, "$recent"}, {"small room", hosts[:9], "$old"}} {
+		m, err := run(c.hosts, c.event, meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s := m.Staggered(); len(s) != 0 {
+			t.Errorf("%s: staggered %v", c.name, s)
+		}
+	}
+
+	for _, ev := range []string{"$missing", "$null"} {
+		m, err := run(hosts, ev, meta)
+		if err == nil {
+			t.Errorf("%s: no error", ev)
+		}
+		for _, h := range hosts {
+			if _, edus := m.Get(h).Pending(); edus != 0 {
+				t.Errorf("%s: %s has %d EDUs", ev, h, edus)
+			}
+		}
 	}
 }

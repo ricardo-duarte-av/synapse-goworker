@@ -304,6 +304,7 @@ components:
     code: internal/sender
     synapse:
       - synapse/api/urls.py
+      - synapse/config/ratelimiting.py
       - synapse/federation/sender/
       - synapse/federation/transport/client.py
       - synapse/federation/units.py
@@ -312,6 +313,7 @@ components:
       - synapse/replication/tcp/commands.py
       - synapse/storage/databases/main/deviceinbox.py
       - synapse/storage/databases/main/devices.py
+      - synapse/storage/databases/main/events_worker.py
       - synapse/storage/databases/main/presence.py
       - synapse/storage/databases/main/room.py
       - synapse/storage/databases/main/stream.py

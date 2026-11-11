@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sender/dbtrace"
@@ -300,4 +301,25 @@ func (s *Store) IsPartialStateRoom(ctx context.Context, roomID string) (bool, er
 		return false, fmt.Errorf("store: partial state room %s: %w", roomID, err)
 	}
 	return n > 0, nil
+}
+
+// EventMetadata is get_metadata_for_event: the event's sender and
+// received_ts, for deciding whether a receipt for it is sent at once.
+func (s *Store) EventMetadata(ctx context.Context, roomID, eventID string) (string, *int64, bool, error) {
+	ctx = dbtrace.WithQueryName(ctx, "event_metadata")
+	var sender *string
+	var receivedTS *int64
+	err := s.pool.QueryRow(ctx, `SELECT sender, received_ts FROM events WHERE room_id = $1 AND event_id = $2`,
+		roomID, eventID).Scan(&sender, &receivedTS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("store: event metadata: %w", err)
+	}
+	out := ""
+	if sender != nil {
+		out = *sender
+	}
+	return out, receivedTS, true, nil
 }

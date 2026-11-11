@@ -254,9 +254,12 @@ func New(ctx context.Context, cfg Settings) (*Worker, error) {
 		Sink:          live,
 		Log:           log,
 		MaxConcurrent: cfg.MaxConcurrentDestinations,
-		OnSuccess:     w.onDelivered,
-		OnEDUsSent:    w.onEDUsDelivered,
-		OnOutcome:     w.onSendOutcome,
+		// _DestinationWakeupQueue's max_delay_s, read at start as Synapse
+		// reads it.
+		WakeupMaxDelay: scfg.WakeupMaxDelay,
+		OnSuccess:      w.onDelivered,
+		OnEDUsSent:     w.onEDUsDelivered,
+		OnOutcome:      w.onSendOutcome,
 		Due: func(destination string) bool {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

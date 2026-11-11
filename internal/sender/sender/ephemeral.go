@@ -33,6 +33,10 @@ type EphemeralStore interface {
 	CurrentJoinedHosts(ctx context.Context, roomID string) ([]string, error)
 	PartialStateServersAtJoin(ctx context.Context, roomID string) ([]string, bool, error)
 	GetPresenceStates(ctx context.Context, userIDs []string) (map[string]store.PresenceState, error)
+	// EventMetadata is get_metadata_for_event: the event's sender and
+	// received_ts (nil when NULL); found false when the room has no such
+	// event.
+	EventMetadata(ctx context.Context, roomID, eventID string) (sender string, receivedTS *int64, found bool, err error)
 }
 
 // Ephemeral routes receipts, typing and presence.
@@ -123,21 +127,62 @@ func (e *Ephemeral) HandleReceipt(ctx context.Context, r ReceiptUpdate) error {
 		return fmt.Errorf("sender: encoding receipt: %w", err)
 	}
 
-	sent := 0
+	// Synapse asks the same before queueing a receipt
+	// (federation/sender/__init__.py:915). A read receipt for a server that
+	// has been down for a week is worth nothing by the time it returns.
+	var domains []string
 	for _, host := range e.ourDestinations(hosts) {
-		// Synapse asks the same before queueing a receipt
-		// (federation/sender/__init__.py:915). A read receipt for a server that
-		// has been down for a week is worth nothing by the time it returns.
-		if !e.due(host) {
-			continue
+		if e.due(host) {
+			domains = append(domains, host)
 		}
+	}
+	if len(domains) == 0 {
+		return nil
+	}
+
+	// Which destinations are woken now and which are staggered
+	// (send_read_receipt): all at once in a room of fewer than ten servers
+	// or for an event received in the last minute; otherwise only the
+	// event's sender's server now, the rest through the wake-up queue.
+	immediate := domains
+	var delayed []string
+	if len(domains) >= 10 {
+		sender, receivedTS, found, err := e.store.EventMetadata(ctx, r.RoomID, r.EventID)
+		if err != nil {
+			return err
+		}
+		// Synapse asserts the event exists and subtracts received_ts; either
+		// failing raises, and the receipt goes to no one.
+		if !found {
+			return fmt.Errorf("sender: receipt for %s: event not in room %s", r.EventID, r.RoomID)
+		}
+		if receivedTS == nil {
+			return fmt.Errorf("sender: receipt for %s: received_ts is NULL", r.EventID)
+		}
+		if nowMS()-*receivedTS >= 60_000 {
+			immediate = nil
+			senderDomain := destinations.DomainOf(sender)
+			for _, d := range domains {
+				if d == senderDomain {
+					immediate = append(immediate, d)
+				} else {
+					delayed = append(delayed, d)
+				}
+			}
+		}
+	}
+	for _, host := range immediate {
 		q := e.queues.Get(host)
 		q.EnqueueReceipt(r.RoomID, r.ReceiptType, r.UserID, r.ThreadID, content)
 		e.queues.Wake(q)
-		sent++
+	}
+	for _, host := range delayed {
+		q := e.queues.Get(host)
+		q.EnqueueReceipt(r.RoomID, r.ReceiptType, r.UserID, r.ThreadID, content)
+		e.queues.WakeLater(q)
 	}
 	e.log.Debug().Str("room", r.RoomID).Str("user", r.UserID).
-		Int("destinations", sent).Msg("receipt routed")
+		Int("destinations", len(domains)).Int("staggered", len(delayed)).Msg("receipt routed")
 	return nil
 }
 
@@ -291,7 +336,8 @@ func (e *Ephemeral) HandlePresence(ctx context.Context, destination string, user
 	if queued == 0 {
 		return nil
 	}
-	e.queues.Wake(q)
+	// Presence is always staggered (send_presence_to_destinations).
+	e.queues.WakeLater(q)
 	return nil
 }
 
@@ -322,7 +368,9 @@ func (e *Ephemeral) SendPresence(states []store.PresenceState, destinations []st
 				},
 			})
 		}
-		e.queues.Wake(q)
+		// Staggered, as send_presence_to_destinations adds every
+		// destination to the wake-up queue.
+		e.queues.WakeLater(q)
 	}
 }
 

@@ -183,6 +183,10 @@ type Config struct {
 	Profile Profile
 	// RcKeyRequests is rc_key_requests (20/s, burst 100).
 	RcKeyRequests Ratelimit
+	// WakeupMaxDelay is the longest the federation sender waits between two
+	// staggered destination wake-ups: 1 / federation_rr_transactions_per_
+	// room_per_second (default 50, so 20 ms).
+	WakeupMaxDelay time.Duration
 	// RcPresence is rc_presence.per_user (0.1/s, burst 1), PUT
 	// /presence/{userId}/status's limiter.
 	RcPresence Ratelimit
@@ -399,6 +403,9 @@ func parse(b []byte, path string) (*Config, error) {
 		return nil, err
 	}
 	if cfg.RcPresence, err = presenceRatelimit(b); err != nil {
+		return nil, err
+	}
+	if cfg.WakeupMaxDelay, err = wakeupMaxDelay(b); err != nil {
 		return nil, err
 	}
 	if cfg.Profile, err = profileSettings(b); err != nil {
