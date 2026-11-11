@@ -438,3 +438,46 @@ func TestFlushAndRestore(t *testing.T) {
 		t.Fatalf("restored state did not time out: %+v", s)
 	}
 }
+
+// The hosts of a room are read once, and again only after a membership
+// delta in that room (get_current_hosts_in_room's cache).
+func TestHostsCachedUntilMembershipDelta(t *testing.T) {
+	h := newHarness(t, nil)
+	h.rooms.rooms[me] = []string{"!r:server"}
+	h.rooms.members["!r:server"] = []string{me, "@x:one"}
+	h.set(me, "dev-1", stateOnline, nil)
+	if len(h.sent) != 1 || !slices.Equal(h.sent[0].dests, []string{"one", "server"}) {
+		t.Fatalf("%+v", h.sent)
+	}
+	// A new member with no delta yet: the cached hosts still answer.
+	h.rooms.members["!r:server"] = []string{me, "@x:one", "@y:two"}
+	h.sent = nil
+	h.set(me, "dev-1", stateUnavailable, nil)
+	if len(h.sent) != 1 || !slices.Equal(h.sent[0].dests, []string{"one", "server"}) {
+		t.Fatalf("cached: %+v", h.sent)
+	}
+	// A non-member delta leaves the cache alone.
+	ev := func(s string) *string { return &s }
+	h.rooms.deltas = []StateDelta{{StreamID: 5, RoomID: "!r:server", Type: "m.room.topic", StateKey: "", EventID: ev("$t")}}
+	h.events = 5
+	h.a.tr.op.Lock()
+	_ = h.a.tr.deltas(context.Background())
+	h.a.tr.op.Unlock()
+	h.sent = nil
+	h.set(me, "dev-1", stateOnline, nil)
+	if len(h.sent) != 1 || !slices.Equal(h.sent[0].dests, []string{"one", "server"}) {
+		t.Fatalf("after topic: %+v", h.sent)
+	}
+	// The join's delta drops it.
+	h.rooms.deltas = append(h.rooms.deltas, StateDelta{StreamID: 6, RoomID: "!r:server", Type: "m.room.member", StateKey: "@y:two", EventID: ev("$j")})
+	h.rooms.member["$j"] = "join"
+	h.events = 6
+	h.a.tr.op.Lock()
+	_ = h.a.tr.deltas(context.Background())
+	h.a.tr.op.Unlock()
+	h.sent = nil
+	h.set(me, "dev-1", stateUnavailable, nil)
+	if len(h.sent) != 1 || !slices.Equal(h.sent[0].dests, []string{"one", "server", "two"}) {
+		t.Fatalf("after join: %+v", h.sent)
+	}
+}

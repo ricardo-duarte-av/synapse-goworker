@@ -16,6 +16,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/bus"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/cache"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/pyjson"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/userid"
 )
@@ -99,6 +100,43 @@ type tracker struct {
 	externalUpdated map[string]int64
 	// eventPos is _event_pos.
 	eventPos int64
+	// hosts is get_current_hosts_in_room's cache, dropped for a room when a
+	// membership delta in it goes by (deltas), as Synapse's is by the
+	// events stream. Without it every local change, and every 25-minute
+	// ping, read the hosts of each of the user's rooms: 686 queries for the
+	// owner on av, 0.6 s of Postgres a second during each ping
+	// (2026-11-11). Read and dropped only under op, so a read cannot store
+	// what a delta already dropped.
+	hosts *cache.LRU[string, []string]
+}
+
+// hostsCacheBytes bounds the hosts cache: av's rooms and their hosts are a
+// few megabytes.
+const hostsCacheBytes = 16 << 20
+
+func newHostsCache() *cache.LRU[string, []string] {
+	return cache.NewLRU[string, []string]("presence_room_hosts", hostsCacheBytes, func(hs []string) int64 {
+		n := int64(64 + 24*len(hs))
+		for _, h := range hs {
+			n += int64(len(h))
+		}
+		return n
+	})
+}
+
+// hostsInRoom is get_current_hosts_in_room, cached while tracked (the
+// deltas loop, which invalidates it, runs only then).
+func (t *tracker) hostsInRoom(ctx context.Context, roomID string) ([]string, error) {
+	if t.track && t.hosts != nil {
+		if hs, ok := t.hosts.Get(roomID); ok {
+			return hs, nil
+		}
+	}
+	hs, err := t.a.Rooms.HostsInRoom(ctx, roomID)
+	if err == nil && t.track && t.hosts != nil {
+		t.hosts.Add(roomID, hs)
+	}
+	return hs, err
 }
 
 func (t *tracker) now() int64 { return t.a.Now().UnixMilli() }
@@ -156,6 +194,9 @@ func (t *tracker) gauges() {
 	held.WithLabelValues("unpersisted").Set(float64(len(t.unpersisted)))
 	held.WithLabelValues("syncs").Set(float64(syncs))
 	held.WithLabelValues("external_processes").Set(float64(len(t.external)))
+	if t.hosts != nil {
+		held.WithLabelValues("room_hosts").Set(float64(t.hosts.Stats().Entries))
+	}
 }
 
 // currentStates is current_state_for_users: memory, then the database; a
@@ -308,7 +349,7 @@ func (t *tracker) sendToInterested(ctx context.Context, states []Presence, why s
 			if _, ok := t.excluded[r]; ok {
 				continue
 			}
-			hs, err := t.a.Rooms.HostsInRoom(ctx, r)
+			hs, err := t.hostsInRoom(ctx, r)
 			if err != nil {
 				failures.WithLabelValues("fanout").Inc()
 				t.a.Log.Error().Err(err).Str("room_id", r).Msg("presence: hosts in a room")
@@ -696,6 +737,9 @@ func (t *tracker) deltas(ctx context.Context) error {
 				order = append(order, d.RoomID)
 			}
 			byRoom[d.RoomID] = append(byRoom[d.RoomID], d)
+			if d.Type == "m.room.member" && t.hosts != nil {
+				t.hosts.Remove(d.RoomID)
+			}
 		}
 		for _, r := range order {
 			if err := t.roomDeltas(ctx, r, byRoom[r]); err != nil {

@@ -213,6 +213,7 @@ func New(ctx context.Context, o Options) (*App, error) {
 			current: map[string]Presence{}, devices: map[string]map[devKey]*device{},
 			unpersisted: map[string]struct{}{}, syncs: map[userDevice]int{},
 			external: map[string]map[userDevice]struct{}{}, externalUpdated: map[string]int64{},
+			hosts: newHostsCache(),
 		}
 		if a.tr.eventPos, err = o.EventsPosition(ctx); err != nil {
 			return nil, fmt.Errorf("presencewriter: events position: %w", err)
