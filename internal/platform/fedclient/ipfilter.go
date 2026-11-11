@@ -1,6 +1,7 @@
 package fedclient
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -80,8 +81,16 @@ var wellKnownClient = func() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: DialControl}
 	t.DialContext = d.DialContext
-	t.ForceAttemptHTTP2 = false
 	t.DisableKeepAlives = true
+	// HTTP/1.1 is what the TLS handshake offers, not only what the
+	// transport speaks. Turning ForceAttemptHTTP2 off alone (bb4715f) still
+	// offered h2 by ALPN; servers that support it (matrix.org, everything
+	// behind Cloudflare) answered in HTTP/2 frames, every lookup failed as
+	// "malformed HTTP response", and resolution fell back to <name>:8448:
+	// 2,287 destinations unreachable within 20 minutes on av.
+	t.ForceAttemptHTTP2 = false
+	t.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
+	t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	return &http.Client{Transport: t}
 }()
 
