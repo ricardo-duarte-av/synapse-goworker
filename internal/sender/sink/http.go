@@ -121,6 +121,13 @@ func NewHTTP(cfg HTTPConfig) *HTTP {
 	transport.Transport.MaxIdleConnsPerHost = 2
 	fedclient.FilterWellKnown(transport)
 	useragent.Resolving(transport)
+	// federation_verify_certificates and its whitelist, as every other
+	// federation client checks them; without it the sender verified every
+	// certificate whatever homeserver.yaml said. Only the check: the
+	// sender keeps to HTTP/1.1, as Synapse's federation client does.
+	h2 := transport.Transport.ForceAttemptHTTP2
+	fedclient.VerifyAsConfigured(transport.Transport)
+	transport.Transport.ForceAttemptHTTP2 = h2
 
 	return &HTTP{
 		client: &http.Client{
@@ -197,7 +204,7 @@ func (h *HTTP) Send(ctx context.Context, req *txn.Request) (Result, error) {
 			}
 			h.log.Debug().
 				Str("destination", req.Destination).Str("txn_id", req.TransactionID).
-				Int("attempt", attempt).Dur("delay", delay).
+				Int("attempt", attempt).Dur("delay", delay).AnErr("error", lastErr).
 				Msg("retrying transaction")
 			select {
 			case <-ctx.Done():
