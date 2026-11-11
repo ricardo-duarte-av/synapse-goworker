@@ -32,7 +32,7 @@ func (d *Destination) EnqueueKeyedEDU(key string, e txn.EDU) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for i := range d.pendingEDUs {
-		if d.pendingEDUs[i].Key == key && d.pendingEDUs[i].Unit.Type == e.Type {
+		if !d.pendingEDUs[i].sealed && d.pendingEDUs[i].Key == key && d.pendingEDUs[i].Unit.Type == e.Type {
 			d.pendingEDUs[i].Unit = e
 			d.newData = true
 			return
@@ -60,7 +60,7 @@ func (d *Destination) EnqueueReceipt(roomID, receiptType, userID, threadID strin
 
 	for i := range d.pendingEDUs {
 		e := &d.pendingEDUs[i]
-		if e.Unit.Type != txn.EDUTypeReceipt || e.Receipts == nil {
+		if e.sealed || e.Unit.Type != txn.EDUTypeReceipt || e.Receipts == nil {
 			continue
 		}
 		byType, ok := e.Receipts[roomID]
@@ -120,7 +120,7 @@ func (d *Destination) EnqueuePresence(e PresenceEntry) {
 
 	for i := range d.pendingEDUs {
 		p := &d.pendingEDUs[i]
-		if p.Unit.Type != txn.EDUTypePresence || p.Presence == nil {
+		if p.sealed || p.Unit.Type != txn.EDUTypePresence || p.Presence == nil {
 			continue
 		}
 		if _, replacing := p.Presence[e.UserID]; !replacing && len(p.Presence) >= maxPresenceStates {

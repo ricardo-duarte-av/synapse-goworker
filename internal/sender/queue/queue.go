@@ -66,6 +66,11 @@ type EDU struct {
 	// (per_destination_queue.py:79) and sending one EDU per user spends a
 	// transaction on each.
 	Presence map[string]PresenceEntry
+	// sealed is set once a transaction has taken the unit: it is on its way
+	// and dequeued after delivery, so nothing may merge into or replace it
+	// any more, or the newer update would be dequeued with it unsent.
+	// Synapse dequeues these EDUs as it builds the transaction.
+	sealed bool
 }
 
 // StickySource supplies a destination's backlog of MSC4354 sticky events:
@@ -690,6 +695,9 @@ func (d *Destination) takeLocked() (taken, error) {
 	}
 
 	t := taken{pdus: append([]PDU(nil), pdus...)}
+	for i := range edus {
+		d.pendingEDUs[i].sealed = true
+	}
 	for _, e := range edus {
 		// Materialising here rather than in send is what makes a merged receipt
 		// EDU safe: it walks maps the enqueue path writes to.
