@@ -123,17 +123,21 @@ are not native yet. See docs/cutover.md.
 
 ### Presence
 
-Presence is disabled on both homeservers, and goworker reproduces only that
-mode. While homeserver.yaml has `presence.enabled: false` it answers
-`GET` and `PUT /_matrix/client/*/presence/{userId}/status` itself, as
-Synapse does then: GET is always `offline`, PUT is `rc_presence.per_user`
-and its body's checks, and nothing is stored. When goworker starts while
-`stream_writers.presence` names `instance_name` (and presence is disabled),
-it is also Synapse's presence writer: the presence and presence_federation
-streams, the two replication endpoints other processes call on it, and, at
-start, marking offline any state left from when presence was enabled. With
-presence enabled or `untracked` it refuses the role and sends the client
-endpoints to main. See docs/cutover.md.
+goworker answers `GET` and `PUT /_matrix/client/*/presence/{userId}/status`
+itself. With `presence.enabled: false` it does what Synapse does then: GET
+is always `offline`, PUT is `rc_presence.per_user` and its body's checks,
+and nothing is stored. When goworker starts while `stream_writers.presence`
+names `instance_name`, it is also Synapse's presence writer: the presence and
+presence_federation streams and the replication endpoints other processes
+call on it. Disabled, it marks offline at start any state left from when
+presence was enabled. Enabled (aguiarvieira.pt since 2026-11-11), it runs
+Synapse's PresenceHandler: the state machine and its timers, per-device
+states, syncs on this process and USER_SYNC from others, incoming presence
+EDUs, joins, and the fan-out to other servers through goworker's own sender,
+pings every 25 minutes included. It refuses the enabled role unless it is the
+only federation sender and no module or presence router is configured; the
+client endpoints then go to main. Presence follows Synapse exactly, cost
+included (operator, 2026-11-11). See docs/cutover.md.
 
 ### Federation ping (MSC4524)
 

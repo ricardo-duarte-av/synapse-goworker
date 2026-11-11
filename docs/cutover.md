@@ -268,27 +268,36 @@ Each step is independent and reversible by undoing it.
     To move it back, set the list to the old writer, restart every Synapse
     process and goworker.
 
-12. **Presence**, while `presence.enabled: false` (goworker refuses the
-    role otherwise). Nothing changes for clients: with presence disabled
-    Synapse's writer only announces its positions and ignores every
-    update.
+12. **Presence.** Disabled first, then, if wanted, enabled.
     - The client endpoints need no role. nginx: point
       `^/_matrix/client/(api/v1|r0|v3|unstable)/presence/` at goworker,
-      and reload. Check "Presence writer" on the dashboard: requests `ok`,
-      GETs answer `{"presence":"offline"}`.
+      and reload. Check "Presence writer" on the dashboard: requests `ok`;
+      while disabled, GETs answer `{"presence":"offline"}`.
     - homeserver.yaml: `stream_writers.presence: [<goworker's
       instance_name>]` (Synapse allows exactly one).
     - Restart every Synapse process (the old writer, e.g. `av-edu-worker`,
       included), then **goworker straight after**: its log says "writing
-      the presence stream". It marks offline any presence_stream state that
-      is not offline, as Synapse's writer does at start ("Stale states
-      marked offline"); on both hosts there were none on 2026-11-10.
+      the presence stream". Disabled, it marks offline any presence_stream
+      state that is not offline, as Synapse's writer does at start ("Stale
+      states marked offline"); on both hosts there were none on
+      2026-11-10.
     - Check: "Writing presence" is 1; `stream_positions` has
       `(presence_stream, <goworker>)` at `presence_stream_sequence`'s
       value; no "replication request failed" lines for presence.
+    - **Enabling** (aguiarvieira.pt, 2026-11-11): goworker must be the only
+      entry of `federation_sender_instances`, and no module or presence
+      router may be configured, or it refuses the role. Set
+      `presence.enabled: true`, restart every Synapse process, then
+      goworker. Its log says `presence=enabled`. Expect, as Synapse would
+      cost it: presence EDUs to every server sharing a room with an online
+      user, and every 25 minutes a ping to all of them (a burst of a few
+      thousand transactions and connections on av, about two minutes).
+      Watch the dashboard's presence row and Postgres in the first hour;
+      `failures` should stay 0.
 
     To move it back, set the list to the old writer, restart every Synapse
-    process and goworker. Before enabling presence, move it back first.
+    process and goworker. To disable presence, set `presence.enabled:
+    false` and restart every process.
 
 ## Afterwards
 

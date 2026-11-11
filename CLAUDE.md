@@ -281,25 +281,45 @@ Still per component, on purpose:
   queries) and tag writes go to main; main writes tags through our
   account-data writer's replication endpoints. Off on both hosts; port it
   rather than widen the guard if it is ever wanted.
-- **The presence writer, disabled mode only** (2026-11-10, issue #4).
-  Both hosts run `presence.enabled: false`, where Synapse's writer does
-  next to nothing: it announces POSITION for presence and
-  presence_federation (0, in memory), validates `presence_set_state` (its
-  400 "Invalid presence state" and KeyError 500s come before the "not
-  tracked" return), and at start marks offline every presence_stream state
-  that is not (`_mark_stale_presence_as_offline`, 500 IDs a write; nothing
-  goes over federation, since the sender's send_presence_to_destinations
-  returns while presence is not tracked). goworker does exactly that, and
-  refuses the role while presence is enabled or `untracked`: the state
-  machine, its timers, USER_SYNC, incoming EDUs and the fan-out are not
-  ported. Note that `stream_writers` names main as `master`, not `main`.
-  Checked against a throwaway Synapse 1.165.0 main as the reference writer:
-  identical stale-marking rows, IDs, stream_positions and RDATA/POSITION
-  lines; 62 of 65 responses byte-equal (client GET/PUT with their 400s,
-  403, 429 and auth errors, the replication endpoints' 400s and 500s,
-  fed_send_edu), the other three get_repl_stream_updates answers equal but
-  for key order (streamwriter's, every stream's); main followed our stream
-  through both restarts.
+- **The presence writer** (2026-11-10 disabled, 2026-11-11 enabled on
+  aguiarvieira.pt; issue #4). Disabled, Synapse's writer does next to
+  nothing: POSITION for presence and presence_federation (0, in memory),
+  `presence_set_state` validated (its 400 "Invalid presence state" and
+  KeyError 500s come before the "not tracked" return), and at start every
+  presence_stream state not offline marked offline
+  (`_mark_stale_presence_as_offline`, 500 IDs a write). Checked against a
+  throwaway Synapse 1.165.0 main: identical rows, IDs, stream_positions and
+  RDATA/POSITION lines, 62 of 65 responses byte-equal, the other three
+  equal but for key order. Enabled, it is PresenceHandler ported whole
+  (`machine.go` the pure functions with Synapse's own test vectors,
+  `enabled.go` the handler); the reference run gave identical responses and
+  rows. It refuses the enabled role unless goworker is the only federation
+  sender (`presence_federation` is never queued, since the writer hands
+  states to our sender in-process) and no module or presence router is
+  configured. `stream_writers` names main `master`, not `main`.
+  **Presence stays 1:1 with Synapse, cost included** (operator,
+  2026-11-11): the load is the protocol's (remote servers time a user out
+  after 30 minutes, so every online user is re-sent to every server in
+  their rooms every 25), and no debouncing or room-size cap is wanted. What
+  enabling it on av exposed, each fixed to Synapse's behaviour: gosync's
+  presence queries hashed every co-member of every room (400 ms, 0.5 s of
+  Postgres a second; now EXISTS per row, 0f24cff); the writer read
+  `get_current_hosts_in_room` uncached (now cached and dropped on
+  membership deltas, 8ff1e40); the sender woke every destination at once
+  (now Synapse's `_DestinationWakeupQueue`: presence, device list updates
+  and old receipts in big rooms staggered over 30 s, c1cd044).
+- **The .well-known client offers only HTTP/1.1, and keeps no
+  connection** (2026-11-11). A lookup is once per resolution, so a kept
+  connection is never reused, and an HTTP/2 one is bounded by no idle
+  limit: on av each presence ping left ~2,900 for 90 s. The trap:
+  `ForceAttemptHTTP2 = false` alone on a clone of DefaultTransport still
+  offers h2 by ALPN; servers that support it (matrix.org, everything behind
+  Cloudflare) answer in HTTP/2 frames, every lookup fails as "malformed
+  HTTP response", and resolution silently falls back to `<name>:8448`.
+  bb4715f did exactly that and cut av off from 2,287 servers for an hour,
+  PDUs included. `TLSClientConfig.NextProtos` and an empty `TLSNextProto`
+  are what keep it HTTP/1.1 (0204544); TestWellKnownClientAgainstHTTP2Server
+  holds it. Any transport turned to HTTP/1.1 needs the same.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 
