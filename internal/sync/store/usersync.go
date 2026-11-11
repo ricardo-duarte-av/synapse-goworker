@@ -263,18 +263,20 @@ func (s *Store) AllRoomAccountData(ctx context.Context, userID string, msc3391 b
 // Offline is filtered in SQL rather than in Go because on a server of this size
 // the vast majority of co-occupants are offline, and they are exactly the rows
 // there is no point transferring.
+//
+// EXISTS per row rather than IN over every co-member, as in PresenceSince:
+// 10 ms instead of 390 for the owner on av (2026-11-11).
 func (s *Store) SharedRoomPresence(ctx context.Context, userID string) ([]PresenceState, error) {
 	const q = `
 		SELECT p.user_id, p.state, p.last_active_ts, p.status_msg, p.currently_active
 		  FROM presence_stream p
 		 WHERE p.state IS NOT NULL AND p.state <> 'offline'
-		   AND (p.user_id = $1 OR p.user_id IN (
-				SELECT cse.state_key
-				  FROM current_state_events cse
-				 WHERE cse.type = 'm.room.member' AND cse.membership = 'join'
-				   AND cse.room_id IN (
-						SELECT room_id FROM local_current_membership
-						 WHERE user_id = $1 AND membership = 'join')))`
+		   AND (p.user_id = $1 OR EXISTS (
+				SELECT 1 FROM current_state_events cse
+				  JOIN local_current_membership lcm ON lcm.room_id = cse.room_id
+				 WHERE cse.type = 'm.room.member' AND cse.state_key = p.user_id
+				   AND cse.membership = 'join'
+				   AND lcm.user_id = $1 AND lcm.membership = 'join'))`
 	rows, err := s.query(ctx, "SharedRoomPresence", q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("store: shared room presence: %w", err)

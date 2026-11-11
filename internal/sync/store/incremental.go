@@ -317,16 +317,23 @@ func (s *Store) PresenceSince(ctx context.Context, userID string, since, now int
 	if !s.AnyPresenceSince(since) {
 		return nil, nil
 	}
+	// EXISTS per row, not IN over every co-member: the IN form hashed all
+	// members of all the user's rooms first (411k rows, 400 ms, for the
+	// owner on av) to filter the few dozen rows a sync's range holds. That
+	// was harmless while presence was disabled and the gate shut; with it
+	// enabled on av (2026-11-11) the stream moves every few seconds, and the
+	// query took 0.5 s of Postgres per second. The EXISTS form walks the
+	// member index per presence row: 1.8 ms, the same rows (checked on av).
 	const q = `
 		SELECT p.user_id, p.state, p.last_active_ts, p.status_msg, p.currently_active
 		  FROM presence_stream p
 		 WHERE p.stream_id > $2 AND p.stream_id <= $3
-		   AND (p.user_id = $1 OR p.user_id IN (
-				SELECT cse.state_key FROM current_state_events cse
-				 WHERE cse.type = 'm.room.member' AND cse.membership = 'join'
-				   AND cse.room_id IN (
-						SELECT room_id FROM local_current_membership
-						 WHERE user_id = $1 AND membership = 'join')))`
+		   AND (p.user_id = $1 OR EXISTS (
+				SELECT 1 FROM current_state_events cse
+				  JOIN local_current_membership lcm ON lcm.room_id = cse.room_id
+				 WHERE cse.type = 'm.room.member' AND cse.state_key = p.user_id
+				   AND cse.membership = 'join'
+				   AND lcm.user_id = $1 AND lcm.membership = 'join'))`
 	rows, err := s.query(ctx, "PresenceSince", q, userID, since, now)
 	if err != nil {
 		return nil, fmt.Errorf("store: presence since: %w", err)
