@@ -68,10 +68,20 @@ func DialControl(network, address string, _ syscall.RawConn) error {
 // with: Synapse's WellKnownResolver connects through the same blocklisting
 // agent as federation requests. mautrix would otherwise use
 // http.DefaultClient, which connects anywhere.
+//
+// One request per connection, over HTTP/1.1 as Synapse's agent speaks. A
+// lookup is made once per resolution, and a resolution lives at least 5
+// minutes, so a kept connection is never reused; DefaultTransport's kept
+// them 90 s, over HTTP/2, which MaxIdleConns does not bound. On av each
+// 25-minute presence ping re-resolves thousands of servers, and their idle
+// connections held ~2,900 sockets and a goroutine each for those 90 s:
+// the 5,400-goroutine spikes (2026-11-11, from a goroutine profile).
 var wellKnownClient = func() *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: DialControl}
 	t.DialContext = d.DialContext
+	t.ForceAttemptHTTP2 = false
+	t.DisableKeepAlives = true
 	return &http.Client{Transport: t}
 }()
 
