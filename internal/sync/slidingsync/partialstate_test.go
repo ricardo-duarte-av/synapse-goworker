@@ -2,6 +2,8 @@ package slidingsync
 
 import (
 	"testing"
+
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/slidingstore"
 )
 
 func TestMustAwaitFullState(t *testing.T) {
@@ -62,5 +64,23 @@ func TestIsLocalUser(t *testing.T) {
 		if got := isLocal(tc.userID); got != tc.want {
 			t.Errorf("%q: got %v, want %v", tc.userID, got, tc.want)
 		}
+	}
+}
+
+// Synapse's must_await_full_state indexes the first character of every
+// wildcard-type state key: an empty one fails the request, unless ["*", "*"]
+// answered first.
+func TestMustAwaitFullStateEmptyWildcardKey(t *testing.T) {
+	isLocal := IsLocalUser("example.com")
+	bad := slidingstore.RoomSyncConfig{RequiredState: map[string]map[string]bool{Wildcard: {"": true}}}
+	if _, err := MustAwaitFullStateChecked(bad, isLocal); err == nil {
+		t.Error(`["*", ""] accepted`)
+	}
+	all := slidingstore.RoomSyncConfig{RequiredState: map[string]map[string]bool{Wildcard: {"": true, Wildcard: true}}}
+	if must, err := MustAwaitFullStateChecked(all, isLocal); err != nil || !must {
+		t.Errorf(`["*", "*"] with ["*", ""]: %v %v`, must, err)
+	}
+	if IsLocalUser("example.com")("@a:b:example.com") {
+		t.Error("is_mine_id compares everything after the first colon")
 	}
 }

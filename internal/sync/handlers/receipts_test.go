@@ -27,7 +27,7 @@ func content(t *testing.T, body json.RawMessage) map[string]any {
 // singular one does not select it at all. Same receipt, two shapes, depending
 // on the endpoint.
 func TestReceiptThreadIDDependsOnEndpoint(t *testing.T) {
-	withThreads, err := receiptEvent("!r:e", rows(), "@me:e", true)
+	withThreads, err := receiptEvent("!r:e", rows(), "@me:e", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestReceiptThreadIDDependsOnEndpoint(t *testing.T) {
 		t.Errorf("plural endpoint should stamp thread_id, got %v", threaded)
 	}
 
-	without, err := receiptEvent("!r:e", rows(), "@me:e", false)
+	without, err := receiptEvent("!r:e", rows(), "@me:e", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestUnthreadedReceiptWinsOverThreaded(t *testing.T) {
 		{ReceiptType: "m.read", UserID: "@a:e", EventID: "$1", ThreadID: "main", Data: json.RawMessage(`{"ts":1}`)},
 		{ReceiptType: "m.read", UserID: "@a:e", EventID: "$1", Data: json.RawMessage(`{"ts":2}`)},
 	}
-	body, err := receiptEvent("!r:e", in, "@me:e", true)
+	body, err := receiptEvent("!r:e", in, "@me:e", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestPrivateReceiptsOfOthersAreRemoved(t *testing.T) {
 		{ReceiptType: "m.read.private", UserID: "@other:e", EventID: "$1", Data: json.RawMessage(`{"ts":2}`)},
 		{ReceiptType: "m.read", UserID: "@other:e", EventID: "$1", Data: json.RawMessage(`{"ts":3}`)},
 	}
-	body, err := receiptEvent("!r:e", in, "@me:e", false)
+	body, err := receiptEvent("!r:e", in, "@me:e", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,11 +95,33 @@ func TestPrivateReceiptsOfOthersAreRemoved(t *testing.T) {
 }
 
 func TestNoReceiptsYieldsNothing(t *testing.T) {
-	body, err := receiptEvent("!r:e", nil, "@me:e", true)
+	body, err := receiptEvent("!r:e", nil, "@me:e", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if body != nil {
 		t.Errorf("expected nil for a room with no receipts, got %s", body)
+	}
+}
+
+// In a server announcement room no receipt is shared, of any type: only
+// the caller's own survive (read_receipt_should_be_shared).
+func TestReceiptEventAnnouncementRoom(t *testing.T) {
+	in := []store.ReceiptRow{
+		{ReceiptType: "m.read", UserID: "@me:e", EventID: "$a", Data: json.RawMessage(`{"ts":1}`)},
+		{ReceiptType: "m.read", UserID: "@other:e", EventID: "$a", Data: json.RawMessage(`{"ts":2}`)},
+		{ReceiptType: "m.read.private", UserID: "@me:e", EventID: "$b", Data: json.RawMessage(`{"ts":3}`)},
+		{ReceiptType: "m.read", UserID: "@other:e", EventID: "$c", Data: json.RawMessage(`{"ts":4}`)},
+	}
+	body, err := receiptEvent("!r:e", in, "@me:e", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"content":{"$a":{"m.read":{"@me:e":{"ts":1}}},"$b":{"m.read.private":{"@me:e":{"ts":3}}}},"room_id":"!r:e","type":"m.receipt"}`
+	if string(body) != want {
+		t.Errorf("got %s\nwant %s", body, want)
+	}
+	if body, _ := receiptEvent("!r:e", in[3:], "@me:e", true, true); body != nil {
+		t.Errorf("only others' receipts: %s", body)
 	}
 }

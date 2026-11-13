@@ -328,6 +328,15 @@ func buildTimeline(
 	//
 	// is_peeking is "not joined": someone reading a world-readable room they
 	// are not in gets the rules for an outsider.
+	// paginate_room_events_by_*_ordering load with get_prev_content=True,
+	// before this filter, which reads it to show the user their own leave.
+	prevTargets := make([]*clientevent.Stored, 0, len(events))
+	for i := range events {
+		prevTargets = append(prevTargets, &events[i].Stored)
+	}
+	if err := d.Store.AttachPrevContent(ctx, prevTargets); err != nil {
+		return out, nil, nil, nil, err
+	}
 	filtered, err := eventfilter.ForClient(ctx, d.Store, req.RoomID, req.UserID,
 		events, req.Room.Membership != "join", req.NowMS, d.MSC4354Enabled, nil)
 	if err != nil {
@@ -421,9 +430,11 @@ func buildTimeline(
 	// mention that just arrived from one scrolled into view. It cannot be
 	// derived from `initial`: a room outside the window bumps into it because
 	// of a mention and arrives with initial=true carrying one live event.
-	var numLive *int
+	// Zero, not absent, without a from token: Synapse sets num_live = 0
+	// whenever it loads a timeline and only counts with one.
+	n := 0
+	numLive := &n
 	if req.From != nil {
-		n := 0
 		for i := len(events) - 1; i >= 0; i-- {
 			if events[i].StreamOrdering > req.From.Room.MaxStreamPos() {
 				n++
@@ -432,7 +443,6 @@ func buildTimeline(
 			// Reverse-chronological, so the first non-live event ends it.
 			break
 		}
-		numLive = &n
 	}
 
 	prev := req.To.WithRoomKey(newKey).String()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/deviceinbox"
@@ -104,6 +103,8 @@ type Deps struct {
 	// PushRuleFeatures gates individual base push rules, for the synthesised
 	// m.push_rules account data event.
 	PushRuleFeatures pushrules.Features
+	// AnnouncementRooms is get_server_announcement_room_ids. Nil means none.
+	AnnouncementRooms func(ctx context.Context) (map[string]bool, error)
 }
 
 // EventConfig builds the serialisation config for one requester.
@@ -146,21 +147,25 @@ func ComputeRoomLists(
 	ctx context.Context, d Deps, userID string, req *Request,
 	from *streamtoken.Token, now streamtoken.Token,
 ) (*RoomLists, error) {
-	rooms, err := d.Store.SlidingRoomsForUser(ctx, userID)
+	// The rooms as _compute_interested_rooms_new_tables assembles them, step
+	// for step, over an overlay of the snapshot rows: their order is the
+	// order a list covering them all is served in.
+	under, underOrder, err := d.Store.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	overlay := newRoomOverlay(under, underOrder)
 
 	// Rooms the user left THEMSELVES are excluded from the query above, because
 	// on a busy account they are the bulk of the rows and almost never wanted.
 	// But a room left after the sync's token is one the user was still in at
 	// that token, so those come back separately.
-	selfLeaves, err := d.Store.SlidingSelfLeavesAfter(ctx, userID, now.Room.Stream)
+	selfLeaves, selfLeaveOrder, err := d.Store.SlidingSelfLeavesAfter(ctx, userID, now.Room.Stream)
 	if err != nil {
 		return nil, err
 	}
-	for roomID, r := range selfLeaves {
-		rooms[roomID] = r
+	for _, roomID := range selfLeaveOrder {
+		overlay.set(roomID, selfLeaves[roomID])
 	}
 
 	// An invite from an ignored user must not appear. This is not cosmetic: the
@@ -170,73 +175,101 @@ func ComputeRoomLists(
 	if err != nil {
 		return nil, err
 	}
-	for roomID, r := range rooms {
-		if r.Membership == "invite" && r.Sender != "" && ignored[r.Sender] {
-			delete(rooms, roomID)
+	if len(ignored) > 0 {
+		for _, roomID := range overlay.keys() {
+			r, _ := overlay.get(roomID)
+			if r.Membership == "invite" && r.Sender != "" && ignored[r.Sender] {
+				overlay.pop(roomID)
+			}
 		}
 	}
 
-	for roomID := range d.ExcludedRooms {
-		delete(rooms, roomID)
-	}
-
 	// Which rooms changed membership inside the token range. Needed before the
-	// relevance filter below, because a newly left room survives it.
+	// rewind, because a newly left room survives its relevance check.
 	newlyJoined, newlyLeft, err := newlyJoinedAndLeft(ctx, d, userID, from, now)
 	if err != nil {
 		return nil, err
 	}
 
 	// The snapshot describes memberships as they are NOW; this sync answers as
-	// of `now.Room`, which may be behind. Undo anything that happened after it.
-	rewind, err := rewindToToken(ctx, d, userID, rooms, now)
+	// of `now.Room`, which may be behind. Undo anything that happened after it,
+	// for the rooms in the map only (Synapse leaves any other change be).
+	current := overlay.toMap()
+	rewind, err := rewindToToken(ctx, d, userID, current, now)
 	if err != nil {
 		return nil, err
 	}
-	for roomID, change := range rewind {
+	rewound := map[string]store.SlidingRoom{}
+	for _, change := range rewind {
+		if !change.drop {
+			rewound[change.roomID] = change.room
+		}
+	}
+	for _, change := range rewind {
 		if change.drop {
-			delete(rooms, roomID)
+			overlay.pop(change.roomID)
 			continue
 		}
-		if _, known := rooms[roomID]; !known {
-			// A room the user is not in now but was at the token.
-			rooms[roomID] = change.room
+		if _, known := overlay.get(change.roomID); !known {
 			continue
 		}
-		rooms[roomID] = change.room
-	}
-
-	// A room left inside the range is not in the snapshot -- the query excludes
-	// self-leaves -- so it has to be put back, or the client is never told it
-	// left.
-	for roomID, c := range newlyLeft {
-		if _, present := rooms[roomID]; present {
-			continue
-		}
-		rooms[roomID] = store.SlidingRoom{
-			RoomID:        roomID,
-			Sender:        c.Sender,
-			Membership:    c.Membership,
-			EventID:       c.EventID,
-			RoomVersion:   c.RoomVersion,
-			EventInstance: c.Instance,
-			EventStream:   c.StreamPos,
-			// Its metadata is not recoverable from the delta stream, and a room
-			// being left needs none of it: the response carries the leave and
-			// little else.
-			HasKnownState: true,
+		_, isNewlyLeft := newlyLeft[change.roomID]
+		if membershipIsRelevant(userID, change.room) || isNewlyLeft {
+			overlay.set(change.roomID, change.room)
+		} else {
+			overlay.pop(change.roomID)
 		}
 	}
 
-	// A room the user has left is gone unless they were kicked, or unless they
-	// left inside this range -- their own leave is the last thing they should
-	// see, and a `newly_left` room is exactly the case where they have not seen
-	// it yet.
-	for roomID, r := range rooms {
-		if _, isNewlyLeft := newlyLeft[roomID]; !membershipIsRelevant(userID, r) && !isNewlyLeft {
-			delete(rooms, roomID)
+	// A room left inside the range is not in the snapshot query -- it excludes
+	// self-leaves -- so it is put back from its own snapshot row, or the
+	// client is never told it left. In no particular order: Synapse takes
+	// them from a set difference.
+	var missing []string
+	for roomID := range newlyLeft {
+		if _, present := overlay.get(roomID); !present {
+			missing = append(missing, roomID)
 		}
 	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		rows, err := d.Store.SlidingRoomsForUserIn(ctx, userID, missing)
+		if err != nil {
+			return nil, err
+		}
+		for _, roomID := range missing {
+			row, ok := rows[roomID]
+			if ok {
+				overlay.set(roomID, row)
+				if back, ok := rewound[roomID]; ok {
+					// The rewound membership, with the row's room state.
+					back.HasKnownState, back.RoomType, back.IsEncrypted = row.HasKnownState, row.RoomType, row.IsEncrypted
+					overlay.set(roomID, back)
+				}
+				continue
+			}
+			// No membership at all: a state reset took the user out. Its
+			// metadata is not recoverable from the delta stream, and a room
+			// being left needs none of it.
+			c := newlyLeft[roomID]
+			overlay.set(roomID, store.SlidingRoom{
+				RoomID:        roomID,
+				Sender:        c.Sender,
+				Membership:    c.Membership,
+				EventID:       c.EventID,
+				RoomVersion:   c.RoomVersion,
+				EventInstance: c.Instance,
+				EventStream:   c.StreamPos,
+				HasKnownState: true,
+			})
+		}
+	}
+
+	for roomID := range d.ExcludedRooms {
+		overlay.pop(roomID)
+	}
+	rooms := overlay.toMap()
+	roomOrder := overlay.keys()
 
 	dmRooms, err := d.Store.DirectRooms(ctx, userID)
 	if err != nil {
@@ -305,7 +338,13 @@ func ComputeRoomLists(
 		// cannot be satisfied from partial state -- which means asking for a
 		// remote membership. Hiding it otherwise would keep a freshly joined
 		// room off the client's screen for as long as backfill takes.
-		if len(partial) > 0 && MustAwaitFullState(listConfig, isLocal) {
+		// Asked of every list, partial rooms or not: it is where Synapse
+		// fails on ["*", ""].
+		mustAwait, err := MustAwaitFullStateChecked(listConfig, isLocal)
+		if err != nil {
+			return nil, err
+		}
+		if len(partial) > 0 && mustAwait {
 			narrowed := make(map[string]store.SlidingRoom, len(filtered))
 			for roomID, r := range filtered {
 				if !partial[roomID] {
@@ -315,7 +354,18 @@ func ComputeRoomLists(
 			filtered = narrowed
 		}
 
-		ops, err := windowRooms(ctx, d, list, filtered, meta, now)
+		// A list without filters keeps the overlay's order; a filtered one is
+		// a set in Synapse, in no order at all.
+		var order []string
+		if list.Filters == nil {
+			order = make([]string, 0, len(filtered))
+			for _, roomID := range roomOrder {
+				if _, ok := filtered[roomID]; ok {
+					order = append(order, roomID)
+				}
+			}
+		}
+		ops, err := windowRooms(ctx, d, list, filtered, order, meta, now)
 		if err != nil {
 			return nil, fmt.Errorf("list %q: %w", listKey, err)
 		}
@@ -327,6 +377,25 @@ func ComputeRoomLists(
 		out.Lists[listKey] = ListResult{Count: len(filtered), Ops: ops}
 	}
 
+	// Subscribed rooms not in the map -- one the user left themselves,
+	// which the snapshot query leaves out -- are fetched by their own rows
+	// (get_sliding_sync_room_for_user_batch), any membership but forgotten.
+	var fetch []string
+	for roomID := range req.RoomSubscriptions {
+		if _, ok := rooms[roomID]; !ok {
+			fetch = append(fetch, roomID)
+		}
+	}
+	if len(fetch) > 0 {
+		extra, err := d.Store.SlidingRoomsForUserIn(ctx, userID, fetch)
+		if err != nil {
+			return nil, err
+		}
+		for roomID, r := range extra {
+			rooms[roomID] = r
+		}
+	}
+
 	for roomID, sub := range req.RoomSubscriptions {
 		// A subscription to a room the user has no membership in is silently
 		// dropped rather than rejected, matching Synapse's TODO. Rejecting
@@ -336,7 +405,11 @@ func ComputeRoomLists(
 			continue
 		}
 		subConfig := NewRoomSyncConfig(sub.CommonRoomParameters)
-		if partial[roomID] && MustAwaitFullState(subConfig, isLocal) {
+		mustAwait, err := MustAwaitFullStateChecked(subConfig, isLocal)
+		if err != nil {
+			return nil, err
+		}
+		if partial[roomID] && mustAwait {
 			continue
 		}
 		out.AllRooms[roomID] = true
@@ -376,7 +449,7 @@ func membershipIsRelevant(userID string, r store.SlidingRoom) bool {
 
 func requestUsesTagFilters(req *Request) bool {
 	for _, list := range req.Lists {
-		if list.Filters != nil && (len(list.Filters.Tags) > 0 || len(list.Filters.NotTags) > 0) {
+		if list.Filters != nil && (list.Filters.Tags != nil || list.Filters.NotTags != nil) {
 			return true
 		}
 	}
@@ -395,45 +468,44 @@ func filterRooms(
 	dmRooms map[string]bool,
 	tags map[string]map[string]bool,
 ) (map[string]store.SlidingRoom, error) {
-	// Synapse raises NotImplementedError for this rather than ignoring it, and
-	// so do we: silently returning unfiltered rooms would show a client rooms
-	// it asked not to see.
-	if len(f.Spaces) > 0 {
+	// Synapse raises NotImplementedError for both of these whenever they are
+	// present, an empty `spaces` list included, and so do we: a 500 rather
+	// than rooms the client asked not to see.
+	if f.Spaces != nil || f.RoomNameLike != nil {
 		return nil, errSpacesFilter
 	}
 
 	out := make(map[string]store.SlidingRoom, len(rooms))
 	for roomID, r := range rooms {
-		m, hasMeta := meta[roomID]
-
 		if f.IsDM != nil && dmRooms[roomID] != *f.IsDM {
+			continue
+		}
+		// A room whose state is unknown is dropped by the encryption and type
+		// filters, whichever way they ask.
+		if f.IsEncrypted != nil && (!r.HasKnownState || r.IsEncrypted != *f.IsEncrypted) {
 			continue
 		}
 		if f.IsInvite != nil && (r.Membership == "invite") != *f.IsInvite {
 			continue
 		}
-		if f.IsEncrypted != nil && r.IsEncrypted != *f.IsEncrypted {
-			continue
-		}
-		if f.RoomTypes != nil && !roomTypeMatches(f.RoomTypes, r.RoomType) {
-			continue
-		}
-		// not_room_types wins over room_types where they overlap, so it is
-		// applied second and unconditionally.
-		if f.NotRoomTypes != nil && roomTypeMatches(f.NotRoomTypes, r.RoomType) {
-			continue
-		}
-		if f.RoomNameLike != nil {
-			if !hasMeta || m.RoomName == nil ||
-				!strings.Contains(strings.ToLower(*m.RoomName), strings.ToLower(*f.RoomNameLike)) {
+		if f.RoomTypes != nil || f.NotRoomTypes != nil {
+			if !r.HasKnownState {
+				continue
+			}
+			if f.RoomTypes != nil && !roomTypeMatches(f.RoomTypes, r.RoomType) {
+				continue
+			}
+			// not_room_types wins over room_types where they overlap.
+			if f.NotRoomTypes != nil && roomTypeMatches(f.NotRoomTypes, r.RoomType) {
 				continue
 			}
 		}
-		if len(f.Tags) > 0 && !anyTag(tags[roomID], f.Tags) {
+		// Present, an empty list included: `tags: []` keeps nothing.
+		if f.Tags != nil && !anyTag(tags[roomID], f.Tags) {
 			continue
 		}
 		// not_tags takes priority over tags, so a room with both is excluded.
-		if len(f.NotTags) > 0 && anyTag(tags[roomID], f.NotTags) {
+		if f.NotTags != nil && anyTag(tags[roomID], f.NotTags) {
 			continue
 		}
 		out[roomID] = r
@@ -441,8 +513,8 @@ func filterRooms(
 	return out, nil
 }
 
-// errSpacesFilter mirrors Synapse's NotImplementedError for the `spaces` list
-// filter.
+// errSpacesFilter mirrors Synapse's NotImplementedError for the `spaces` and
+// `room_name_like` list filters.
 var errSpacesFilter = fmt.Errorf("the `spaces` filter is not implemented")
 
 // ErrSpacesFilter reports whether an error is the unimplemented `spaces` filter.
@@ -476,37 +548,44 @@ func anyTag(have map[string]bool, wanted []string) bool {
 func windowRooms(
 	ctx context.Context, d Deps, list List,
 	filtered map[string]store.SlidingRoom,
+	order []string,
 	meta map[string]store.SlidingJoinedRoom,
 	now streamtoken.Token,
 ) ([]ListOp, error) {
-	// No ranges, or slow_get_all_rooms, means the whole list in one op.
+	// Synapse builds ops only `if list_config.ranges:` -- no ranges, no ops
+	// and no rooms -- and does nothing at all with slow_get_all_rooms.
 	ranges := list.Ranges
-	if list.SlowGetAllRooms || len(ranges) == 0 {
-		ranges = [][2]int{{0, len(filtered) - 1}}
-		if len(filtered) == 0 {
-			return nil, nil
-		}
+	if len(ranges) == 0 {
+		return []ListOp{}, nil
 	}
 
-	limit := 0
-	for _, rng := range ranges {
-		if rng[1]+1 > limit {
-			limit = rng[1] + 1
+	var rooms []string
+	// One range from 0 to the end of the list or past it is not sorted:
+	// Synapse serves the rooms in its map's order. That order is known for a
+	// list without filters (the overlay's); a filtered list is a Python set,
+	// in an order no other process would reproduce, and is sorted instead.
+	if len(ranges) == 1 && ranges[0][0] == 0 && ranges[0][1] >= len(filtered)-1 && order != nil {
+		rooms = order
+	} else {
+		limit := 0
+		for _, rng := range ranges {
+			if rng[1]+1 > limit {
+				limit = rng[1] + 1
+			}
 		}
-	}
-
-	sorted, err := sortRooms(ctx, d, filtered, meta, now, limit)
-	if err != nil {
-		return nil, err
+		var err error
+		if rooms, err = sortRooms(ctx, d, filtered, meta, now, limit); err != nil {
+			return nil, err
+		}
 	}
 
 	ops := make([]ListOp, 0, len(ranges))
 	for _, rng := range ranges {
 		start, end := rng[0], rng[1]
 		roomIDs := []string{}
-		if start < len(sorted) {
+		if start < len(rooms) {
 			max := end - start + 1
-			for _, r := range sorted[start:] {
+			for _, r := range rooms[start:] {
 				if len(roomIDs) >= max {
 					break
 				}

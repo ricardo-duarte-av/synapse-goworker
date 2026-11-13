@@ -33,6 +33,8 @@ type RowDetail struct {
 	// otherwise.
 	Type     string
 	StateKey string
+	// Redacts is the event a redaction on the events stream redacts.
+	Redacts string
 }
 
 // rowDetails parses one replication row.
@@ -79,6 +81,7 @@ func rowDetails(stream, row string) RowDetail {
 					RoomIDs:  []string{inner[1].String()},
 					Type:     at(2),
 					StateKey: at(3),
+					Redacts:  at(4),
 				}
 				// A membership event also names its target, because the target
 				// is not yet in the room and so is not waiting on it: without

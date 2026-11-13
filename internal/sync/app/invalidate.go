@@ -27,6 +27,11 @@ func (c *cacheInvalidator) OnRow(stream string, pos int64, d replication.RowDeta
 		for _, roomID := range d.RoomIDs {
 			c.db.InvalidateRoom(roomID)
 		}
+		// A redacted event leaves Synapse's event cache, and the prev
+		// content an earlier read wrote into it with it.
+		if d.Redacts != "" {
+			c.db.ForgetPrevContent(d.Redacts)
+		}
 		// A membership event changes whose room list is wrong, and the state
 		// key is who. Not the sender: an invite is sent by one user about
 		// another, and it is the target's room list that changes.
@@ -63,6 +68,23 @@ func (c *cacheInvalidator) OnRow(stream string, pos int64, d replication.RowDeta
 // any group we hold wrong -- it only means a newer group exists.
 func (c *cacheInvalidator) OnRoomInvalidated(roomID string) {
 	c.db.InvalidateRoom(roomID)
+}
+
+// OnAnnouncementRooms drops the server announcement room mapping.
+func (c *cacheInvalidator) OnAnnouncementRooms() {
+	c.db.InvalidateAnnouncementRooms()
+}
+
+// OnGap drops what missed rows of a stream may have made stale: the
+// derived caches the events, account_data and caches streams invalidate. The
+// state caches are keyed by state group, which no missed row can change.
+func (c *cacheInvalidator) OnGap(stream string) {
+	switch stream {
+	case replication.StreamEvents, replication.StreamAccountData, replication.StreamCaches:
+		c.db.PurgeDerivedCaches()
+		c.db.InvalidateAnnouncementRooms()
+		c.log.Info().Str("stream", stream).Msg("dropped derived caches after a replication gap")
+	}
 }
 
 // OnPurge drops everything.

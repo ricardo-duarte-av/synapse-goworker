@@ -66,7 +66,11 @@ type SlidingRoom struct {
 // Unknown room versions are dropped rather than served: their metadata may be
 // in a broken state, and a room missing from a list is a far cheaper failure
 // than a request that fails.
-func (s *Store) SlidingRoomsForUser(ctx context.Context, userID string) (map[string]SlidingRoom, error) {
+//
+// The second result is the rows' order, which is the order of Synapse's
+// dict of them: a list whose range covers it all is served in that order,
+// unsorted (see slidingsync.windowRooms).
+func (s *Store) SlidingRoomsForUser(ctx context.Context, userID string) (map[string]SlidingRoom, []string, error) {
 	const q = `
 		SELECT m.room_id, m.sender, m.membership, m.membership_event_id,
 		       r.room_version, m.event_instance_name, m.event_stream_ordering,
@@ -82,7 +86,35 @@ func (s *Store) SlidingRoomsForUser(ctx context.Context, userID string) (map[str
 		   AND (m.membership != 'leave' OR m.user_id != m.sender)`
 	rows, err := s.query(ctx, "SlidingRoomsForUser", q, userID)
 	if err != nil {
-		return nil, fmt.Errorf("store: sliding rooms for user: %w", err)
+		return nil, nil, fmt.Errorf("store: sliding rooms for user: %w", err)
+	}
+	defer rows.Close()
+	return scanSlidingRoomsOrdered(rows)
+}
+
+// SlidingRoomsForUserIn is get_sliding_sync_room_for_user_batch: the user's
+// snapshot rows in the given rooms, whatever the membership -- a room they
+// left themselves included -- bar forgotten ones.
+func (s *Store) SlidingRoomsForUserIn(ctx context.Context, userID string, roomIDs []string) (map[string]SlidingRoom, error) {
+	if len(roomIDs) == 0 {
+		return map[string]SlidingRoom{}, nil
+	}
+	const q = `
+		SELECT m.room_id, m.sender, m.membership, m.membership_event_id,
+		       r.room_version, m.event_instance_name, m.event_stream_ordering,
+		       m.has_known_state,
+		       COALESCE(j.room_type, m.room_type),
+		       COALESCE(j.is_encrypted, m.is_encrypted)
+		  FROM sliding_sync_membership_snapshots AS m
+		  JOIN rooms AS r USING (room_id)
+		  LEFT JOIN sliding_sync_joined_rooms AS j
+		         ON j.room_id = m.room_id AND m.membership = 'join'
+		 WHERE m.forgotten = 0
+		   AND m.room_id = ANY($2)
+		   AND m.user_id = $1`
+	rows, err := s.query(ctx, "SlidingRoomsForUserIn", q, userID, roomIDs)
+	if err != nil {
+		return nil, fmt.Errorf("store: sliding rooms for user in: %w", err)
 	}
 	defer rows.Close()
 	return scanSlidingRooms(rows)
@@ -101,7 +133,7 @@ func (s *Store) SlidingRoomsForUser(ctx context.Context, userID string) (map[str
 // pulls more rows than strictly needed; the caller filters the rest.
 func (s *Store) SlidingSelfLeavesAfter(
 	ctx context.Context, userID string, minStream int64,
-) (map[string]SlidingRoom, error) {
+) (map[string]SlidingRoom, []string, error) {
 	const q = `
 		SELECT m.room_id, m.sender, m.membership, m.membership_event_id,
 		       r.room_version, m.event_instance_name, m.event_stream_ordering,
@@ -115,10 +147,10 @@ func (s *Store) SlidingSelfLeavesAfter(
 		   AND m.event_stream_ordering > $2`
 	rows, err := s.query(ctx, "SlidingSelfLeavesAfter", q, userID, minStream)
 	if err != nil {
-		return nil, fmt.Errorf("store: sliding self leaves: %w", err)
+		return nil, nil, fmt.Errorf("store: sliding self leaves: %w", err)
 	}
 	defer rows.Close()
-	return scanSlidingRooms(rows)
+	return scanSlidingRoomsOrdered(rows)
 }
 
 func scanSlidingRooms(rows interface {
@@ -126,20 +158,33 @@ func scanSlidingRooms(rows interface {
 	Scan(...any) error
 	Err() error
 }) (map[string]SlidingRoom, error) {
+	out, _, err := scanSlidingRoomsOrdered(rows)
+	return out, err
+}
+
+func scanSlidingRoomsOrdered(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}) (map[string]SlidingRoom, []string, error) {
 	out := map[string]SlidingRoom{}
+	var order []string
 	for rows.Next() {
 		var r SlidingRoom
 		if err := rows.Scan(&r.RoomID, &r.Sender, &r.Membership, &r.EventID,
 			&r.RoomVersion, &r.EventInstance, &r.EventStream,
 			&r.HasKnownState, &r.RoomType, &r.IsEncrypted); err != nil {
-			return nil, fmt.Errorf("store: scan sliding room: %w", err)
+			return nil, nil, fmt.Errorf("store: scan sliding room: %w", err)
 		}
 		if !clientevent.IsKnownRoomVersion(r.RoomVersion) {
 			continue
 		}
+		if _, dup := out[r.RoomID]; !dup {
+			order = append(order, r.RoomID)
+		}
 		out[r.RoomID] = r
 	}
-	return out, rows.Err()
+	return out, order, rows.Err()
 }
 
 // SlidingJoinedRoom is the live metadata for a room the server is in.

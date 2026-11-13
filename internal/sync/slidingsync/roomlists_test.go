@@ -44,12 +44,13 @@ func TestMembershipRelevance(t *testing.T) {
 }
 
 func TestFilters(t *testing.T) {
+	known := func(r *store.SlidingRoom) { r.HasKnownState = true }
 	rooms := map[string]store.SlidingRoom{
-		"!dm:e":     room("!dm:e", "join"),
-		"!enc:e":    room("!enc:e", "join", func(r *store.SlidingRoom) { r.IsEncrypted = true }),
-		"!space:e":  room("!space:e", "join", func(r *store.SlidingRoom) { r.RoomType = ptr("m.space") }),
-		"!invite:e": room("!invite:e", "invite"),
-		"!plain:e":  room("!plain:e", "join"),
+		"!dm:e":     room("!dm:e", "join", known),
+		"!enc:e":    room("!enc:e", "join", known, func(r *store.SlidingRoom) { r.IsEncrypted = true }),
+		"!space:e":  room("!space:e", "join", known, func(r *store.SlidingRoom) { r.RoomType = ptr("m.space") }),
+		"!invite:e": room("!invite:e", "invite", known),
+		"!plain:e":  room("!plain:e", "join", known),
 	}
 	meta := map[string]store.SlidingJoinedRoom{
 		"!plain:e": {RoomID: "!plain:e", RoomName: ptr("General Chat")},
@@ -122,13 +123,39 @@ func TestFilters(t *testing.T) {
 		has(t, got, "!dm:e", "!enc:e", "!invite:e", "!plain:e")
 	})
 
-	t.Run("room_name_like is a case-insensitive substring", func(t *testing.T) {
-		got, _ := filterRooms(rooms, meta, &Filters{RoomNameLike: ptr("eral ch")}, dm, tags)
-		has(t, got, "!plain:e")
+	// Synapse raises NotImplementedError for room_name_like.
+	t.Run("room_name_like is refused", func(t *testing.T) {
+		if _, err := filterRooms(rooms, meta, &Filters{RoomNameLike: ptr("eral ch")}, dm, tags); !ErrSpacesFilter(err) {
+			t.Fatalf("err = %v", err)
+		}
+	})
 
-		// A room with no name cannot match.
-		got, _ = filterRooms(rooms, meta, &Filters{RoomNameLike: ptr("")}, dm, tags)
-		has(t, got, "!plain:e", "!dm:e")
+	// A room whose state is unknown drops out of the encryption and type
+	// filters, whichever way they ask.
+	t.Run("unknown state", func(t *testing.T) {
+		unknown := map[string]store.SlidingRoom{"!u:e": room("!u:e", "join")}
+		for _, f := range []*Filters{{IsEncrypted: ptr(false)}, {RoomTypes: []*string{nil}}, {NotRoomTypes: []*string{ptr("m.space")}}} {
+			if got, _ := filterRooms(unknown, meta, f, dm, tags); len(got) != 0 {
+				t.Errorf("%+v kept %v", f, keys(got))
+			}
+		}
+		if got, _ := filterRooms(unknown, meta, &Filters{IsInvite: ptr(false)}, dm, tags); len(got) != 1 {
+			t.Errorf("is_invite needs no state")
+		}
+	})
+
+	// Present but empty is not absent: `tags: []` keeps nothing, `not_tags:
+	// []` drops nothing, `spaces: []` is still refused.
+	t.Run("empty lists are present", func(t *testing.T) {
+		if got, _ := filterRooms(rooms, meta, &Filters{Tags: []string{}}, dm, tags); len(got) != 0 {
+			t.Errorf("tags: [] kept %v", keys(got))
+		}
+		if got, _ := filterRooms(rooms, meta, &Filters{NotTags: []string{}}, dm, tags); len(got) != len(rooms) {
+			t.Errorf("not_tags: [] dropped rooms: %v", keys(got))
+		}
+		if _, err := filterRooms(rooms, meta, &Filters{Spaces: []string{}}, dm, tags); !ErrSpacesFilter(err) {
+			t.Errorf("spaces: [] err = %v", err)
+		}
 	})
 
 	t.Run("not_tags takes priority over tags", func(t *testing.T) {

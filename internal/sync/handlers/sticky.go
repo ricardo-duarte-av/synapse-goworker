@@ -90,6 +90,10 @@ func stickySection(ctx context.Context, d Deps, room store.RoomForUser, userID s
 			Stored: ev.Stored, Sender: ev.Sender, StateKey: ev.StateKey,
 		})
 	}
+	// get_events_as_list without prev content: what a cached copy carries.
+	for i := range loaded {
+		d.Store.AttachCachedPrevContent(&loaded[i].Stored)
+	}
 	// isPeeking is false: only a joined room reaches here.
 	visible, memberships, err := filterVisible(ctx, d, room.RoomID, userID,
 		loaded, false, timeNow)

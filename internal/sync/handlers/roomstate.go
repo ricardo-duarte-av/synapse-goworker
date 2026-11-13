@@ -34,8 +34,9 @@ var (
 // RoomState serves GET /rooms/{roomId}/state, and
 // /rooms/{roomId}/state/{eventType}[/{stateKey}]: get_state_events and
 // get_room_data (handlers/message.py), which show a member the current
-// state, a user who left (and has not forgotten) the state at their leave,
-// and anyone else the current state of a world_readable room.
+// state, a user who left (and has not forgotten) the state at their leave
+// (the current state if it is a server announcement room), and anyone else
+// the current state of a world_readable room.
 //
 // Left to Synapse: a room whose state is still partial (Synapse waits for
 // the rest), a leave without a state group (Synapse fails), and a path whose
@@ -139,6 +140,24 @@ func roomState(r *http.Request, d Deps, verdict clientauth.Verdict, roomID strin
 		}
 		departed = !forgot
 	}
+	// A user who left a world-readable server announcement room keeps
+	// reading it as one who never joined: its current state.
+	if departed {
+		announce, err := announcementRooms(ctx, d, verdict.UserID)
+		if err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err), ""
+		}
+		if announce.all[roomID] {
+			vis, err := d.Store.HistoryVisibility(ctx, roomID)
+			if err != nil {
+				return nil, http.StatusInternalServerError, internalError(d, "history visibility", err), ""
+			}
+			if vis == "world_readable" {
+				departed = false
+				m.Membership = "join"
+			}
+		}
+	}
 	if m.Membership != "join" && !departed {
 		vis, err := d.Store.HistoryVisibility(ctx, roomID)
 		if err != nil {
@@ -209,6 +228,8 @@ func roomState(r *http.Request, d Deps, verdict clientauth.Verdict, roomID strin
 	for _, ev := range events {
 		// FilteredEvent.state: no unsigned.membership.
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "redaction", err), ""
 		}

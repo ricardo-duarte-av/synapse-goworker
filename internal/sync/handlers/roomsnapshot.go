@@ -40,7 +40,10 @@ func buildRoomSnapshot(ctx context.Context, d Deps, room store.RoomForUser,
 	// rendered at all, let alone written to a response buffer.
 	//
 	// is_peeking is false: callers only reach here for a room the user is a
-	// member of.
+	// member of. get_recent_events_for_room loads with prev content.
+	if err := withPrevContent(ctx, d, messages); err != nil {
+		return snap, err
+	}
 	messages, memberships, err := filterVisible(ctx, d, room.RoomID, userID, messages, false, timeNow)
 	if err != nil {
 		return snap, err
@@ -80,6 +83,8 @@ func buildRoomSnapshot(ctx context.Context, d Deps, room store.RoomForUser,
 		// Synapse wraps state with FilteredEvent.state(), whose membership is
 		// None, so the state block carries no unsigned.membership.
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return snap, err
 		}

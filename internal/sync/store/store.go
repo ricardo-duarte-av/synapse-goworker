@@ -33,6 +33,17 @@ type Store struct {
 	// needs is read once and kept for the process's life.
 	instanceMu  sync.Mutex
 	instanceIDs map[string]int
+
+	// announcements is server_announcement_rooms, invalidated over the
+	// caches stream; createTS each room's create event's origin_server_ts
+	// (room_id -> int64), which the event cannot change.
+	announcements announcementCache
+	createTS      sync.Map
+
+	// prevContent is what Synapse's event cache would carry into a state
+	// block; see prevCache.
+	prevOnce    sync.Once
+	prevContent *prevCache
 }
 
 // caches hold immutable derived data. A state group's contents are fixed once

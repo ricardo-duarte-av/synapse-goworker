@@ -314,6 +314,8 @@ func (d Deps) serialiseState(
 		// a v3+ PDU carries no event_id of its own, `unsigned` is rebuilt from
 		// an allowlist, and a redacted event is pruned on read.
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		cfg := d.EventConfig(req.UserID, req.DeviceID, req.TokenID)
 		if err := eventfilter.AttachRedaction(&stored, redactions, req.NowMS, cfg); err != nil {
 			return err

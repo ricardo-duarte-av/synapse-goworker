@@ -94,8 +94,10 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.Creator.ServeHTTP(w, r)
 	default:
 		if rt.Client != nil {
-			if h, pattern := rt.Client.Handler(r); pattern != "" {
-				h.ServeHTTP(w, r)
+			// Handler only finds the pattern; ServeHTTP is what sets the
+			// request's path values ({roomId}), so it serves the match.
+			if _, pattern := rt.Client.Handler(r); pattern != "" {
+				rt.Client.ServeHTTP(w, r)
 				return
 			}
 		}

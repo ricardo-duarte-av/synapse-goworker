@@ -34,10 +34,15 @@ import (
 // Private read receipts of other users are removed in both:
 // ReceiptEventSource.filter_out_private_receipts. Skipping that would publish
 // exactly what m.read.private exists to keep private.
-func ReceiptEvent(roomID string, rows []store.ReceiptRow, userID string, withThreads bool) (json.RawMessage, error) {
+//
+// announcement is whether the room is a server announcement room (Synapse
+// 1.165): there no receipt is shared, of any type, so only the caller's own
+// are kept (read_receipt_should_be_shared). Most of its readers see it
+// without being members.
+func ReceiptEvent(roomID string, rows []store.ReceiptRow, userID string, withThreads, announcement bool) (json.RawMessage, error) {
 	visible := make([]store.ReceiptRow, 0, len(rows))
 	for _, row := range rows {
-		if row.ReceiptType == "m.read.private" && row.UserID != userID {
+		if (announcement || row.ReceiptType == "m.read.private") && row.UserID != userID {
 			continue
 		}
 		visible = append(visible, row)

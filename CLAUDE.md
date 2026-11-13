@@ -274,13 +274,53 @@ Still per component, on purpose:
   process's only way out, joins and key fetches included: list two. The
   replication listener must never be reachable through nginx; the
   secret is the proxy's only check.
-- **Server announcement rooms are main's** (2026-11-10). Synapse 1.165's
-  experimental `server_announcements` (rooms delivered to every local user
-  as a synthetic join) is not reproduced. While homeserver.yaml configures
-  any room, read on each request, sync's routes (bar profile and key
-  queries) and tag writes go to main; main writes tags through our
-  account-data writer's replication endpoints. Off on both hosts; port it
-  rather than widen the guard if it is ever wanted.
+- **Server announcement rooms are sync's** (2026-11-13; main's from
+  2026-11-10). Synapse 1.165's experimental `server_announcements` (rooms
+  every local user is shown in /sync as a synthetic join) is ported in
+  `internal/sync/handlers/announcements.go`: `_get_announcement_room_
+  entries` (a room appears once it has a non-state event; full state on
+  its first announcement after `since` or after the user left it), the
+  user's own membership taken out of state and timeline and
+  `make_synthetic_join_event` added (`clientevent.SyntheticJoin`, checked
+  against the image: sorted keys, code-point slices), `m.server_notice`
+  ahead of the user's tags, zero unread counts, no device-list or presence
+  changes from those rooms. No receipt in such a room is shared on any
+  endpoint (`eventfilter.ReceiptEvent`'s `announcement`); a user who left
+  one reads its current state. Rooms come from server_announcement_rooms
+  narrowed to the ids configured now (read on each request), the mapping
+  cached until the caches row `get_server_announcement_config_ids_by_room_
+  id`, a purge or a replication gap. Still main's: tag writes (TagServlet's
+  checks), and `/rooms/{id}/initialSync` of such a room by a user not in
+  it. Checked against a throwaway Synapse 1.165.0 main: 59 requests
+  (initial, incremental, lazy, event_fields, federation format, state_after,
+  full_state, filters, receipts, tags, an excluded user, a sender kicked at
+  main's restart, /events, /initialSync, room state, sliding sync)
+  identical. Making it native found bugs that predate it, each fixed:
+  incremental /sync never reported tag changes (tags_by_room); a
+  replication gap left the derived caches serving what the missed rows
+  changed (a kicked user's room list), now dropped on a gap;
+  `/rooms/{id}/initialSync` read an empty `{roomId}` and answered 404 for
+  every room (`httpserve.Router` called the handler `ServeMux.Handler`
+  found, which sets no path values); `device_lists.left` lacked the
+  members of rooms the user left (newly_left_rooms); presence was sent
+  while `presence.enabled` is false (Synapse sends none, bar the backlog
+  of an incremental sync whose token is behind the presence stream);
+  sliding sync's timeline lacked `prev_content`, and its `num_live` was
+  absent rather than 0 without a `pos`.
+- **State events carry `prev_content` as Synapse's event cache gives it**
+  (2026-11-13, `store/prevcache.go`). Synapse writes prev_content and
+  prev_sender into the cached event object when a timeline read asks for
+  them, so every later read of that event in the same process (a state
+  block, GET /state, GET /event, required_state) carries them until it
+  leaves the cache. goworker keeps the same memory: what it served with
+  prev content (`AttachPrevContent`), read back for state
+  (`AttachCachedPrevContent`), sized by `event_cache_size`, expiring after
+  `cache_entry_ttl` unread while `expire_caches`, dropped on redaction,
+  purge or a lost replication connection, and capped at 64 MB. A leave in
+  a state block counts as a "left" device-list user only when it carries
+  the field, as in calculate_user_changes. Main's own cache differs from
+  ours by what each process has read; the comparison above restarts
+  goworker with main so both start empty.
 - **The presence writer** (2026-11-10 disabled, 2026-11-11 enabled on
   aguiarvieira.pt; issue #4). Disabled, Synapse's writer does next to
   nothing: POSITION for presence and presence_federation (0, in memory),
@@ -308,6 +348,26 @@ Still per component, on purpose:
   membership deltas, 8ff1e40); the sender woke every destination at once
   (now Synapse's `_DestinationWakeupQueue`: presence, device list updates
   and old receipts in big rooms staggered over 30 s, c1cd044).
+- **Simplified sliding sync checked against Synapse** (2026-11-13). Against
+  a throwaway 1.165.0 main: 33 requests (every list filter, required_state
+  form, extension, subscriptions, incremental changes, leaves, invites,
+  kicks) and 54 malformed ones identical. What it took: the request is
+  validated as Synapse's pydantic model does, rule for rule
+  (`slidingsync/validate.go`, held to Synapse's own answers in
+  `testdata/validate.json`), in the servlet's order (timeout, pos format,
+  body), `pos` and `timeout` from the query only; a list whose one range
+  covers it is served unsorted in Synapse's map order (the snapshot query's
+  rows under a MutableOverlayMapping, `slidingsync/overlay.go`) -- except a
+  filtered list, which Synapse builds from a Python set and which no other
+  process can reproduce, so it is sorted; no `ranges` means no ops and no
+  rooms, and `slow_get_all_rooms` is ignored; `spaces` and `room_name_like`
+  are 500s whenever present, `tags: []` matches nothing, and unknown-state
+  rooms fail the encryption and type filters; a newly left room comes back
+  from its snapshot row, subscriptions reach rooms left by the user, and
+  rewinds for rooms outside the map are ignored; `["*", ""]`, an
+  appservice's own user and a deviceless request are 500s as in Synapse;
+  timelines load with prev_content before visibility (a kick was hidden);
+  streams start at 1, as Synapse's id generators do.
 - **The .well-known client offers only HTTP/1.1, and keeps no
   connection** (2026-11-11). A lookup is once per resolution, so a kept
   connection is never reused, and an HTTP/2 one is bounded by no idle

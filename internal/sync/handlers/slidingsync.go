@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -54,40 +55,50 @@ func SlidingSync(d Deps) http.Handler {
 
 		// A device is part of a connection's identity, and there is no sensible
 		// fallback: two logins on one account must not share connection state.
-		if verdict.DeviceID == "" {
-			refuse(w, ann, http.StatusBadRequest, matrixerr.Error{
-				ErrCode: matrixerr.CodeUnknown, Error: "Sliding sync requires a device"})
+
+		// In SlidingSyncRestServlet's order: the timeout, the pos's format,
+		// then the body. Both come from the QUERY STRING only, as Synapse
+		// reads them (rest/client/sync.py), though MSC4186 puts them in the
+		// body: there they are extra keys, ignored.
+		timeoutMS, mxErr := queryInteger(r, "timeout", 0)
+		if mxErr != nil {
+			refuse(w, ann, http.StatusBadRequest, *mxErr)
 			return
+		}
+		posParam := ""
+		if vals, ok := r.URL.Query()["pos"]; ok && len(vals) > 0 {
+			posParam = vals[0]
+			if _, err := slidingsync.ParsePos(posParam); err != nil {
+				refuse(w, ann, http.StatusBadRequest, matrixerr.Error{
+					ErrCode: matrixerr.CodeUnknown, Error: "Invalid stream token"})
+				return
+			}
 		}
 
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSlidingSyncBody))
 		if err != nil {
 			refuse(w, ann, http.StatusBadRequest, matrixerr.Error{
-				ErrCode: matrixerr.CodeNotJSON, Error: "Unable to read request body"})
+				ErrCode: matrixerr.CodeNotJSON, Error: "Content not JSON."})
 			return
 		}
 		req, err := slidingsync.ParseRequest(body)
 		if err != nil {
-			refuse(w, ann, http.StatusBadRequest, matrixerr.Error{
-				ErrCode: matrixerr.CodeInvalidParam, Error: err.Error()})
+			e := matrixerr.Error{ErrCode: "M_BAD_JSON", Error: err.Error()}
+			var be *slidingsync.BodyError
+			if errors.As(err, &be) {
+				e.ErrCode = be.ErrCode
+			}
+			refuse(w, ann, http.StatusBadRequest, e)
 			return
 		}
 
-		// Synapse reads `pos` and `timeout` from the QUERY STRING
-		// (rest/client/sync.py), while MSC4186 specifies them as body fields.
-		// The query wins, and the body is a fallback -- so today's clients and
-		// the stable endpoint's clients both work, and nothing Synapse would
-		// answer is answered differently.
-		posParam := r.URL.Query().Get("pos")
-		if posParam == "" && req.Pos != nil {
-			posParam = *req.Pos
-		}
-		timeoutMS := intParam(r, "timeout", -1)
-		if timeoutMS < 0 {
-			timeoutMS = 0
-			if req.Timeout != nil {
-				timeoutMS = *req.Timeout
-			}
+		// Two 500s of Synapse's, after the body: an appservice's own user
+		// (current_sync_for_user's NotImplementedError) and a request with
+		// no device (the connection store asserts one).
+		if d.Auth.IsAppServiceSender(verdict.UserID) || verdict.DeviceID == "" {
+			refuse(w, ann, http.StatusInternalServerError, matrixerr.Error{
+				ErrCode: matrixerr.CodeUnknown, Error: "Internal server error"})
+			return
 		}
 		if ann != nil {
 			ann.Timeout = timeoutMS
@@ -119,6 +130,26 @@ func SlidingSync(d Deps) http.Handler {
 // lists and 100 room subscriptions with their required_state, which is
 // generous; anything beyond this is not a client.
 const maxSlidingSyncBody = 1 << 20
+
+// queryInteger is parse_integer(request, name, default): absent is the
+// default; otherwise Python's int() on the first value, refused if it is not
+// an integer or is negative.
+func queryInteger(r *http.Request, name string, def int) (int, *matrixerr.Error) {
+	vals, ok := r.URL.Query()[name]
+	if !ok || len(vals) == 0 {
+		return def, nil
+	}
+	n, ok := slidingsync.PythonIntASCII(vals[0])
+	if !ok {
+		return 0, &matrixerr.Error{ErrCode: matrixerr.CodeInvalidParam,
+			Error: "Query parameter " + name + " must be an integer"}
+	}
+	if n < 0 {
+		return 0, &matrixerr.Error{ErrCode: matrixerr.CodeInvalidParam,
+			Error: "Query parameter " + name + " must be a positive integer."}
+	}
+	return n, nil
+}
 
 // slidingSyncPoll computes a response, waiting for one if the client asked to.
 //
@@ -165,7 +196,7 @@ func slidingSyncPoll(r *http.Request, d Deps, verdict clientauth.Verdict,
 		// classic sync: an event landing during the computation must still wake
 		// us, or the client hangs for its whole timeout on news that had
 		// already arrived.
-		rooms, err := d.Store.SlidingRoomsForUser(ctx, verdict.UserID)
+		rooms, _, err := d.Store.SlidingRoomsForUser(ctx, verdict.UserID)
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "rooms for user", err)
 		}
@@ -313,5 +344,9 @@ func (d Deps) slidingDeps() slidingsync.Deps {
 		PushRuleFeatures: d.PushRuleFeatures,
 
 		ProfileUpdatesInSync: d.ProfileUpdatesInSync,
+		AnnouncementRooms: func(ctx context.Context) (map[string]bool, error) {
+			set, err := announcementRooms(ctx, d, "")
+			return set.all, err
+		},
 	}
 }

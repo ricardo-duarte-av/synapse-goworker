@@ -1108,18 +1108,18 @@ func logOutbound(log zerolog.Logger, instance string, hs *synapsecfg.Config, las
 }
 
 // logAnnouncements says, at start and when a re-read changes it, whether
-// server announcement rooms send their requests to main. Returns whether
-// they are configured.
+// server announcement rooms are configured: sync delivers them, and tag
+// writes go to main. Returns whether they are configured.
 func logAnnouncements(log zerolog.Logger, hs *synapsecfg.Config, last, start bool) bool {
 	now := hs.Announcements.Configured()
 	switch {
 	case now && (start || !last):
-		log.Warn().Int("rooms", hs.Announcements.Rooms).
-			Msg("experimental_features.server_announcements configures rooms: /sync, sliding sync, /events, " +
-				"initialSync, room state and event reads, and tag writes go to main, which delivers them")
+		log.Info().Int("rooms", hs.Announcements.Rooms).
+			Msg("experimental_features.server_announcements configures rooms: sync delivers them; " +
+				"tag writes go to main")
 	case !now && last:
 		log.Info().Msg("experimental_features.server_announcements no longer configures rooms: " +
-			"sync, room reads and tag writes are served here again")
+			"tag writes are served here again")
 	}
 	return now
 }

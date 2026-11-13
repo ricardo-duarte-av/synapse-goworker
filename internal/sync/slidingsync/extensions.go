@@ -855,11 +855,19 @@ func receiptsExtension(
 		}
 	}
 
+	// No receipt in a server announcement room is shared (Synapse 1.165).
+	var announcement map[string]bool
+	if d.AnnouncementRooms != nil && len(byRoom) > 0 {
+		var err error
+		if announcement, err = d.AnnouncementRooms(ctx); err != nil {
+			return nil, err
+		}
+	}
 	for _, roomID := range sortedKeys(boolSet(byRoom)) {
 		// The same renderer classic sync uses, which is what applies the
 		// private-receipt rule: a m.read.private receipt belongs to its owner
 		// and nobody else.
-		body, err := eventfilter.ReceiptEvent(roomID, byRoom[roomID], in.UserID, true)
+		body, err := eventfilter.ReceiptEvent(roomID, byRoom[roomID], in.UserID, true, announcement[roomID])
 		if err != nil {
 			return nil, err
 		}
@@ -1062,6 +1070,10 @@ func stickyEventsExtension(
 		// "Any joined user is authorised to see sticky events for the
 		// duration they remain sticky." It also works out the caller's
 		// membership at each event, which MSC4115 puts in `unsigned`.
+		// get_events_as_list without prev content: what a cached copy carries.
+		for i := range loaded {
+			d.Store.AttachCachedPrevContent(&loaded[i].Stored)
+		}
 		filtered, err := eventfilter.ForClient(ctx, d.Store, roomID, in.UserID,
 			loaded, false, in.NowMS, d.MSC4354Enabled, nil)
 		if err != nil {

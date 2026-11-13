@@ -62,3 +62,17 @@ func TestRouting(t *testing.T) {
 		}
 	}
 }
+
+// A client handler sees its pattern's path values: /rooms/{roomId}/initialSync
+// read an empty room ID, and answered 404 for every room, while the router
+// called the handler ServeMux.Handler found instead of the mux.
+func TestClientPathValues(t *testing.T) {
+	rt := testRouter()
+	rt.Client.Handle("GET /_matrix/client/v3/rooms/{roomId}/initialSync",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(r.PathValue("roomId"))) }))
+	rec := httptest.NewRecorder()
+	rt.ServeHTTP(rec, httptest.NewRequest("GET", "/_matrix/client/v3/rooms/!abc:x/initialSync", nil))
+	if got := rec.Body.String(); got != "!abc:x" {
+		t.Fatalf("roomId %q", got)
+	}
+}

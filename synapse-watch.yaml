@@ -22,9 +22,11 @@
 #   20372's invite refusal of the announcement manager, 20378 (delayed
 #   events' sticky body), 20433 (lazy members in full-state blocks; with
 #   #20289's positions, missed at v1.164.1);
-# - Server Announcements (experimental, off on both hosts) is handed to main
-#   while configured, not ported: 20372 20407 20412 20423 20427 20448 20465
-#   20467;
+# - Server Announcements (experimental, off on both hosts): handed to main
+#   while configured at first; sync's share ported on 2026-11-13 (synthetic
+#   joins in /sync, unshared receipts on every endpoint, left users reading
+#   state), tag writes still main's: 20372 20407 20412 20423 20427 20448
+#   20465 20467;
 # - dismissed: 20425 (MSC4143 stable: main's endpoints), 20422 (in v1.164.1
 #   already, ported then), 20369 (an index), 20359 and 20417 (no behaviour).
 reviewed: v1.165.0
@@ -97,7 +99,9 @@ components:
       - synapse/handlers/events.py
       - synapse/handlers/initial_sync.py
       - synapse/handlers/profile.py
+      - synapse/handlers/receipts.py
       - synapse/handlers/relations.py
+      - synapse/handlers/server_announcements.py
       - synapse/handlers/sliding_sync/
       - synapse/handlers/sync.py
       - synapse/notifier.py
@@ -117,8 +121,11 @@ components:
       - synapse/storage/databases/main/receipts.py
       - synapse/storage/databases/main/relations.py
       - synapse/storage/databases/main/roommember.py
+      - synapse/storage/databases/main/server_announcements.py
       - synapse/storage/databases/main/sliding_sync.py
       - synapse/storage/databases/main/sticky_events.py
+      - synapse/storage/databases/main/stream.py
+      - synapse/storage/databases/main/tags.py
       - synapse/storage/databases/main/transactions.py
       - synapse/util/retryutils.py
       - synapse/types/handlers/sliding_sync.py

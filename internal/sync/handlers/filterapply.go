@@ -189,6 +189,10 @@ func filterAndVisible(ctx context.Context, d Deps, roomID, userID string,
 	if len(events) == 0 {
 		return nil, nil, nil
 	}
+	// Loaded with prev content, before any filter (see withPrevContent).
+	if err := withPrevContent(ctx, d, events); err != nil {
+		return nil, nil, err
+	}
 	events = filterTimeline(f, roomID, events)
 	events, err := applyRelationFilter(ctx, d, f.TimelineFilter(), events)
 	if err != nil {

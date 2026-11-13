@@ -308,6 +308,20 @@ func (a *Authenticator) Close() {
 // Native reports whether tokens are checked here, and if not, why.
 func (a *Authenticator) Native() (bool, string) { return a.native, a.reason }
 
+// IsAppServiceSender is whether userID is an appservice's own user
+// (get_app_service_by_user_id).
+func (a *Authenticator) IsAppServiceSender(userID string) bool {
+	if a == nil || a.as == nil {
+		return false
+	}
+	for _, s := range a.as.byToken {
+		if s.Sender == userID {
+			return true
+		}
+	}
+	return false
+}
+
 // Len is how many verdicts and lookups are cached, for metrics.
 func (a *Authenticator) Len() int {
 	return a.whoami.len() + a.tokens.Stats().Entries

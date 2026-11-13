@@ -375,8 +375,13 @@ func eventStreamChunk(ctx context.Context, d Deps, req eventStreamRequest,
 		if err != nil {
 			return nil, end, err
 		}
+		// No receipt in a server announcement room is shared.
+		announce, err := announcementRooms(ctx, d, req.userID)
+		if err != nil {
+			return nil, end, err
+		}
 		for _, roomID := range sortedRoomIDs(byRoom) {
-			ev, err := receiptEvent(roomID, byRoom[roomID], req.userID, true)
+			ev, err := receiptEvent(roomID, byRoom[roomID], req.userID, true, announce.all[roomID])
 			if err != nil {
 				return nil, end, err
 			}
@@ -501,6 +506,10 @@ func serialiseStreamEvents(ctx context.Context, d Deps, req eventStreamRequest,
 	visible := make([]store.TimelineEvent, 0, len(events))
 	memberships := map[string]string{}
 	for _, roomID := range order {
+		// The room source loads with prev content.
+		if err := withPrevContent(ctx, d, byRoom[roomID]); err != nil {
+			return nil, nil, err
+		}
 		kept, ms, err := filterVisible(ctx, d, roomID, req.userID, byRoom[roomID],
 			req.isPeeking, req.timeNow)
 		if err != nil {

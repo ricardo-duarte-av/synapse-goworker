@@ -45,3 +45,26 @@ func TestAnnouncementsRefused(t *testing.T) {
 		}
 	}
 }
+
+// The rooms' ids and exclusions, which sync delivers by.
+func TestAnnouncementRoomList(t *testing.T) {
+	a := mustParse(t, `server_name: x
+experimental_features:
+  server_announcements:
+    rooms:
+      - id: news
+        room_name: News
+        excluded_user_ids: ["@bot:x", "@other:x"]
+      - id: maint
+        room_name: Maintenance
+`).Announcements
+	if got := a.ConfigIDs(); len(got) != 2 || got[0] != "news" || got[1] != "maint" {
+		t.Fatalf("ConfigIDs %v", got)
+	}
+	if ex := a.ExcludedConfigIDs("@bot:x"); len(ex) != 1 || !ex["news"] {
+		t.Errorf("excluded for @bot:x: %v", ex)
+	}
+	if ex := a.ExcludedConfigIDs("@someone:x"); len(ex) != 0 {
+		t.Errorf("excluded for @someone:x: %v", ex)
+	}
+}

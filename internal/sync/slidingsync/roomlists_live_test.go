@@ -146,7 +146,7 @@ func TestLiveOrderingIsByActivityAndStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rooms, err := d.Store.SlidingRoomsForUser(ctx, userID)
+	rooms, _, err := d.Store.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -107,6 +107,9 @@ func roomEvent(r *http.Request, d Deps, verdict clientauth.Verdict, roomID, even
 		return nil, internalError(d, "membership", err), ""
 	}
 	timeNow := time.Now().UnixMilli()
+	// get_event: no prev content asked for, but a cached copy carries it,
+	// and the visibility check reads it.
+	d.Store.AttachCachedPrevContent(&ev.Stored)
 	res, err := eventfilter.ForClient(ctx, d.Store, roomID, verdict.UserID,
 		[]store.TimelineEvent{ev}, m.Membership != "join", timeNow, d.MSC4354Enabled, nil)
 	if err != nil {

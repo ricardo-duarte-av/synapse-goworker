@@ -286,6 +286,10 @@ func (c *Collection) StateFilter() *Filter    { return &c.roomState }
 
 func (c *Collection) BlocksAllRooms() bool { return c.room.FiltersAllRooms() }
 
+// FilterRooms is FilterCollection.filter_rooms: the room filter's `rooms`
+// and `not_rooms` applied to room IDs.
+func (c *Collection) FilterRooms(roomIDs []string) []string { return c.room.FilterRooms(roomIDs) }
+
 func (c *Collection) BlocksAllPresence() bool {
 	return c.presence.FiltersAllTypes() || c.presence.FiltersAllSenders()
 }

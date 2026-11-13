@@ -1,6 +1,7 @@
 package slidingsync
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/slidingstore"
@@ -75,10 +76,28 @@ func looksLikeUserID(s string) bool {
 	return strings.HasPrefix(s, "@") && strings.Contains(s, ":")
 }
 
-// IsLocalUser builds the isLocal predicate for a server name.
+// errEmptyWildcardKey is Synapse's IndexError for ["*", ""]; see
+// MustAwaitFullStateChecked.
+var errEmptyWildcardKey = fmt.Errorf("required_state: an empty state key under a wildcard type")
+
+// MustAwaitFullStateChecked is MustAwaitFullState with Synapse's failure
+// mode: an empty state key under the wildcard type raises, which Synapse
+// does for every list and subscription it builds, partial-state rooms or
+// not -- a 500 for the request.
+func MustAwaitFullStateChecked(cfg slidingstore.RoomSyncConfig, isLocal func(string) bool) (bool, error) {
+	// possible_user_id[0] on an empty key raises IndexError, unless the
+	// ["*", "*"] case returned first.
+	if wildcard := cfg.RequiredState[Wildcard]; !wildcard[Wildcard] && wildcard[""] {
+		return false, errEmptyWildcardKey
+	}
+	return MustAwaitFullState(cfg, isLocal), nil
+}
+
+// IsLocalUser builds the isLocal predicate for a server name: is_mine_id,
+// which compares everything after the first colon with the server name.
 func IsLocalUser(serverName string) func(string) bool {
-	suffix := ":" + serverName
 	return func(userID string) bool {
-		return strings.HasSuffix(userID, suffix)
+		_, host, ok := strings.Cut(userID, ":")
+		return ok && host == serverName
 	}
 }

@@ -142,6 +142,11 @@ type Invalidator interface {
 	OnRoomInvalidated(roomID string)
 	// OnPurge asks for everything to be dropped.
 	OnPurge(reason string)
+	// OnAnnouncementRooms says server_announcement_rooms changed.
+	OnAnnouncementRooms()
+	// OnGap says rows of a stream were missed: whatever they would have
+	// invalidated is unknown.
+	OnGap(stream string)
 }
 
 // Subscriber follows the replication channel.
@@ -565,11 +570,14 @@ const (
 	cacheNamePurgeHistory = "ph_cache_fake"
 	cacheNameDeleteRoom   = "dr_cache_fake"
 	cacheNameCurrentState = "cs_cache_fake"
+	// Main stored a server announcement room (store_server_announcement_room
+	// invalidates the cache and streams it).
+	cacheNameAnnouncementRooms = "get_server_announcement_config_ids_by_room_id"
 )
 
 // handleCacheInvalidation acts on the `caches` stream.
 //
-// Only three names matter, and every other row is ignored on purpose. This
+// Only four names matter, and every other row is ignored on purpose. This
 // stream is NOT quiet -- 24 rows in 45 seconds on this deployment -- and it is
 // almost entirely Synapse invalidating its own caches for things this worker
 // does not hold: get_server_key_json_for_remote, _get_server_keys_json,
@@ -612,6 +620,10 @@ func (s *Subscriber) handleCacheInvalidation(row string) {
 			}
 		}
 
+	case cacheNameAnnouncementRooms:
+		metrics.CacheInvalidationRows.WithLabelValues("announcement_rooms").Inc()
+		s.invalidator.OnAnnouncementRooms()
+
 	default:
 		metrics.CacheInvalidationRows.WithLabelValues("ignored").Inc()
 	}
@@ -641,14 +653,21 @@ func (s *Subscriber) handlePosition(payload string) {
 	// know what changed gives up its horizon below, where the notification
 	// naming no subjects reaches it.
 	//
-	// So this is recorded rather than acted on. It is the difference between
-	// a worker that is behind and one that has quietly lost rows, and no
-	// other metric can tell them apart.
+	// So this is recorded, and the caches the missed rows would have
+	// invalidated are told. It is the difference between a worker that is
+	// behind and one that has quietly lost rows, and no other metric can tell
+	// them apart. The derived caches must drop what they hold: the position
+	// moves past the missed rows below, and their guard would then serve an
+	// entry those rows made stale -- a user's room list still showing a room
+	// main left them out of while it restarted.
 	if ours := s.bestKnown(stream, instance); prevErr == nil && prev > ours {
 		metrics.StreamDiscontinuities.WithLabelValues(stream, "gap").Inc()
 		s.log.Info().Str("stream", stream).Str("instance", instance).
 			Int64("their_prev", prev).Int64("ours", ours).
 			Msg("replication gap; rows were missed and caches below this position are dropped")
+		if s.invalidator != nil {
+			s.invalidator.OnGap(stream)
+		}
 	}
 
 	// No room or user is named, so this reaches every listener as "we do not

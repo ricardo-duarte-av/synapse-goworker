@@ -546,3 +546,31 @@ func (r *recordingListener) OnStreamAdvance(stream string, _ int64, rooms, users
 	r.calls++
 	r.stream, r.rooms, r.users = stream, rooms, users
 }
+
+type gapRecorder struct{ gaps []string }
+
+func (g *gapRecorder) OnRow(string, int64, RowDetail) {}
+func (g *gapRecorder) OnRoomInvalidated(string)       {}
+func (g *gapRecorder) OnPurge(string)                 {}
+func (g *gapRecorder) OnAnnouncementRooms()           {}
+func (g *gapRecorder) OnGap(stream string)            { g.gaps = append(g.gaps, stream) }
+
+// A gap reaches the invalidator before the position moves past it: the
+// derived caches' guard would otherwise serve what the missed rows made
+// stale (a room list still showing a room main took the user out of while
+// it restarted).
+func TestAPositionGapReachesTheInvalidator(t *testing.T) {
+	s := newTestSub()
+	rec := &gapRecorder{}
+	s.SetInvalidator(rec)
+	s.Seed(map[string]int64{StreamEvents: 48})
+	s.handle(`POSITION events master 40 48`)
+	s.handle(`POSITION events master 50 52`)
+	if len(rec.gaps) != 1 || rec.gaps[0] != StreamEvents {
+		t.Fatalf("gaps %v, want [events]", rec.gaps)
+	}
+	s.handle(`POSITION events master 52 53`)
+	if len(rec.gaps) != 1 {
+		t.Fatalf("a continuous POSITION reported a gap: %v", rec.gaps)
+	}
+}

@@ -216,11 +216,20 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 	}
 
 	joinedIDs := make([]string, 0, len(rooms))
+	joinedSet := map[string]bool{}
 	for _, room := range rooms {
 		if room.Membership == "join" {
 			joinedIDs = append(joinedIDs, room.RoomID)
+			joinedSet[room.RoomID] = true
 		}
 	}
+	// Server announcement rooms shown to this user as joined. An initial
+	// sync has no membership changes to weigh: every one they are not in.
+	announce, err := announcementRooms(ctx, d, verdict.UserID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err)
+	}
+	synthetic := syntheticJoinRooms(d, announce, f, joinedSet, nil)
 	// Before any room entry is built, because it moves the now token and every
 	// prev_batch in the response carries that token. An initial sync asks from
 	// position 0: the client has seen nothing, so every unexpired sticky event
@@ -299,6 +308,11 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 			}
 			inviteSenders = append(inviteSenders, room.Sender)
 		case "leave", "ban":
+			// A former member of an announcement room gets the synthetic
+			// join instead.
+			if synthetic[room.RoomID] {
+				continue
+			}
 			if !enumeratesArchived(room.Membership, room.Sender, verdict.UserID, f.IncludeLeave) {
 				continue
 			}
@@ -325,7 +339,44 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "receipts", err)
 		}
+		// No receipt in an announcement room is shared.
+		for id, rows := range receiptsByRoom {
+			if announce.all[id] {
+				receiptsByRoom[id] = ownReceipts(rows, verdict.UserID)
+			}
+		}
 	}
+
+	// The announcement rooms not otherwise in the response
+	// (_get_room_changes_for_initial_sync): an invite or a knock is shown as
+	// itself.
+	pending := map[string]bool{}
+	for id := range synthetic {
+		if invitedRooms[id] == nil && knockedRooms[id] == nil {
+			pending[id] = true
+		}
+	}
+	announcements, err := announcementEntries(ctx, d, pending, nil, now, f, false, nil, nil, nil)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err)
+	}
+	if len(announcements) > 0 && !f.BlocksAllRoomEphemeral() {
+		ids := make([]string, 0, len(announcements))
+		for _, e := range announcements {
+			ids = append(ids, e.room.RoomID)
+		}
+		rows, err := d.Store.MultiRoomReceipts(ctx, ids, now.Receipt.MaxStreamPos())
+		if err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "receipts", err)
+		}
+		if receiptsByRoom == nil {
+			receiptsByRoom = map[string][]store.ReceiptRow{}
+		}
+		for id, r := range rows {
+			receiptsByRoom[id] = ownReceipts(r, verdict.UserID)
+		}
+	}
+	var strippedSenders senderSet
 
 	// Rooms are built ten at a time, which is what Synapse does --
 	// `concurrently_execute(handle_room_entries, room_entries, 10)`,
@@ -377,6 +428,35 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 			return nil
 		})
 	}
+	// Announcement rooms, as joined rooms with full state, in the same pool.
+	for _, e := range announcements {
+		group.Go(func() error {
+			id := e.room.RoomID
+			view, err := newAnnouncementView(gctx, d, id, &strippedSenders)
+			if err != nil {
+				return err
+			}
+			// The m.tag of all room account data is the room's current tags
+			// (get_tags_for_room), which is what a full-state entry starts from.
+			var tags json.RawMessage
+			for _, ad := range accountDataByRoom[id] {
+				if ad.Type == "m.tag" {
+					tags = ad.Content
+				}
+			}
+			src := timelineSource{upto: e.upto, potential: e.raw, hasPotential: e.loaded, announcement: view}
+			entry, err := syncRoomEntry(gctx, d, e.room, verdict.UserID, now.Room, timeNow, cfg,
+				announcementAccountData(tags, accountDataByRoom[id]), now, useStateAfter, f,
+				verdict.DeviceID, true, src, nil, false, receiptsByRoom[id], false)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			joinedRooms[id] = entry
+			mu.Unlock()
+			return nil
+		})
+	}
 	if err := group.Wait(); err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "room entry", err)
 	}
@@ -416,8 +496,9 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 		}
 	}
 
+	// Only while presence is enabled (include_presence_data).
 	var presenceStates []store.PresenceState
-	if !f.BlocksAllPresence() {
+	if !f.BlocksAllPresence() && d.presenceEnabled() {
 		presenceStates, err = d.Store.SharedRoomPresence(ctx, verdict.UserID)
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "presence", err)
@@ -460,7 +541,7 @@ func initialSyncV2(r *http.Request, d Deps, verdict clientauth.Verdict, useState
 
 	// After the rooms: a lazy-loading sync names the users they mention.
 	profiles, err := syncProfileUpdates(ctx, d, f, verdict.UserID, verdict.DeviceID, nil, now,
-		joinedRooms, archivedRooms, inviteSenders)
+		joinedRooms, archivedRooms, append(inviteSenders, strippedSenders.list()...))
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "profile updates", err)
 	}
@@ -557,6 +638,9 @@ type timelineSource struct {
 	// newlyJoined makes the timeline limited whatever the pagination says: the
 	// client has none of this room's history.
 	newlyJoined bool
+	// announcement, when set, makes this a server announcement room shown to
+	// a user who is not in it: see announcementView.
+	announcement *announcementView
 }
 
 // syncRoomEntry builds one room's full-state section.
@@ -640,6 +724,10 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		}
 	}
 
+	// The encoder takes the user's own membership out of an announcement
+	// room after everything above has seen it.
+	messages, memberships = src.announcement.stripOwnMembership(userID, messages, memberships, stateIDs)
+
 	stateEventIDs := make([]string, 0, len(stateIDs))
 	for _, id := range stateIDs {
 		stateEventIDs = append(stateEventIDs, id)
@@ -658,7 +746,7 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		return nil, err
 	}
 
-	prevTargets := make([]*clientevent.Stored, 0, len(messages))
+	prevTargets := src.announcement.strippedEvents()
 	for i := range messages {
 		prevTargets = append(prevTargets, &messages[i].Stored)
 	}
@@ -724,6 +812,8 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 			continue
 		}
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return nil, err
 		}
@@ -732,6 +822,13 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 			return nil, err
 		}
 		stateJSON = append(stateJSON, body)
+	}
+	if src.announcement != nil {
+		join, err := src.announcement.syntheticJoin(room.RoomID, userID, cfg)
+		if err != nil {
+			return nil, err
+		}
+		stateJSON = append(stateJSON, join)
 	}
 
 	adEvents, err := accountDataEvents(filterAccountDataEntries(f, room.RoomID, accountData))
@@ -759,7 +856,8 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 
 		// withThreads: /sync uses the multi-room receipt path, which selects
 		// thread_id and applies MSC4102 -- unlike /rooms/{id}/initialSync.
-		if ev, err := receiptEvent(room.RoomID, receiptRows, userID, true); err != nil {
+		// Rows of an announcement room come filtered to the user's own.
+		if ev, err := receiptEvent(room.RoomID, receiptRows, userID, true, false); err != nil {
 			return nil, err
 		} else if ev != nil {
 			ephemeral = append(ephemeral, ev)
@@ -788,9 +886,12 @@ func syncRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, userID s
 		}, nil
 	}
 
-	unread, err := d.Store.UnreadNotifications(ctx, room.RoomID, userID)
-	if err != nil {
-		return nil, err
+	// An announcement room counts nothing (RoomNotifCounts.empty()).
+	var unread store.RoomNotifCounts
+	if src.announcement == nil {
+		if unread, err = d.Store.UnreadNotifications(ctx, room.RoomID, userID); err != nil {
+			return nil, err
+		}
 	}
 
 	entry := map[string]any{

@@ -42,8 +42,9 @@ type BuildRequest struct {
 
 // Response is the response body.
 type Response struct {
-	Pos        string                     `json:"pos"`
-	Lists      map[string]listJSON        `json:"lists"`
+	Pos string `json:"pos"`
+	// Omitted when empty (encode_response's `if serialized_lists:`).
+	Lists      map[string]listJSON        `json:"lists,omitempty"`
 	Rooms      map[string]roomJSON        `json:"rooms"`
 	Extensions map[string]json.RawMessage `json:"extensions"`
 

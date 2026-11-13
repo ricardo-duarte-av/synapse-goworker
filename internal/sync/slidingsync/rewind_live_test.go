@@ -46,7 +46,7 @@ func TestLiveRewindDropsRoomsJoinedAfterTheToken(t *testing.T) {
 	t.Logf("%s joined %s at %d", userID, roomID, joinPos)
 
 	// As of now, the room is there.
-	rooms, err := d.Store.SlidingRoomsForUser(ctx, userID)
+	rooms, _, err := d.Store.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +58,11 @@ func TestLiveRewindDropsRoomsJoinedAfterTheToken(t *testing.T) {
 	before := now
 	before.Room = streamtoken.Live(joinPos - 1)
 
-	rewind, err := rewindToToken(ctx, d, userID, rooms, before)
+	rewindList, err := rewindToToken(ctx, d, userID, rooms, before)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rewind := rewindByRoom(rewindList)
 	change, found := rewind[roomID]
 	if !found {
 		t.Fatalf("the rewind said nothing about %s, which was joined at %d, "+
@@ -98,7 +99,7 @@ func TestLiveRewindRestoresThePreviousMembership(t *testing.T) {
 	}
 	t.Logf("%s in %s changed from %q at %d", userID, roomID, prevMembership, pos)
 
-	rooms, err := d.Store.SlidingRoomsForUser(ctx, userID)
+	rooms, _, err := d.Store.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +107,11 @@ func TestLiveRewindRestoresThePreviousMembership(t *testing.T) {
 	before := now
 	before.Room = streamtoken.Live(pos - 1)
 
-	rewind, err := rewindToToken(ctx, d, userID, rooms, before)
+	rewindList, err := rewindToToken(ctx, d, userID, rooms, before)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rewind := rewindByRoom(rewindList)
 	change, found := rewind[roomID]
 	if !found {
 		t.Fatalf("the rewind said nothing about %s, whose membership changed at %d", roomID, pos)
@@ -133,14 +135,15 @@ func TestLiveRewindRestoresThePreviousMembership(t *testing.T) {
 func TestLiveRewindIsANoOpAtTheCurrentToken(t *testing.T) {
 	d, userID, now, ctx := liveDeps(t)
 
-	rooms, err := d.Store.SlidingRoomsForUser(ctx, userID)
+	rooms, _, err := d.Store.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rewind, err := rewindToToken(ctx, d, userID, rooms, now)
+	rewindList, err := rewindToToken(ctx, d, userID, rooms, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	rewind := rewindByRoom(rewindList)
 	if len(rewind) != 0 {
 		t.Errorf("the rewind found %d changes at the current token; there is nothing "+
 			"after it to undo", len(rewind))

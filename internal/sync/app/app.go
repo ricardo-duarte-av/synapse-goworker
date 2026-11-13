@@ -140,6 +140,11 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 	}
 	metrics.RegisterCaches(s.db.DerivedCacheStats)
 	metrics.RegisterStreamCaches(s.db.StreamCacheStats)
+	// The prev content Synapse's event cache would carry, kept as long as
+	// homeserver.yaml keeps Synapse's events (read at start, as Synapse
+	// reads it).
+	ec := cfg.Synapse.Current().EventCache
+	s.db.SetEventCache(ec.Size, time.Duration(ec.ExpiryMS)*time.Millisecond, 0)
 
 	// Reported, not enforced: through pgcat the role is Synapse's own, and
 	// that the read path only reads is held by the code and its tests
@@ -219,6 +224,10 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Inbox:                s.inbox,
 		Presence:             presenceClient,
 		PresenceWriter:       s.presenceHook,
+		// Server announcement rooms (Synapse 1.165), as homeserver.yaml
+		// configures them now.
+		Announcements:   func() synapsecfg.Announcements { return cfg.Synapse.Current().Announcements },
+		PresenceEnabled: func() bool { return cfg.Synapse.Current().PresenceEnabled },
 		PushRuleFeatures: pushrules.Features{
 			MSC1767Enabled:             flag("msc1767_enabled", false),
 			MSC3381PollsEnabled:        flag("msc3381_polls_enabled", false),
@@ -230,16 +239,13 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		},
 	}
 	s.pushFeatures = deps.PushRuleFeatures
-	// Server announcement rooms are main's while configured (Synapse 1.165).
-	announcements := func() bool { return cfg.Synapse.Current().Announcements.Configured() }
-	toMain := func(h http.Handler) http.Handler { return handlers.AnnouncementsToMain(deps, announcements, h) }
 	s.routes = server.Routes{
-		RoomInitialSync: toMain(handlers.RoomInitialSync(deps)),
-		InitialSync:     toMain(handlers.InitialSync(deps)),
-		Events:          toMain(handlers.Events(deps)),
-		Sync:            toMain(initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps))),
-		RoomState:       toMain(handlers.RoomState(deps)),
-		RoomEvent:       toMain(handlers.RoomEvent(deps)),
+		RoomInitialSync: handlers.RoomInitialSync(deps),
+		InitialSync:     handlers.InitialSync(deps),
+		Events:          handlers.Events(deps),
+		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
+		RoomState:       handlers.RoomState(deps),
+		RoomEvent:       handlers.RoomEvent(deps),
 		Profile: handlers.Profile(deps, handlers.ProfileDeps{
 			Settings:       cfg.Synapse.Current().Profile,
 			Limiter:        ratelimit.New(cfg.Synapse.Current().Profile.Rc, nil),
@@ -250,7 +256,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		KeysQuery: handlers.KeysQuery(deps, keysDeps(cfg.Synapse.Current(), cfg.Worker)),
 	}
 	if s.sliding != nil {
-		s.routes.SlidingSync = toMain(handlers.SlidingSync(deps))
+		s.routes.SlidingSync = handlers.SlidingSync(deps)
 	}
 	return s, nil
 }

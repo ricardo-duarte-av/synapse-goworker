@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"sort"
 
 	"github.com/tidwall/gjson"
 
@@ -147,12 +148,91 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 			return nil, http.StatusInternalServerError, internalError(d, "room account data", err)
 		}
 	}
+	// tags_by_room (get_updated_tags): the whole current tag set of every
+	// room whose tags changed since the client's token. Tags live outside
+	// room_account_data, so the query above cannot see them. Not bounded
+	// above, as Synapse's is not.
+	var tagsByRoom map[string]json.RawMessage
+	if !f.BlocksAllRooms() && !f.BlocksAllRoomAccountData() {
+		if tagsByRoom, err = d.Store.UpdatedTags(ctx, verdict.UserID, since.AccountData); err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "room tags", err)
+		}
+	}
+	// What the window changed of room account data, tags included: which
+	// rooms it touched decides which announcement rooms are reported.
+	adRooms := map[string]bool{}
+	for id := range accountDataByRoom {
+		adRooms[id] = true
+	}
+	for id := range tagsByRoom {
+		adRooms[id] = true
+	}
+	if !fullState {
+		accountDataByRoom = withUpdatedTags(accountDataByRoom, tagsByRoom)
+	}
+
+	// One query for every membership change of this user in the window, used
+	// three times: to decide which rooms are newly joined, which announcement
+	// rooms are shown as joined, and further down to report invites.
+	//
+	// This is what makes the loop below cheap. A room can only have become
+	// newly joined if the user's membership event for it lands in (since, now]
+	// -- so a room with no membership change needs no probe at all, and on a
+	// real account that is all but a handful of them. Synapse works the same
+	// way: `_get_room_changes_for_incremental_sync` iterates
+	// `mem_change_events_by_room_id` and never looks at the rest.
+	changes, err := d.Store.MembershipChangesForUser(ctx, verdict.UserID, sincePos, nowPos)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "membership changes", err)
+	}
+	changesByRoom := map[string][]store.MembershipChange{}
+	lastMembership := map[string]string{}
+	for _, c := range changes {
+		changesByRoom[c.RoomID] = append(changesByRoom[c.RoomID], c)
+		lastMembership[c.RoomID] = c.Membership
+	}
+
+	announce, err := announcementRooms(ctx, d, verdict.UserID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err)
+	}
+	joinedSet := make(map[string]bool, len(joinedIDs))
+	for _, id := range joinedIDs {
+		joinedSet[id] = true
+	}
+	synthetic := syntheticJoinRooms(d, announce, f, joinedSet, lastMembership)
+	syntheticIDs := setList(synthetic)
+	sort.Strings(syntheticIDs)
+
 	receiptsByRoom := map[string][]store.ReceiptRow{}
 	if !f.BlocksAllRooms() && !f.BlocksAllRoomEphemeral() {
 		receiptsByRoom, err = d.Store.ReceiptsSince(ctx, joinedIDs,
 			since.Receipt.MaxStreamPos(), now.Receipt.MaxStreamPos())
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "receipts", err)
+		}
+		// No receipt in an announcement room is shared.
+		for id, rows := range receiptsByRoom {
+			if announce.all[id] {
+				receiptsByRoom[id] = ownReceipts(rows, verdict.UserID)
+			}
+		}
+	}
+	// The user's own receipts in the announcement rooms shown to them: which
+	// rooms have any decides which are reported. Not when the filter blocks
+	// ephemeral events, as ephemeral_by_room is then not built at all.
+	ephRooms := map[string]bool{}
+	if len(syntheticIDs) > 0 && !f.BlocksAllRoomEphemeral() {
+		rows, err := d.Store.ReceiptsSince(ctx, syntheticIDs,
+			since.Receipt.MaxStreamPos(), now.Receipt.MaxStreamPos())
+		if err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "receipts", err)
+		}
+		for id, r := range rows {
+			if mine := ownReceipts(r, verdict.UserID); len(mine) > 0 {
+				receiptsByRoom[id] = mine
+				ephRooms[id] = true
+			}
 		}
 	}
 
@@ -182,30 +262,14 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		ann.NextBatch = now.String()
 	}
 
-	// One query for every membership change of this user in the window, used
-	// twice: to decide which rooms are newly joined, and further down to
-	// report invites.
-	//
-	// This is what makes the loop below cheap. A room can only have become
-	// newly joined if the user's membership event for it lands in (since, now]
-	// -- so a room with no membership change needs no probe at all, and on a
-	// real account that is all but a handful of them. Synapse works the same
-	// way: `_get_room_changes_for_incremental_sync` iterates
-	// `mem_change_events_by_room_id` and never looks at the rest.
-	changes, err := d.Store.MembershipChangesForUser(ctx, verdict.UserID, sincePos, nowPos)
-	if err != nil {
-		return nil, http.StatusInternalServerError, internalError(d, "membership changes", err)
-	}
-	changesByRoom := map[string][]store.MembershipChange{}
-	for _, c := range changes {
-		changesByRoom[c.RoomID] = append(changesByRoom[c.RoomID], c)
-	}
-
 	// History gaps for every joined room in one query, on the same bounds the
 	// per-room path would have used. The single-room form asked once per room
 	// -- 653 round trips on this account for an answer that concerned two of
 	// them -- and it was by a wide margin the most-called query on the worker.
-	gapsByRoom, err := d.Store.TimelineGaps(ctx, joinedIDs, &since.Room, now.Room)
+	// The announcement rooms shown as joined too: a room missing from the set
+	// reads as having no gap.
+	gapsByRoom, err := d.Store.TimelineGaps(ctx, append(append([]string(nil), joinedIDs...), syntheticIDs...),
+		&since.Room, now.Room)
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "timeline gaps", err)
 	}
@@ -285,8 +349,16 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 			if len(raw) > 0 {
 				src.upto = now.WithRoomKey(streamtoken.Live(raw[0].StreamOrdering - 1))
 			}
+			// Full state, so the room's current tags (get_tags_for_room)
+			// rather than what the window changed of them.
+			roomAD := accountDataByRoom[room.RoomID]
+			if !f.BlocksAllRoomAccountData() {
+				if roomAD, err = fullStateAccountData(ctx, d, verdict.UserID, room.RoomID, roomAD); err != nil {
+					return nil, http.StatusInternalServerError, internalError(d, "room tags", err)
+				}
+			}
 			entry, err := syncRoomEntry(ctx, d, room, verdict.UserID, now.Room, timeNow, cfg,
-				accountDataByRoom[room.RoomID], now, useStateAfter, f, verdict.DeviceID, false,
+				roomAD, now, useStateAfter, f, verdict.DeviceID, false,
 				// nil receipts: this path replaces the whole ephemeral block
 				// below, bounding it by `since` rather than by the now token,
 				// so anything built here would be discarded.
@@ -315,7 +387,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 			timeNow, cfg, timelines[room.RoomID],
 			accountDataByRoom[room.RoomID], receiptsByRoom[room.RoomID],
 			useStateAfter, fullState, f, verdict.DeviceID, sticky[room.RoomID],
-			typingRooms[room.RoomID], gaps)
+			typingRooms[room.RoomID], gaps, nil)
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "room entry", err)
 		}
@@ -324,10 +396,56 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		}
 	}
 
+	// Announcement rooms the user left in the window: shown again as joined,
+	// with full state, instead of the leave (_get_room_changes_for_
+	// incremental_sync). The rest of the leave path is skipped for them.
+	leftAnnouncements := map[string]bool{}
+	for roomID, c := range lastChangeOf(changes) {
+		if synthetic[roomID] && incrementalSection(c.Membership) == "leave" {
+			leftAnnouncements[roomID] = true
+		}
+	}
+	announced := map[string]bool{}
+	var strippedSenders senderSet
+	if len(synthetic) > 0 {
+		entries, err := announcementEntries(ctx, d, synthetic, &since, now, f, fullState,
+			leftAnnouncements, adRooms, ephRooms)
+		if err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err)
+		}
+		for _, e := range entries {
+			id := e.room.RoomID
+			view, err := newAnnouncementView(ctx, d, id, &strippedSenders)
+			if err != nil {
+				return nil, http.StatusInternalServerError, internalError(d, "announcement room", err)
+			}
+			full := e.fullState || fullState
+			var tags json.RawMessage
+			if full {
+				if tags, err = d.Store.RoomTags(ctx, verdict.UserID, id); err != nil {
+					return nil, http.StatusInternalServerError, internalError(d, "room tags", err)
+				}
+			} else {
+				tags = tagsByRoom[id]
+			}
+			entry, err := incrementalRoomEntry(ctx, d, e.room, verdict.UserID, since, now,
+				timeNow, cfg, e.raw, announcementAccountData(tags, accountDataByRoom[id]),
+				receiptsByRoom[id], useStateAfter, full, f, verdict.DeviceID, nil, false, gaps, view)
+			if err != nil {
+				return nil, http.StatusInternalServerError, internalError(d, "announcement room", err)
+			}
+			if entry != nil {
+				joinedRooms[id] = entry
+				announced[id] = true
+			}
+		}
+	}
+
 	// Membership transitions visible in what we just emitted decide who else
 	// the client must re-key. Synapse derives them from the response it has
-	// built rather than from a query, so the two cannot disagree.
-	joinedOrInvited, leaveCandidates := userChangesFromRooms(joinedRooms)
+	// built rather than from a query, so the two cannot disagree. Not from
+	// announcement rooms the user is not in (calculate_user_changes).
+	joinedOrInvited, leaveCandidates := userChangesFromRooms(withoutRooms(joinedRooms, announced))
 	leftUsers, err := resolveLeftUsers(ctx, d, leaveCandidates)
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "previous memberships", err)
@@ -385,8 +503,11 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 			if isCurrentlyJoined(rooms, roomID) {
 				continue
 			}
+			if leftAnnouncements[roomID] {
+				continue
+			}
 			entry, err := archivedRoomEntry(ctx, d, roomID, verdict.UserID, verdict.DeviceID, c,
-				since, now, timeNow, cfg, d.MSC3391Enabled, useStateAfter, fullState, f,
+				since, now, timeNow, cfg, useStateAfter, fullState, f,
 				accountDataByRoom[roomID])
 			if err != nil {
 				return nil, http.StatusInternalServerError, internalError(d, "archived room", err)
@@ -475,8 +596,13 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 		}
 	}
 
+	// include_presence_data: while presence is enabled, or, disabled, while
+	// the stream has moved past the client's token -- so the offline states
+	// written when it was disabled still reach clients, and nothing more
+	// once they have.
+	includePresence := !f.BlocksAllPresence() && (d.presenceEnabled() || since.Presence < now.Presence)
 	var presenceStates []store.PresenceState
-	if !f.BlocksAllPresence() {
+	if includePresence {
 		// full_state: from_key None and offline users left out, as for an
 		// initial sync.
 		if fullState {
@@ -497,10 +623,10 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 	// they were already in. Neither group need have touched the presence
 	// stream, so neither is found by the window query above.
 	extraUsers := append([]string(nil), joinedOrInvited...)
-	if f.BlocksAllPresence() {
+	if !includePresence {
 		extraUsers = nil
 	}
-	if len(newlyJoined) > 0 && !f.BlocksAllPresence() {
+	if len(newlyJoined) > 0 && includePresence {
 		members, err := d.Store.JoinedMembersOf(ctx, newlyJoined)
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "newly joined members", err)
@@ -576,18 +702,35 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 	}
 	changed = append(changed, joinedOrInvited...)
 
+	// The members of every room the user left in the window are no longer
+	// tracked either (newly_left_rooms), unless shared elsewhere.
+	newlyLeft, err := newlyLeftRooms(ctx, d, verdict.UserID, changesByRoom, joinedSet, since)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "left rooms", err)
+	}
+	leftCandidates := leftUsers
+	if len(newlyLeft) > 0 {
+		members, err := d.Store.JoinedMembersOf(ctx, newlyLeft)
+		if err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "left room members", err)
+		}
+		leftCandidates = append(append([]string(nil), leftUsers...), members...)
+	}
 	var left []string
-	if len(leftUsers) > 0 {
+	if len(leftCandidates) > 0 {
 		sharing, err := d.Store.UsersSharingAnyRoom(ctx, verdict.UserID)
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "shared rooms", err)
 		}
-		for _, u := range leftUsers {
+		seenLeft := map[string]bool{}
+		for _, u := range leftCandidates {
 			// Still in another room with us, so not left from our point of
 			// view: telling the client otherwise makes it drop keys it needs.
-			if !sharing[u] && filter.SyncableUserID(u, d.ServerName) {
-				left = append(left, u)
+			if seenLeft[u] || sharing[u] || !filter.SyncableUserID(u, d.ServerName) {
+				continue
 			}
+			seenLeft[u] = true
+			left = append(left, u)
 		}
 	}
 
@@ -637,7 +780,7 @@ func incrementalSync(r *http.Request, d Deps, verdict clientauth.Verdict, sinceR
 	}
 
 	profiles, err := syncProfileUpdates(ctx, d, f, verdict.UserID, verdict.DeviceID, &since, now,
-		joinedRooms, archivedRooms, inviteSenders)
+		joinedRooms, archivedRooms, append(inviteSenders, strippedSenders.list()...))
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "profile updates", err)
 	}
@@ -659,7 +802,7 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 	raw []store.TimelineEvent, accountData []store.AccountDataEntry,
 	receipts []store.ReceiptRow, useStateAfter, fullState bool,
 	f *filter.Collection, deviceID string, stickyIDs []string,
-	typingChanged bool, gaps *gapSet) (map[string]any, error) {
+	typingChanged bool, gaps *gapSet, ann *announcementView) (map[string]any, error) {
 
 	// Where the loaded chunk begins, which is Synapse's per-room `upto_token`
 	// and the prev_batch of an untrimmed timeline. For a room whose events all
@@ -772,6 +915,9 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 		}
 	}
 
+	// As in syncRoomEntry: the encoder's last step for an announcement room.
+	messages, memberships = ann.stripOwnMembership(userID, messages, memberships, stateIDs)
+
 	stateEventIDs := make([]string, 0, len(stateIDs))
 	for _, id := range stateIDs {
 		stateEventIDs = append(stateEventIDs, id)
@@ -789,7 +935,7 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 		return nil, err
 	}
 
-	prevTargets := make([]*clientevent.Stored, 0, len(messages))
+	prevTargets := ann.strippedEvents()
 	for i := range messages {
 		prevTargets = append(prevTargets, &messages[i].Stored)
 	}
@@ -850,6 +996,8 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 			continue
 		}
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return nil, err
 		}
@@ -859,10 +1007,19 @@ func incrementalRoomEntry(ctx context.Context, d Deps, room store.RoomForUser, u
 		}
 		stateJSON = append(stateJSON, body)
 	}
+	if ann != nil {
+		join, err := ann.syntheticJoin(room.RoomID, userID, cfg)
+		if err != nil {
+			return nil, err
+		}
+		stateJSON = append(stateJSON, join)
+	}
 
-	unread, err := d.Store.UnreadNotifications(ctx, room.RoomID, userID)
-	if err != nil {
-		return nil, err
+	var unread store.RoomNotifCounts
+	if ann == nil {
+		if unread, err = d.Store.UnreadNotifications(ctx, room.RoomID, userID); err != nil {
+			return nil, err
+		}
 	}
 
 	entry := map[string]any{
@@ -1168,13 +1325,12 @@ func userChangesFromRooms(joined map[string]any) (joinedOrInvited []string, leav
 			// Whether this counts as "left" depends on the PREVIOUS
 			// membership, which is not in our output: `replaces_state` names
 			// the event to look it up from.
-			// Only from the timeline. Synapse decides this by reading
-			// `unsigned.prev_content` off its in-memory event, which
-			// events_worker populates for the timeline but leaves on STATE
-			// events only when some earlier reader happened to ask for it and
-			// polluted the shared cache. Deriving `left` from the state block
-			// therefore reproduces a cache artefact, not a rule.
-			if !inTimeline {
+			// Synapse decides this by reading `unsigned.prev_content` off its
+			// in-memory event: always there on the timeline, and on a STATE
+			// event only when an earlier read put it in the cached copy --
+			// which prevCache reproduces, so a state event counts when it
+			// carries the field.
+			if !inTimeline && !gjson.GetBytes(raw, "unsigned.prev_content").Exists() {
 				return
 			}
 			if replaces := gjson.GetBytes(raw, "unsigned.replaces_state").String(); replaces != "" {
@@ -1249,6 +1405,63 @@ func resolveLeftUsers(ctx context.Context, d Deps, candidates map[string]string)
 	return out, nil
 }
 
+// newlyLeftRooms is _get_room_changes_for_incremental_sync's
+// newly_left_rooms: rooms the user is not joined to now whose last
+// membership change in the window is not a join, and that they were joined
+// to at some point of it -- by a join in the window, or at `since`.
+func newlyLeftRooms(ctx context.Context, d Deps, userID string, changesByRoom map[string][]store.MembershipChange,
+	joined map[string]bool, since streamtoken.Token) ([]string, error) {
+
+	var out []string
+	for roomID, events := range changesByRoom {
+		if joined[roomID] || len(events) == 0 || events[len(events)-1].Membership == "join" {
+			continue
+		}
+		hasJoin := false
+		for _, c := range events {
+			if c.Membership == "join" {
+				hasJoin = true
+				break
+			}
+		}
+		if !hasJoin {
+			was, err := d.Store.MembershipAtPosition(ctx, roomID, userID, since.Room)
+			if err != nil {
+				return nil, err
+			}
+			if was != "join" {
+				continue
+			}
+		}
+		out = append(out, roomID)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// lastChangeOf is each room's last membership change in the window.
+func lastChangeOf(changes []store.MembershipChange) map[string]store.MembershipChange {
+	out := map[string]store.MembershipChange{}
+	for _, c := range changes {
+		out[c.RoomID] = c
+	}
+	return out
+}
+
+// withoutRooms is joined less the given rooms.
+func withoutRooms(joined map[string]any, drop map[string]bool) map[string]any {
+	if len(drop) == 0 {
+		return joined
+	}
+	out := make(map[string]any, len(joined))
+	for id, e := range joined {
+		if !drop[id] {
+			out[id] = e
+		}
+	}
+	return out
+}
+
 func isCurrentlyJoined(rooms []store.RoomForUser, roomID string) bool {
 	for _, r := range rooms {
 		if r.RoomID == roomID && r.Membership == "join" {
@@ -1270,8 +1483,8 @@ func isCurrentlyJoined(rooms []store.RoomForUser, roomID string) bool {
 // counts, no summary. Those describe a room you are in.
 func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID, deviceID string,
 	change store.MembershipChange, since, now streamtoken.Token, timeNow int64,
-	cfg clientevent.Config, msc3391, useStateAfter, fullState bool,
-	f *filter.Collection, allAccountData []store.AccountDataEntry) (map[string]any, error) {
+	cfg clientevent.Config, useStateAfter, fullState bool,
+	f *filter.Collection, roomAD []store.AccountDataEntry) (map[string]any, error) {
 
 	info, err := d.Store.RoomInfo(ctx, roomID)
 	if err != nil {
@@ -1344,17 +1557,8 @@ func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID, deviceID str
 		dedupeLazyMembers(d, f, userID, deviceID, stateIDs, changed, messages, fullState, now.Room)
 	}
 
-	var roomAD []store.AccountDataEntry
-	if fullState {
-		roomAD = allAccountData
-	} else {
-		accountData, err := d.Store.RoomAccountDataSince(ctx, userID,
-			since.AccountData, now.AccountData, msc3391)
-		if err != nil {
-			return nil, err
-		}
-		roomAD = accountData[roomID]
-	}
+	// roomAD is the room's account data as the caller loaded it: all of it
+	// with full_state, otherwise what changed in the window, tags included.
 	adEvents, err := accountDataEvents(filterAccountDataEntries(f, roomID, roomAD))
 	if err != nil {
 		return nil, err
@@ -1408,6 +1612,8 @@ func archivedRoomEntry(ctx context.Context, d Deps, roomID, userID, deviceID str
 			continue
 		}
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return nil, err
 		}
@@ -1447,7 +1653,8 @@ func sinceEphemeral(d Deps, roomID, userID string, receipts []store.ReceiptRow,
 		}
 	}
 	if len(receipts) > 0 {
-		ev, err := receiptEvent(roomID, receipts, userID, true)
+		// Rows of an announcement room come filtered to the user's own.
+		ev, err := receiptEvent(roomID, receipts, userID, true, false)
 		if err != nil {
 			return nil, err
 		}

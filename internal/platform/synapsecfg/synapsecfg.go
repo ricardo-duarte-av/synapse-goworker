@@ -134,6 +134,10 @@ type Config struct {
 	// AllowDeviceNameLookup is allow_device_name_lookup_over_federation.
 	AllowDeviceNameLookup bool
 
+	// EventCache is the event cache's size and expiry, which decide how long
+	// a fetched event keeps the prev_content a timeline read put on it.
+	EventCache EventCache
+
 	// PresenceEnabled is presence.enabled (or use_presence): true unless it
 	// is false. "untracked" is enabled, but not tracked (TrackPresence).
 	PresenceEnabled bool
@@ -230,6 +234,9 @@ func (c *Config) Flag(name string, def bool) bool {
 // a Synapse upgrade that adds options cannot stop this parsing.
 type raw struct {
 	ServerName string `yaml:"server_name"`
+
+	EventCacheSize any       `yaml:"event_cache_size"`
+	Caches         rawCaches `yaml:"caches"`
 
 	DontNotifyNewDevicesFor []string `yaml:"dont_notify_new_devices_for"`
 
@@ -440,6 +447,9 @@ func parse(b []byte, path string) (*Config, error) {
 	}
 	cfg.AllowDeviceNameLookup = r.AllowDeviceNameLookup != nil && *r.AllowDeviceNameLookup
 	cfg.PresenceEnabled = presenceEnabled(r)
+	if cfg.EventCache, err = eventCache(r.EventCacheSize, r.Caches); err != nil {
+		return nil, err
+	}
 	cfg.ExcludeRoomsFromPresence = r.ExcludeRoomsFromPresence
 	cfg.PresenceRouter = truthy(r.Presence.PresenceRouter)
 	cfg.ClientAuth = ClientAuth{

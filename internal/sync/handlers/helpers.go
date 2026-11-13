@@ -136,7 +136,12 @@ func roomReceipts(ctx context.Context, d Deps, roomID, userID string,
 			kept = append(kept, row)
 		}
 	}
-	ev, err := receiptEvent(roomID, kept, userID, false)
+	// No receipt in a server announcement room is shared.
+	announce, err := announcementRooms(ctx, d, userID)
+	if err != nil {
+		return nil, err
+	}
+	ev, err := receiptEvent(roomID, kept, userID, false, announce.all[roomID])
 	if err != nil {
 		return nil, err
 	}

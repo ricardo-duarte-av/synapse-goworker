@@ -488,6 +488,7 @@ func (s *Store) AttachPrevContent(ctx context.Context, events []*clientevent.Sto
 		event    *clientevent.Stored
 		replaces string
 	}
+	cache := s.prev()
 	var targets []target
 	idSet := map[string]bool{}
 	for _, ev := range events {
@@ -498,6 +499,13 @@ func (s *Store) AttachPrevContent(ctx context.Context, events []*clientevent.Sto
 		}
 		// Synapse skips events that already carry both fields.
 		if unsigned.Get("prev_content").Exists() && unsigned.Get("prev_sender").Exists() {
+			continue
+		}
+		// Or whose cached copy got them from an earlier read.
+		if e, ok := cache.get(ev.EventID); ok {
+			if err := setPrev(ev, e.content, e.sender); err != nil {
+				return err
+			}
 			continue
 		}
 		targets = append(targets, target{event: ev, replaces: replaces.String()})
@@ -546,16 +554,43 @@ func (s *Store) AttachPrevContent(ctx context.Context, events []*clientevent.Sto
 			// purged simply yields no prev_content.
 			continue
 		}
-		body, err := sjson.SetRawBytes(t.event.JSON, "unsigned.prev_content", p.content)
-		if err != nil {
-			return fmt.Errorf("store: prev content: %w", err)
+		if err := setPrev(t.event, p.content, p.sender); err != nil {
+			return err
 		}
-		body, err = sjson.SetBytes(body, "unsigned.prev_sender", p.sender)
-		if err != nil {
-			return fmt.Errorf("store: prev content: %w", err)
-		}
-		t.event.JSON = body
+		cache.add(t.event.EventID, p.content, p.sender)
 	}
+	return nil
+}
+
+// AttachCachedPrevContent gives the events this process has already read
+// with their previous content (see prevCache) that content, as Synapse's
+// cached event objects carry it into every later read: a state block's
+// events, which are fetched without get_prev_content.
+// An event the fields cannot be written into is left as it is.
+func (s *Store) AttachCachedPrevContent(events ...*clientevent.Stored) {
+	cache := s.prev()
+	for _, ev := range events {
+		e, ok := cache.get(ev.EventID)
+		if !ok {
+			continue
+		}
+		unsigned := gjson.GetBytes(ev.JSON, "unsigned")
+		if unsigned.Get("prev_content").Exists() && unsigned.Get("prev_sender").Exists() {
+			continue
+		}
+		_ = setPrev(ev, e.content, e.sender)
+	}
+}
+
+func setPrev(ev *clientevent.Stored, content json.RawMessage, sender string) error {
+	body, err := sjson.SetRawBytes(ev.JSON, "unsigned.prev_content", content)
+	if err != nil {
+		return fmt.Errorf("store: prev content: %w", err)
+	}
+	if body, err = sjson.SetBytes(body, "unsigned.prev_sender", sender); err != nil {
+		return fmt.Errorf("store: prev content: %w", err)
+	}
+	ev.JSON = body
 	return nil
 }
 

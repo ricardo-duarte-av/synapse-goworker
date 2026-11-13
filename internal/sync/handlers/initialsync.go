@@ -188,10 +188,15 @@ func initialSync(r *http.Request, d Deps, verdict clientauth.Verdict) ([]byte, i
 		return nil, http.StatusInternalServerError, internalError(d, "global account data", err)
 	}
 
+	// No receipt in a server announcement room is shared.
+	announce, err := announcementRooms(ctx, d, verdict.UserID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err)
+	}
 	receipts := make([]json.RawMessage, 0, len(joined))
 	for _, roomID := range joined {
 		// withThreads: the plural query stamps thread_id and applies MSC4102.
-		ev, err := receiptEvent(roomID, receiptsByRoom[roomID], verdict.UserID, true)
+		ev, err := receiptEvent(roomID, receiptsByRoom[roomID], verdict.UserID, true, announce.all[roomID])
 		if err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "receipts", err)
 		}

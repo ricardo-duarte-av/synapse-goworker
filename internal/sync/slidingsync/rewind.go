@@ -37,12 +37,30 @@ type membershipRewind struct {
 	room store.SlidingRoom
 }
 
+// roomRewind is one room's rewind.
+type roomRewind struct {
+	roomID string
+	membershipRewind
+}
+
+// rewindByRoom is the rewinds keyed by room.
+func rewindByRoom(rs []roomRewind) map[string]membershipRewind {
+	out := make(map[string]membershipRewind, len(rs))
+	for _, r := range rs {
+		out[r.roomID] = r.membershipRewind
+	}
+	return out
+}
+
 // rewindToToken computes the corrections needed to make a current room list
 // describe the memberships at `to`.
+//
+// The rewinds come in the order of each room's first change after the token,
+// which is the order Synapse's `changes` dict applies them in.
 func rewindToToken(
 	ctx context.Context, d Deps, userID string,
 	rooms map[string]store.SlidingRoom, to streamtoken.Token,
-) (map[string]membershipRewind, error) {
+) ([]roomRewind, error) {
 
 	if len(rooms) == 0 {
 		return nil, nil
@@ -120,19 +138,22 @@ func rewindToToken(
 	// Only the FIRST change after the token matters per room: stepping back
 	// from it gives the membership that was in force at the token, and any
 	// later change is something the token cannot see.
+	var order []string
 	firstAfter := map[string]store.DeltaMembershipChange{}
 	for _, c := range changes {
 		if _, seen := firstAfter[c.RoomID]; !seen {
 			firstAfter[c.RoomID] = c
+			order = append(order, c.RoomID)
 		}
 	}
 
-	out := map[string]membershipRewind{}
-	for roomID, c := range firstAfter {
+	out := make([]roomRewind, 0, len(order))
+	for _, roomID := range order {
+		c := firstAfter[roomID]
 		if c.PrevEventID == "" {
 			// No previous membership: the user's first membership in this room
 			// is after the token, so at the token they were not in it at all.
-			out[roomID] = membershipRewind{drop: true}
+			out = append(out, roomRewind{roomID, membershipRewind{drop: true}})
 			continue
 		}
 		if c.PrevMembership == "" || c.PrevSender == "" {
@@ -140,7 +161,7 @@ func rewindToToken(
 			// may have been culled. Dropping the room is the safe direction:
 			// showing it with a membership we are guessing at is worse than
 			// omitting it, and it comes back on the next sync.
-			out[roomID] = membershipRewind{drop: true}
+			out = append(out, roomRewind{roomID, membershipRewind{drop: true}})
 			continue
 		}
 
@@ -166,12 +187,12 @@ func rewindToToken(
 			info, err := d.Store.RoomInfo(ctx, roomID)
 			if err != nil {
 				// A room we cannot describe is one we cannot serve.
-				out[roomID] = membershipRewind{drop: true}
+				out = append(out, roomRewind{roomID, membershipRewind{drop: true}})
 				continue
 			}
 			rewound.RoomVersion = info.RoomVersion
 		}
-		out[roomID] = membershipRewind{room: rewound}
+		out = append(out, roomRewind{roomID, membershipRewind{room: rewound}})
 	}
 	return out, nil
 }

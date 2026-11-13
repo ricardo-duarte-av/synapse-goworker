@@ -11,9 +11,7 @@ package slidingsync
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
-	"strings"
 )
 
 // Limits from Synapse's pydantic models (types/rest/client/__init__.py). They
@@ -21,10 +19,9 @@ import (
 // because these bound work the server does per request and an unbounded list
 // count or timeline limit is a way to make one request cost everything.
 const (
-	MaxLists             = 100
-	MaxListKeyBytes      = 64
-	MaxRoomSubscriptions = 100
-	MaxTimelineLimit     = 1000
+	MaxLists         = 100
+	MaxListKeyBytes  = 64
+	MaxTimelineLimit = 1000
 )
 
 // StateValues are the special state keys required_state understands. They are
@@ -42,9 +39,9 @@ const (
 // Request is the body of a sliding sync request.
 //
 // Pos and Timeout are NOT here. Synapse reads both from the query string
-// (rest/client/sync.py: parse_integer(request, "timeout"), parse_string(
-// request, "pos")) while MSC4186 specifies them as body fields. Both are
-// accepted; see ParsePosAndTimeout.
+// only (rest/client/sync.py: parse_integer(request, "timeout"),
+// parse_string(request, "pos")), though MSC4186 specifies them as body
+// fields; in the body they are ignored, as extra keys are.
 type Request struct {
 	// ConnID identifies one of possibly several connections a device holds.
 	// Element X runs three -- "room-list", "notifications" and "" -- so this is
@@ -54,10 +51,6 @@ type Request struct {
 	Lists             map[string]List          `json:"lists"`
 	RoomSubscriptions map[string]RoomSubscribe `json:"room_subscriptions"`
 	Extensions        *Extensions              `json:"extensions"`
-
-	// Pos and Timeout, if the client put them in the body as MSC4186 says.
-	Pos     *string `json:"pos"`
-	Timeout *int    `json:"timeout"`
 }
 
 // CommonRoomParameters are shared by lists and room subscriptions.
@@ -165,67 +158,20 @@ type ProfilesExtension struct {
 	Fields  []string `json:"fields"`
 }
 
-// ParseRequest decodes and validates a request body.
-//
-// An empty body is accepted as an empty request: Synapse's pydantic model has
-// no required fields, so a client may legitimately POST `{}` -- and does, when
-// it only wants extensions.
+// ParseRequest validates a request body as Synapse's model does
+// (ValidateBody, whose *BodyError is the 400 to answer), then decodes it.
 func ParseRequest(body []byte) (*Request, error) {
+	if verr := ValidateBody(body); verr != nil {
+		return nil, verr
+	}
 	req := &Request{}
-	if len(strings.TrimSpace(string(body))) > 0 {
-		dec := json.NewDecoder(strings.NewReader(string(body)))
-		if err := dec.Decode(req); err != nil {
-			return nil, fmt.Errorf("Unable to parse json: %s", err)
-		}
-	}
-	if err := req.validate(); err != nil {
-		return nil, err
-	}
-	if err := validateExtensionNulls(body); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, req); err != nil {
+		// Valid by the model but beyond what a Go int holds (a timeline
+		// limit of 10**30). Synapse would take it; we cannot.
+		return nil, &BodyError{ErrCode: "M_BAD_JSON", Message: "Invalid request body."}
 	}
 	req.applyDefaults(body)
 	return req, nil
-}
-
-func (r *Request) validate() error {
-	if len(r.Lists) > MaxLists {
-		return fmt.Errorf("Max lists: %d but saw %d", MaxLists, len(r.Lists))
-	}
-	for key, list := range r.Lists {
-		if len(key) > MaxListKeyBytes {
-			return fmt.Errorf("list key %q is longer than %d bytes", key, MaxListKeyBytes)
-		}
-		if err := list.CommonRoomParameters.validate("list " + key); err != nil {
-			return err
-		}
-		for _, rng := range list.Ranges {
-			if rng[0] < 0 || rng[1] < 0 {
-				return fmt.Errorf("list %q: ranges must not be negative", key)
-			}
-		}
-	}
-	if len(r.RoomSubscriptions) > MaxRoomSubscriptions {
-		return fmt.Errorf("Max room subscriptions: %d but saw %d",
-			MaxRoomSubscriptions, len(r.RoomSubscriptions))
-	}
-	for roomID, sub := range r.RoomSubscriptions {
-		if err := sub.CommonRoomParameters.validate("room subscription " + roomID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c CommonRoomParameters) validate(what string) error {
-	if c.TimelineLimit > MaxTimelineLimit {
-		return fmt.Errorf("%s: timeline_limit must be less than or equal to %d",
-			what, MaxTimelineLimit)
-	}
-	if c.TimelineLimit < 0 {
-		return fmt.Errorf("%s: timeline_limit must not be negative", what)
-	}
-	return nil
 }
 
 // applyDefaults fills in the values Synapse's models default rather than
@@ -236,10 +182,11 @@ func (r *Request) applyDefaults(body []byte) {
 		return
 	}
 	e := r.Extensions
-	if e.ToDevice != nil && e.ToDevice.Limit == 0 {
+	// A default applies to an absent field only: an explicit 0 is 0.
+	if e.ToDevice != nil && !extensionHas(body, "to_device", "limit") {
 		e.ToDevice.Limit = 100
 	}
-	if e.ThreadSubscriptions != nil && e.ThreadSubscriptions.Limit == 0 {
+	if e.ThreadSubscriptions != nil && !extensionHas(body, "io.element.msc4308.thread_subscriptions", "limit") {
 		e.ThreadSubscriptions.Limit = 100
 	}
 	if e.StickyEvents != nil && !extensionHas(body, "org.matrix.msc4354.sticky_events", "limit") {
@@ -302,44 +249,6 @@ func rawExtensions(body []byte) map[string]map[string]json.RawMessage {
 func extensionHas(body []byte, name, field string) bool {
 	_, ok := rawExtensions(body)[name][field]
 	return ok
-}
-
-// nonNullable are the extension fields an explicit null fails since Synapse
-// 1.165 (#20363 made them StrictBool and list[StrictStr] rather than
-// Optional); before, a null was a falsy None. to_device's enabled still
-// takes one. sticky_events' limit (NonNegativeStrictInt) never did.
-var nonNullable = map[string][]string{
-	"e2ee":         {"enabled"},
-	"account_data": {"enabled", "lists", "rooms"},
-	"receipts":     {"enabled", "lists", "rooms"},
-	"typing":       {"enabled", "lists", "rooms"},
-	"io.element.msc4308.thread_subscriptions": {"enabled"},
-	"org.matrix.msc4354.sticky_events":        {"enabled", "limit", "lists", "rooms"},
-}
-
-// validateExtensionNulls refuses what the model refuses that encoding/json
-// would take as a zero value: an explicit null where none is allowed, and a
-// negative sticky events limit.
-func validateExtensionNulls(body []byte) error {
-	raw := rawExtensions(body)
-	for _, name := range sortedStrings(nonNullable) {
-		ext, ok := raw[name]
-		if !ok {
-			continue
-		}
-		for _, field := range nonNullable[name] {
-			if v, ok := ext[field]; ok && strings.TrimSpace(string(v)) == "null" {
-				return fmt.Errorf("extensions.%s.%s: Input should not be null", name, field)
-			}
-		}
-	}
-	if v, ok := raw["org.matrix.msc4354.sticky_events"]["limit"]; ok {
-		var n int64
-		if json.Unmarshal(v, &n) == nil && n < 0 {
-			return fmt.Errorf("extensions.org.matrix.msc4354.sticky_events.limit: Input should be greater than or equal to 0")
-		}
-	}
-	return nil
 }
 
 func sortedStrings[V any](m map[string]V) []string {

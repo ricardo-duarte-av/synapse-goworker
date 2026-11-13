@@ -25,26 +25,30 @@ import (
 // replication stream. So will this one, from M5. Until then, anything that
 // needs an exact token must be given one -- which is what the comparator's pin
 // is for.
+//
+// Each stream starts at 1 at the least, as Synapse's id generators do
+// (GREATEST(COALESCE(MAX(id), 1), 1)): an empty stream is at 1, not 0, and
+// that position reaches clients (to_device's next_batch).
 func (s *Store) CurrentToken(ctx context.Context) (streamtoken.Token, error) {
 	// One round trip rather than fourteen. Each subquery is a MAX over an
 	// indexed column, so the planner reduces them all to index scans.
 	const q = `
 		SELECT
-			(SELECT COALESCE(MAX(stream_ordering), 0) FROM events),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM presence_stream),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM receipts_linearized),
+			(SELECT GREATEST(COALESCE(MAX(stream_ordering), 1), 1) FROM events),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM presence_stream),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM receipts_linearized),
 			GREATEST(
-				(SELECT COALESCE(MAX(stream_id), 0) FROM account_data),
-				(SELECT COALESCE(MAX(stream_id), 0) FROM room_account_data),
-				(SELECT COALESCE(MAX(stream_id), 0) FROM room_tags_revisions)),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM push_rules_stream),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM device_inbox),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM device_lists_stream),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM un_partial_stated_room_stream),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM thread_subscriptions),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM sticky_events),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM quarantined_media_changes),
-			(SELECT COALESCE(MAX(stream_id), 0) FROM profile_updates)`
+				(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM account_data),
+				(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM room_account_data),
+				(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM room_tags_revisions)),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM push_rules_stream),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM device_inbox),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM device_lists_stream),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM un_partial_stated_room_stream),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM thread_subscriptions),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM sticky_events),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM quarantined_media_changes),
+			(SELECT GREATEST(COALESCE(MAX(stream_id), 1), 1) FROM profile_updates)`
 
 	var (
 		events, presence, receipts, accountData, pushRules, toDevice  int64

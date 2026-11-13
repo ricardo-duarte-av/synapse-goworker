@@ -24,6 +24,18 @@ func filterVisible(ctx context.Context, d Deps, roomID, userID string,
 	return filterVisibleAlways(ctx, d, roomID, userID, events, isPeeking, nowMS, nil)
 }
 
+// withPrevContent gives loaded timeline events their prev_content, as
+// Synapse's get_events_as_list(get_prev_content=True) does when it loads
+// them -- before the visibility filter, which reads it to show the user
+// their own leave.
+func withPrevContent(ctx context.Context, d Deps, events []store.TimelineEvent) error {
+	targets := make([]*clientevent.Stored, 0, len(events))
+	for i := range events {
+		targets = append(targets, &events[i].Stored)
+	}
+	return d.Store.AttachPrevContent(ctx, targets)
+}
+
 // filterVisibleAlways is filterVisible with an escape hatch: events in
 // alwaysInclude bypass the visibility decision entirely, which is Synapse's
 // `always_include_ids`.
@@ -62,6 +74,6 @@ func attachAggregations(body json.RawMessage, agg eventfilter.Aggregation,
 // receiptEvent renders one room's receipts as the single m.receipt event the
 // legacy endpoints emit, or nil when there are none.
 func receiptEvent(roomID string, rows []store.ReceiptRow, userID string,
-	withThreads bool) (json.RawMessage, error) {
-	return eventfilter.ReceiptEvent(roomID, rows, userID, withThreads)
+	withThreads, announcement bool) (json.RawMessage, error) {
+	return eventfilter.ReceiptEvent(roomID, rows, userID, withThreads, announcement)
 }

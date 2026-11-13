@@ -185,6 +185,12 @@ func (s *Store) PurgeCaches() {
 	// purges it on the same drop; doing it here too is harmless.
 	s.caches.states.Purge()
 	s.caches.filteredState.Purge()
+	// A purged room's mapping goes with it (_invalidate_caches_for_room
+	// drops get_server_announcement_config_ids_by_room_id).
+	s.InvalidateAnnouncementRooms()
+	s.createTS.Range(func(k, _ any) bool { s.createTS.Delete(k); return true })
+	// Purged events leave Synapse's event cache with their rooms.
+	s.prev().purge()
 }
 
 // CacheLen reports the cached entry counts, for metrics.

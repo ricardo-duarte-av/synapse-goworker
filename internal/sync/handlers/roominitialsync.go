@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/clientauth"
+	"github.com/ricardo-duarte-av/synapse-goworker/internal/platform/synapsecfg"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/clientevent"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/deviceinbox"
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/sync/lazyload"
@@ -84,9 +85,20 @@ type Deps struct {
 	ServerName string
 	// ExcludedRooms are rooms configured never to appear in a sync.
 	ExcludedRooms map[string]bool
+	// PresenceEnabled is homeserver.yaml's presence.enabled as it stands now
+	// ("untracked" counts as enabled). Nil means enabled.
+	PresenceEnabled func() bool
+	// Announcements is homeserver.yaml's server_announcements as it stands
+	// now (read on each request, so a re-read applies). Nil means none.
+	Announcements func() synapsecfg.Announcements
 	// Fallback is Synapse's main process, for a request a handler finds it
 	// does not reproduce.
 	Fallback http.Handler
+}
+
+// presenceEnabled is presence.enabled now; true when not wired.
+func (d Deps) presenceEnabled() bool {
+	return d.PresenceEnabled == nil || d.PresenceEnabled()
 }
 
 // defaultPaginationLimit is Synapse's PaginationConfig default for the legacy
@@ -117,6 +129,10 @@ func RoomInitialSync(d Deps) http.Handler {
 			refuse(w, ann, status, *mxErr)
 			return
 		}
+		if body == nil {
+			handBack(w, r, d, ann, "server_announcements")
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	})
@@ -145,6 +161,17 @@ func roomInitialSync(r *http.Request, d Deps, verdict clientauth.Verdict, roomID
 	membership, err := d.Store.CurrentMembership(ctx, roomID, verdict.UserID)
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "membership", err)
+	}
+	// A user not in a server announcement room reads it as a peek, which is
+	// not reproduced here.
+	if membership.Membership != "join" {
+		announce, err := announcementRooms(ctx, d, verdict.UserID)
+		if err != nil {
+			return nil, http.StatusInternalServerError, internalError(d, "announcement rooms", err)
+		}
+		if announce.all[roomID] {
+			return nil, 0, nil
+		}
 	}
 	switch membership.Membership {
 	case "join":
@@ -189,6 +216,10 @@ func roomInitialSync(r *http.Request, d Deps, verdict clientauth.Verdict, roomID
 	// rendered at all, let alone written to a response buffer.
 	//
 	// is_peeking is false: the user is joined, checked above.
+	// get_recent_events_for_room loads with prev content.
+	if err := withPrevContent(ctx, d, messages); err != nil {
+		return nil, http.StatusInternalServerError, internalError(d, "prev content", err)
+	}
 	messages, memberships, err := filterVisible(ctx, d, roomID, verdict.UserID, messages, false, timeNow)
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "visibility", err)
@@ -242,6 +273,8 @@ func roomInitialSync(r *http.Request, d Deps, verdict clientauth.Verdict, roomID
 	stateJSON := make([]json.RawMessage, 0, len(state))
 	for _, ev := range state {
 		stored := ev.Stored
+		// What Synapse's cached copy of a state event carries (prevCache).
+		d.Store.AttachCachedPrevContent(&stored)
 		if err := attachRedaction(&stored, redactions, timeNow, cfg); err != nil {
 			return nil, http.StatusInternalServerError, internalError(d, "redaction", err)
 		}
@@ -276,7 +309,11 @@ func roomInitialSync(r *http.Request, d Deps, verdict clientauth.Verdict, roomID
 		return nil, http.StatusInternalServerError, internalError(d, "account data", err)
 	}
 
-	presence, err := roomPresence(ctx, d, state, timeNow)
+	// Disabled presence is an empty list (get_presence).
+	presence := []json.RawMessage{}
+	if d.presenceEnabled() {
+		presence, err = roomPresence(ctx, d, state, timeNow)
+	}
 	if err != nil {
 		return nil, http.StatusInternalServerError, internalError(d, "presence", err)
 	}

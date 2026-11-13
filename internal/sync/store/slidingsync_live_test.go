@@ -57,7 +57,7 @@ func TestLiveSlidingRoomsAgreeWithCurrentMembership(t *testing.T) {
 		t.Skipf("no local users with joined rooms: %v", err)
 	}
 
-	got, err := db.SlidingRoomsForUser(ctx, userID)
+	got, _, err := db.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestLiveSlidingSelfLeavesAreExcludedThenRecovered(t *testing.T) {
 		t.Skipf("no self-leaves on this server: %v", err)
 	}
 
-	rooms, err := db.SlidingRoomsForUser(ctx, userID)
+	rooms, _, err := db.SlidingRoomsForUser(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestLiveSlidingSelfLeavesAreExcludedThenRecovered(t *testing.T) {
 	}
 
 	// Asked about a token BEFORE the leave, the room must come back.
-	leaves, err := db.SlidingSelfLeavesAfter(ctx, userID, pos-1)
+	leaves, _, err := db.SlidingSelfLeavesAfter(ctx, userID, pos-1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestLiveSlidingSelfLeavesAreExcludedThenRecovered(t *testing.T) {
 	}
 
 	// Asked about a token after it, it must not.
-	leaves, err = db.SlidingSelfLeavesAfter(ctx, userID, pos)
+	leaves, _, err = db.SlidingSelfLeavesAfter(ctx, userID, pos)
 	if err != nil {
 		t.Fatal(err)
 	}
