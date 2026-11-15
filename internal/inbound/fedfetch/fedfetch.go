@@ -16,10 +16,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tidwall/gjson"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/federation"
 
 	"github.com/ricardo-duarte-av/synapse-goworker/internal/inbound/backoff"
@@ -144,17 +147,7 @@ func (c *Client) MissingEvents(ctx context.Context, origin, roomID string, rv *p
 	if err := c.do(ctx, 60*time.Second, origin, http.MethodPost, []any{"v1", "get_missing_events", roomID}, nil, body, &resp); err != nil {
 		return nil, err
 	}
-	out := make([]*Pulled, 0, len(resp.Events))
-	for _, raw := range resp.Events {
-		p, err := c.check(ctx, raw, rv, roomID, origin, batch)
-		if err != nil {
-			return nil, err
-		}
-		if p != nil {
-			out = append(out, p)
-		}
-	}
-	return out, nil
+	return c.checkAll(ctx, resp.Events, rv, roomID, origin)
 }
 
 // StateIDs is get_room_state_ids: the state at eventID and its auth chain.
@@ -284,19 +277,33 @@ func (c *Client) State(ctx context.Context, dest, roomID, eventID string, rv *pd
 	if err := c.do(ctx, 10*time.Minute, dest, http.MethodGet, []any{"v1", "state", roomID}, q, nil, &resp); err != nil {
 		return nil, nil, err
 	}
-	for _, list := range []struct {
-		raws []json.RawMessage
-		out  *[]*Pulled
-	}{{resp.AuthChain, &auth}, {resp.PDUs, &state}} {
-		for _, raw := range list.raws {
-			p, err := c.check(ctx, raw, rv, roomID, dest, batch)
+	// Two batches, the auth chain then the state, as get_room_state checks
+	// them. The streaming parser builds them with make_event_from_dict:
+	// none of event_from_pdu_json's checks, unsigned kept as received.
+	asReceived := func(raws []json.RawMessage) ([]*parsedPDU, error) {
+		out := make([]*parsedPDU, 0, len(raws))
+		for _, raw := range raws {
+			pp, err := parseReceived(raw, rv)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			if p != nil {
-				*list.out = append(*list.out, p)
-			}
+			out = append(out, pp)
 		}
+		return out, nil
+	}
+	pa, err := asReceived(resp.AuthChain)
+	if err != nil {
+		return nil, nil, err
+	}
+	ps, err := asReceived(resp.PDUs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if auth, err = c.checkParsed(ctx, pa, rv, roomID, dest); err != nil {
+		return nil, nil, err
+	}
+	if state, err = c.checkParsed(ctx, ps, rv, roomID, dest); err != nil {
+		return nil, nil, err
 	}
 	return auth, state, nil
 }
@@ -311,9 +318,55 @@ func (c *Client) EventAuth(ctx context.Context, dest, roomID, eventID string, rv
 	if err := c.do(ctx, 0, dest, http.MethodGet, []any{"v1", "event_auth", roomID, eventID}, nil, nil, &resp); err != nil {
 		return nil, err
 	}
-	var out []*Pulled
-	for _, raw := range resp.AuthChain {
-		p, err := c.check(ctx, raw, rv, roomID, dest, batch)
+	return c.checkAll(ctx, resp.AuthChain, rv, roomID, dest)
+}
+
+// check is event_from_pdu_json, then _check_sigs_and_hash_and_fetch_one for
+// the outcomes we reproduce: valid signatures and hash, and the policy
+// server's verdict. A PDU event_from_pdu_json rejects is dropped (nil).
+func (c *Client) check(ctx context.Context, raw []byte, rv *pdu.RoomVersion, roomID, origin string, mode checkMode) (*Pulled, error) {
+	pp, err := parsePulled(raw, rv)
+	if err != nil || pp == nil {
+		return nil, err
+	}
+	return c.verify(ctx, pp, rv, roomID, origin, mode, c.lookup(ctx))
+}
+
+// checkAll is _check_sigs_and_hash_for_pulled_events_and_fetch over a
+// list: every PDU parsed, the keys all their signatures need fetched as
+// the one batch Synapse's concurrent checks make, then each checked in
+// order. What is dropped is left out; the first error ends it.
+func (c *Client) checkAll(ctx context.Context, raws []json.RawMessage, rv *pdu.RoomVersion, roomID, origin string) ([]*Pulled, error) {
+	parsed := make([]*parsedPDU, 0, len(raws))
+	for _, raw := range raws {
+		pp, err := parsePulled(raw, rv)
+		if err != nil {
+			return nil, err
+		}
+		if pp != nil {
+			parsed = append(parsed, pp)
+		}
+	}
+	return c.checkParsed(ctx, parsed, rv, roomID, origin)
+}
+
+// checkParsed is checkAll after parsing.
+func (c *Client) checkParsed(ctx context.Context, parsed []*parsedPDU, rv *pdu.RoomVersion, roomID, origin string) ([]*Pulled, error) {
+	lookup := c.lookup(ctx)
+	if c.keys != nil && len(parsed) > 1 {
+		var reqs []keyring.KeyRequest
+		for _, pp := range parsed {
+			r, err := pdu.SignatureKeyRequests(pp.ev, pp.raw)
+			if err != nil {
+				continue // the check below fails it the same way
+			}
+			reqs = append(reqs, r...)
+		}
+		lookup = c.keys.Batch(ctx, reqs)
+	}
+	out := make([]*Pulled, 0, len(parsed))
+	for _, pp := range parsed {
+		p, err := c.verify(ctx, pp, rv, roomID, origin, batch, lookup)
 		if err != nil {
 			return nil, err
 		}
@@ -324,15 +377,127 @@ func (c *Client) EventAuth(ctx context.Context, dest, roomID, eventID string, rv
 	return out, nil
 }
 
-// check is event_from_pdu_json, then _check_sigs_and_hash_and_fetch_one for
-// the outcomes we reproduce: valid signatures and hash, and the policy
-// server's verdict. A PDU event_from_pdu_json rejects is dropped (nil).
-func (c *Client) check(ctx context.Context, raw []byte, rv *pdu.RoomVersion, roomID, origin string, mode checkMode) (*Pulled, error) {
+// ErrBackfillFailed is a backfill from one server that Synapse gives up
+// on with a SynapseError, an InvalidResponseError or any other exception
+// try_backfill logs before trying the next server.
+var ErrBackfillFailed = errors.New("fedfetch: backfill failed")
+
+// canonicalJSONMaxInt is CANONICALJSON_MAX_INT; MIN_INT is its negative.
+const canonicalJSONMaxInt = 1<<53 - 1
+
+// Backfill is FederationClient.backfill: GET /backfill/{roomId} with the
+// extremities and the limit (get_json, retried, a 400 M_UNRECOGNIZED
+// tried again with a trailing slash), the PDUs filtered for a valid depth
+// and parsed (parse_events_from_pdu_json), then checked as one batch.
+// Errors are the request's (an HTTP error keeps its status), or
+// ErrBackfillFailed for what Synapse raises after the request.
+func (c *Client) Backfill(ctx context.Context, dest, roomID string, rv *pdu.RoomVersion, extremities []string, limit int) ([]*Pulled, error) {
+	if len(extremities) == 0 {
+		return nil, nil
+	}
+	q := url.Values{"v": extremities, "limit": {strconv.Itoa(limit)}}
+	var resp json.RawMessage
+	path := []any{"v1", "backfill", roomID}
+	err := c.do(ctx, 0, dest, http.MethodGet, path, q, nil, &resp)
+	var he mautrix.HTTPError
+	if errors.As(err, &he) && he.Response != nil && he.Response.StatusCode == http.StatusBadRequest &&
+		he.RespError != nil && he.RespError.ErrCode == "M_UNRECOGNIZED" {
+		resp = nil
+		err = c.do(ctx, 0, dest, http.MethodGet, append(path, ""), q, nil, &resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+	data := gjson.ParseBytes(resp)
+	if !data.IsObject() {
+		return nil, fmt.Errorf("%w: Backfill transaction_data is not a dict.", ErrBackfillFailed)
+	}
+	pdus := data.Get("pdus")
+	if !pdus.IsArray() {
+		return nil, fmt.Errorf("%w: transaction_data.pdus is not a list.", ErrBackfillFailed)
+	}
+	var parsed []*parsedPDU
+	for _, item := range pdus.Array() {
+		raw := []byte(item.Raw)
+		// filter_pdus_for_valid_depth.
+		depth := item.Get("depth")
+		if !item.IsObject() || !depth.Exists() {
+			if !item.IsObject() {
+				return nil, fmt.Errorf("%w: a PDU is not an object", ErrUncertain)
+			}
+			continue
+		}
+		if depth.Type != gjson.Number {
+			return nil, fmt.Errorf("%w: a PDU's depth is %s", ErrUncertain, depth.Raw)
+		}
+		if strings.ContainsAny(depth.Raw, ".eE") {
+			return nil, fmt.Errorf("%w: a PDU's depth is %s", ErrUncertain, depth.Raw)
+		}
+		d, perr := strconv.ParseInt(depth.Raw, 10, 64)
+		if perr != nil || d < -canonicalJSONMaxInt || d > canonicalJSONMaxInt {
+			continue
+		}
+		// event_from_pdu_json raises, for the whole response.
+		if err := pdu.CheckPDUJSON(raw, rv); errors.Is(err, pdu.ErrIgnoredPDU) {
+			return nil, fmt.Errorf("%w: %v", ErrBackfillFailed, err)
+		}
+		pp, err := parsePulled(raw, rv)
+		if err != nil {
+			return nil, err
+		}
+		if pp != nil {
+			parsed = append(parsed, pp)
+		}
+	}
+	return c.checkParsed(ctx, parsed, rv, roomID, dest)
+}
+
+// lookup is the Keyring, or without one the keys Synapse holds.
+func (c *Client) lookup(ctx context.Context) pdu.KeyFetch {
+	if c.keys != nil {
+		return c.keys.Fetch(ctx)
+	}
+	return func(server string, keyIDs []string, _ int64) (map[string]pdu.VerifyKey, error) {
+		return c.st.VerifyKeys(ctx, server, keyIDs)
+	}
+}
+
+// parsedPDU is a pulled PDU as event_from_pdu_json leaves it, or, with
+// received set, as make_event_from_dict does.
+type parsedPDU struct {
+	raw      []byte
+	id       string
+	ev       *pdu.Event
+	hashOK   bool
+	received bool
+}
+
+// parseReceived is make_event_from_dict for a /state response's PDU.
+func parseReceived(raw []byte, rv *pdu.RoomVersion) (*parsedPDU, error) {
+	if !gjson.ParseBytes(raw).IsObject() {
+		return nil, fmt.Errorf("%w: a /state PDU is not an object", ErrUncertain)
+	}
+	pp, err := parseEvent(raw, rv)
+	if err != nil {
+		return nil, err
+	}
+	pp.received = true
+	return pp, nil
+}
+
+// parsePulled is event_from_pdu_json and the content hash: nil for a PDU
+// it drops.
+func parsePulled(raw []byte, rv *pdu.RoomVersion) (*parsedPDU, error) {
 	if err := pdu.CheckPDUJSON(raw, rv); errors.Is(err, pdu.ErrIgnoredPDU) {
 		return nil, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUncertain, err)
 	}
+	return parseEvent(raw, rv)
+}
+
+// parseEvent is the event ID, the parse and the content hash.
+func parseEvent(raw []byte, rv *pdu.RoomVersion) (*parsedPDU, error) {
 	id := ""
 	if rv.EventFormat == pdu.FormatV1V2 {
 		var v struct {
@@ -354,26 +519,31 @@ func (c *Client) check(ctx context.Context, raw []byte, rv *pdu.RoomVersion, roo
 	if err != nil {
 		return nil, fmt.Errorf("%w: pulled event %s: content hash: %v", ErrUncertain, id, err)
 	}
-	lookup := func(server string, keyIDs []string, _ int64) (map[string]pdu.VerifyKey, error) {
-		return c.st.VerifyKeys(ctx, server, keyIDs)
-	}
-	if c.keys != nil {
-		lookup = c.keys.Fetch(ctx)
-	}
+	return &parsedPDU{raw: raw, id: id, ev: ev, hashOK: hashOK}, nil
+}
+
+// verify is the rest of _check_sigs_and_hash_and_fetch_one, with the keys
+// from lookup.
+func (c *Client) verify(ctx context.Context, pp *parsedPDU, rv *pdu.RoomVersion, roomID, origin string, mode checkMode, lookup pdu.KeyFetch) (*Pulled, error) {
+	raw, id, ev, hashOK := pp.raw, pp.id, pp.ev, pp.hashOK
 	if err := pdu.CheckSignaturesWith(ev, raw, lookup); err != nil {
 		return c.badSignature(ctx, err, ev, id, rv, roomID, origin, mode)
 	}
 	p := &Pulled{ID: id, Event: ev, Metadata: map[string]any{}}
 	if !hashOK {
-		// "Event content has been tampered, redacting": recorded, the
-		// pruned copy kept, no policy server asked.
-		c.failed(ctx, ev.RoomID, id, "Event content has been tampered with")
+		// The pruned copy kept, no policy server asked; recorded as
+		// "Event content has been tampered with" only when pruning changed
+		// which keys the event or its content has: one with the same keys
+		// "seems to have been redacted".
 		pulled, err := pduverify.PulledEvent(raw, "", nil)
 		if err == nil {
 			p.Raw, err = pdu.Redact(pulled, rv)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrUncertain, err)
+		}
+		if !sameKeys(raw, p.Raw) {
+			c.failed(ctx, ev.RoomID, id, "Event content has been tampered with")
 		}
 		p.Metadata["redacted"] = true
 		return p, nil
@@ -398,11 +568,46 @@ func (c *Client) check(ctx context.Context, raw []byte, rv *pdu.RoomVersion, roo
 			sigs = a.Sigs
 		}
 	}
-	// No request time: any age is dropped.
-	if p.Raw, err = pduverify.PulledEvent(raw, v.Server, sigs); err != nil {
+	// No request time: any age is dropped; a /state copy keeps unsigned.
+	if pp.received {
+		p.Raw, err = pduverify.ReceivedEvent(raw, v.Server, sigs)
+	} else {
+		p.Raw, err = pduverify.PulledEvent(raw, v.Server, sigs)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUncertain, err)
 	}
 	return p, nil
+}
+
+// sameKeys is _check_sigs_and_hash's test of a redacted copy: the event's
+// keys (unsigned aside, as EventBase holds it apart) and its content's are
+// those of the pruned event.
+func sameKeys(raw, pruned []byte) bool {
+	keySet := func(v gjson.Result, topLevel bool) map[string]bool {
+		out := map[string]bool{}
+		v.ForEach(func(k, _ gjson.Result) bool {
+			if !topLevel || k.Str != "unsigned" {
+				out[k.Str] = true
+			}
+			return true
+		})
+		return out
+	}
+	eq := func(a, b map[string]bool) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for k := range a {
+			if !b[k] {
+				return false
+			}
+		}
+		return true
+	}
+	r, p := gjson.ParseBytes(raw), gjson.ParseBytes(pruned)
+	return eq(keySet(r, true), keySet(p, true)) &&
+		eq(keySet(r.Get("content"), false), keySet(p.Get("content"), false))
 }
 
 func (c *Client) failed(ctx context.Context, roomID, eventID, cause string) {

@@ -135,11 +135,12 @@ func (p *Processor) getMissingEvents(ctx context.Context, origin string, rv *pdu
 		return nil
 	}
 	p.log.Info().Int("count", len(events)).Str("event_id", ev.ID).Msg("Got prev_events")
-	return p.processPulledEvents(ctx, origin, rv, events)
+	return p.processPulledEvents(ctx, origin, rv, events, false)
 }
 
-// processPulledEvents is _process_pulled_events (backfilled false).
-func (p *Processor) processPulledEvents(ctx context.Context, origin string, rv *pdu.RoomVersion, events []*fedfetch.Pulled) error {
+// processPulledEvents is _process_pulled_events: backfilled for events
+// pulled by /backfill, else for missing prev events.
+func (p *Processor) processPulledEvents(ctx context.Context, origin string, rv *pdu.RoomVersion, events []*fedfetch.Pulled, backfilled bool) error {
 	m := p.missing
 	ids := make([]string, len(events))
 	for i, e := range events {
@@ -185,7 +186,7 @@ func (p *Processor) processPulledEvents(ctx context.Context, origin string, rv *
 		go func() {
 			defer p.wg.Done()
 			for _, e := range retried {
-				if err := p.processPulledEvent(p.ctx, origin, rv, e); err != nil {
+				if err := p.processPulledEvent(p.ctx, origin, rv, e, backfilled); err != nil {
 					p.log.Info().Err(err).Str("event_id", e.ID).Msg("Write mode: retrying a pulled event failed")
 					return
 				}
@@ -194,7 +195,7 @@ func (p *Processor) processPulledEvents(ctx context.Context, origin string, rv *
 	}
 	byDepth(first)
 	for _, e := range first {
-		if err := p.processPulledEvent(ctx, origin, rv, e); err != nil {
+		if err := p.processPulledEvent(ctx, origin, rv, e, backfilled); err != nil {
 			return err
 		}
 	}
@@ -202,13 +203,13 @@ func (p *Processor) processPulledEvents(ctx context.Context, origin string, rv *
 }
 
 // processPulledEvent is _process_pulled_event.
-func (p *Processor) processPulledEvent(ctx context.Context, origin string, rv *pdu.RoomVersion, pe *fedfetch.Pulled) error {
-	return p.processPulled(ctx, origin, rv, pe, false)
+func (p *Processor) processPulledEvent(ctx context.Context, origin string, rv *pdu.RoomVersion, pe *fedfetch.Pulled, backfilled bool) error {
+	return p.processPulled(ctx, origin, rv, pe, backfilled, false)
 }
 
 // processPulled is processPulledEvent; retried is the second attempt after
 // a PartialStateConflictError.
-func (p *Processor) processPulled(ctx context.Context, origin string, rv *pdu.RoomVersion, pe *fedfetch.Pulled, retried bool) error {
+func (p *Processor) processPulled(ctx context.Context, origin string, rv *pdu.RoomVersion, pe *fedfetch.Pulled, backfilled, retried bool) error {
 	m := p.missing
 	ev := pe.Event
 	room := ev.RoomID
@@ -274,6 +275,7 @@ func (p *Processor) processPulled(ctx context.Context, origin string, rv *pdu.Ro
 	in := pduverify.DecideInput{
 		Origin: origin, EventJSON: pe.Raw, Metadata: meta, EventID: pe.ID,
 		Room: rv, OurServer: p.server, Cache: p.cache, StateBefore: stateBefore, PartialState: partial,
+		Backfilled: backfilled,
 	}
 	d, err := m.Verifier.Decide(ctx, in)
 	if err == nil && retried && d.PartialState {
@@ -312,12 +314,12 @@ func (p *Processor) processPulled(ctx context.Context, origin string, rv *pdu.Ro
 		return nil
 	}
 	s := &Staged{Origin: origin, EventID: pe.ID, EventJSON: pe.Raw, InternalMetadata: meta}
-	if err := p.write(ctx, room, s, d); err != nil {
+	if err := p.write(ctx, room, s, d, backfilled); err != nil {
 		if errors.Is(err, replication.ErrPartialStateConflict) {
 			if !retried {
 				// The room was un-partial stated meanwhile: the context
 				// is computed again, with full state this time.
-				return p.processPulled(ctx, origin, rv, pe, true)
+				return p.processPulled(ctx, origin, rv, pe, backfilled, true)
 			}
 			return fmt.Errorf("%w: pulled %s: a second partial state conflict", errFailed, pe.ID)
 		}

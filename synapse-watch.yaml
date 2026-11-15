@@ -283,13 +283,17 @@ components:
   inbound:
     code: internal/inbound
     synapse:
+      - synapse/crypto/keyring.py
+      - synapse/federation/federation_base.py
       - synapse/federation/federation_client.py
       - synapse/federation/federation_server.py
+      - synapse/federation/transport/client.py
       - synapse/federation/transport/server/
       - synapse/federation/units.py
       - synapse/handlers/device.py
       - synapse/handlers/devicemessage.py
       - synapse/handlers/e2e_keys.py
+      - synapse/handlers/federation.py
       - synapse/handlers/federation_event.py
       - synapse/handlers/presence.py
       - synapse/handlers/receipts.py
@@ -299,10 +303,13 @@ components:
       - synapse/replication/http/federation.py
       - synapse/replication/tcp/commands.py
       - synapse/replication/tcp/resource.py
+      - synapse/storage/databases/main/event_federation.py
       - synapse/storage/databases/main/lock.py
+      - synapse/storage/databases/main/roommember.py
       - synapse/storage/databases/state/
       - synapse/storage/invite_rule.py
       - synapse/util/retryutils.py
+      - synapse/visibility.py
 
   fedread:
     code: internal/fedread

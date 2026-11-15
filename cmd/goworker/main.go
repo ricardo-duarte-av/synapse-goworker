@@ -366,8 +366,11 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 			}
 			return false, nil
 		},
-		Log:    componentLogger(base, cfg.Log, "inbound"),
-		Worker: workerLogger(base, cfg.Log, "inbound"),
+		// Backfill for /messages judges a backfill point's successors as
+		// the federation reads judge what they serve.
+		VisibleToSelf: reads.EventVisibleToSelf,
+		Log:           componentLogger(base, cfg.Log, "inbound"),
+		Worker:        workerLogger(base, cfg.Log, "inbound"),
 	})
 	var send http.Handler
 	if err != nil {
@@ -378,6 +381,9 @@ func run(cfg *config.Config, base zerolog.Logger, checkOnly bool) error {
 	} else {
 		closers = append(closers, inbound.Close)
 		send = inbound.Handler()
+		if b := inbound.Backfiller(); b != nil {
+			clientSync.SetBackfiller(backfiller{b})
+		}
 	}
 
 	creator, err := creatorapp.New(ctx, creatorapp.Settings{

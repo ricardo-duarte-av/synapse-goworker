@@ -93,9 +93,9 @@ upstream goworker {
 #
 #   # Client reads: GET /rooms/{id}/event/{id}, GET /rooms/{id}/messages
 #   # and POST /keys/query (a profile's GET already arrives by profile/
-#   # above). What needs a federation query is handed to main, a
-#   # /messages page Synapse would backfill for included, so every
-#   # backfill of a room stays on main.
+#   # above). What needs a federation query is handed to main, except
+#   # /messages' backfill, which inbound's write mode does when it fetches
+#   # missing events (else such a page is main's).
 #   location ~ ^/_matrix/client/((api/v1|r0|v3|unstable)/rooms/[^/]+/(event/|messages$)|(r0|v3|unstable)/keys/query$) {
 #       include /data/nginx/custom/matrix-config.conf;
 #       proxy_pass http://goworker;

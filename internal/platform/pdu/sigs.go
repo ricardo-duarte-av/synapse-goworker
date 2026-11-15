@@ -439,28 +439,77 @@ func CheckSignatures(ev *Event, raw []byte, lookup KeyLookup) error {
 
 // CheckSignaturesWith is CheckSignatures with a KeyFetch.
 func CheckSignaturesWith(ev *Event, raw []byte, lookup KeyFetch) error {
+	signed, validity, servers, roles, err := signingPlan(ev, raw)
+	if err != nil {
+		return err
+	}
+	for i, server := range servers {
+		if err := verifyForServer(server, signed, validity, lookup); err != nil {
+			var se *SignatureError
+			if errors.As(err, &se) {
+				se.Role = roles[i]
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// KeyRequest is a _FetchKeyRequest: keys of a server, valid until at least
+// MinValidMS.
+type KeyRequest struct {
+	Server     string
+	KeyIDs     []string
+	MinValidMS int64
+}
+
+// SignatureKeyRequests is what checking the event's signatures asks the
+// Keyring for: for each server that must sign, the key IDs of its
+// signatures and the time they must be valid at. A server that has not
+// signed asks for nothing. Errors are CheckSignaturesWith's, before any
+// lookup.
+func SignatureKeyRequests(ev *Event, raw []byte) ([]KeyRequest, error) {
+	signed, validity, servers, _, err := signingPlan(ev, raw)
+	if err != nil {
+		return nil, err
+	}
+	var out []KeyRequest
+	for _, server := range servers {
+		sigs, ok := field(get(gjson.ParseBytes(signed), "signatures"), server)
+		if !ok || !sigs.IsObject() {
+			continue
+		}
+		if ids := keys(sigs); len(ids) > 0 {
+			out = append(out, KeyRequest{Server: server, KeyIDs: ids, MinValidMS: validity})
+		}
+	}
+	return out, nil
+}
+
+// signingPlan is _check_sigs_on_pdu up to the lookups: the redacted event
+// without unsigned, the time keys must be valid at, and the servers that
+// must sign with why.
+func signingPlan(ev *Event, raw []byte) (signed []byte, validity int64, servers, roles []string, err error) {
 	rv := ev.Room
 	// Keys must be valid at the event's origin_server_ts from room v5 on
 	// (enforce_key_validity); before that, at any time at all.
-	validity := int64(0)
 	if rv.EnforceKeyValidity {
 		validity = ev.OriginServerTS
 	}
 
 	redacted, err := Redact(raw, rv)
 	if err != nil {
-		return err
+		return nil, 0, nil, nil, err
 	}
-	signed, err := without(redacted, "unsigned")
+	signed, err = without(redacted, "unsigned")
 	if err != nil {
-		return err
+		return nil, 0, nil, nil, err
 	}
 
 	senderDomain, err := domainOf(ev.Sender)
 	if err != nil {
-		return err
+		return nil, 0, nil, nil, err
 	}
-	var servers, roles []string
 	tpi := false
 	if ev.Type == "m.room.member" {
 		if m, err := ev.Membership(); err == nil && m == "invite" && has(ev.Content, "third_party_invite") {
@@ -473,7 +522,7 @@ func CheckSignaturesWith(ev *Event, raw []byte, lookup KeyFetch) error {
 	if rv.EventFormat == FormatV1V2 {
 		d, err := domainOf(ev.ID)
 		if err != nil {
-			return err
+			return nil, 0, nil, nil, err
 		}
 		if d != senderDomain {
 			servers, roles = append(servers, d), append(roles, SigEventDomain)
@@ -483,26 +532,16 @@ func CheckSignaturesWith(ev *Event, raw []byte, lookup KeyFetch) error {
 		if m, err := ev.Membership(); err == nil && m == "join" && has(ev.Content, "join_authorised_via_users_server") {
 			au := get(ev.Content, "join_authorised_via_users_server")
 			if au.Type != gjson.String {
-				return raise("join_authorised_via_users_server is not a string")
+				return nil, 0, nil, nil, raise("join_authorised_via_users_server is not a string")
 			}
 			d, err := domainOf(au.Str)
 			if err != nil {
-				return err
+				return nil, 0, nil, nil, err
 			}
 			servers, roles = append(servers, d), append(roles, SigAuthorising)
 		}
 	}
-
-	for i, server := range servers {
-		if err := verifyForServer(server, signed, validity, lookup); err != nil {
-			var se *SignatureError
-			if errors.As(err, &se) {
-				se.Role = roles[i]
-			}
-			return err
-		}
-	}
-	return nil
+	return signed, validity, servers, roles, nil
 }
 
 // verifyForServer is Keyring.process_request for one server: every key we

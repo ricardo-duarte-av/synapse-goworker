@@ -1,6 +1,7 @@
 package pduverify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -171,6 +172,11 @@ type DecideInput struct {
 	// PartialState, with StateBefore, is whether any prev held has
 	// partial state (_compute_event_context_with_maybe_missing_prevs).
 	PartialState bool
+	// Backfilled is _process_received_pdu(backfilled=True), for an event
+	// pulled by /backfill: no soft-fail check, no push actions, and none
+	// of what follows persisting (guests kicked, devices resynced). Nor
+	// does _process_pulled_event ask whether our server is in the room.
+	Backfilled bool
 }
 
 // Decision is what to do with a staged event.
@@ -279,9 +285,12 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 		return d, nil
 	}
 
-	joined, ok, err := s.st.HostJoined(ctx, ev.RoomID, in.OurServer)
-	if err != nil {
-		return nil, err
+	joined, ok := true, true
+	if !in.Backfilled {
+		joined, ok, err = s.st.HostJoined(ctx, ev.RoomID, in.OurServer)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !ok {
 		d.Defer = "host joined unknown"
@@ -371,7 +380,9 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 		d.Metadata["recheck_redaction"] = true
 	}
 	d.SoftFailed = meta["soft_failed"] == true
-	if snap.PartialState {
+	if in.Backfilled {
+		// No _check_for_soft_fail for a backfilled event.
+	} else if snap.PartialState {
 		// _check_for_soft_fail: nothing is soft-failed in a room with
 		// partial state.
 	} else if !rej && !snap.PrevsInTimeline {
@@ -403,7 +414,7 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 		d.Metadata["soft_failed"] = true
 	}
 
-	if !rej && ev.Type == "m.room.guest_access" && gjson.GetBytes(ev.JSON, "content.guest_access").Str != "can_join" {
+	if !rej && !in.Backfilled && ev.Type == "m.room.guest_access" && gjson.GetBytes(ev.JSON, "content.guest_access").Str != "can_join" {
 		// _maybe_kick_guest_users makes the room's local guests leave. With
 		// none it does nothing, which is what we do; making them leave
 		// (local leave events) is not ported, so then Synapse does it.
@@ -416,7 +427,7 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 			return d, nil
 		}
 	}
-	if !rej && ev.Type == "m.room.encrypted" {
+	if !rej && !in.Backfilled && ev.Type == "m.room.encrypted" {
 		resync, err := s.needsDeviceResync(ctx, ev)
 		if err != nil {
 			return nil, err
@@ -428,7 +439,7 @@ func (s *Verifier) Decide(ctx context.Context, in DecideInput) (*Decision, error
 
 	// _run_push_actions_and_persist_event: not for rejected events, nor
 	// those older than the room's min depth.
-	if !rej {
+	if !rej && !in.Backfilled {
 		rows, why, err := s.decidePush(ctx, ev, d, snap)
 		if err != nil {
 			return nil, err
@@ -902,6 +913,34 @@ func deviceResyncNeeded(content gjson.Result, cached map[string][]byte) bool {
 
 // jsonEqualRaw is Python's == on two decoded JSON values.
 func jsonEqualRaw(a, b string) bool { return sameJSON(a, b) }
+
+// ReceivedEvent is the copy Synapse holds of a PDU from a /state response,
+// which its streaming parser builds with make_event_from_dict, not
+// event_from_pdu_json: unsigned as received (a remote's age_ts and
+// replaces_state included), with a policy server's signatures added when
+// it signed.
+func ReceivedEvent(raw []byte, policyServer string, policySigs map[string]string) ([]byte, error) {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var ev map[string]any
+	if err := d.Decode(&ev); err != nil {
+		return nil, err
+	}
+	if u, ok := ev["unsigned"]; !ok {
+		ev["unsigned"] = map[string]any{}
+	} else if _, isObj := u.(map[string]any); !isObj {
+		// dict(unsigned) in EventBase raises on anything else.
+		return nil, fmt.Errorf("unsigned is not an object")
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return nil, err
+	}
+	if len(policySigs) > 0 {
+		return addSignatures(b, policyServer, policySigs)
+	}
+	return b, nil
+}
 
 // PulledEvent is the copy Synapse holds of a pulled PDU: event_from_pdu_json
 // with no request time, so any age is dropped, with a policy server's

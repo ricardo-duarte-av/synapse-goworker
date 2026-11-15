@@ -87,6 +87,9 @@ type Settings struct {
 	// replication call to ourselves. handled false sends it on as usual.
 	// Its error fails the transaction, as Synapse's on_edu raising does.
 	LocalEDU func(ctx context.Context, eduType, origin string, content json.RawMessage) (handled bool, err error)
+	// VisibleToSelf is filter_events_for_server for our own server, for
+	// backfill (the federation reads'). Nil leaves backfill to Synapse.
+	VisibleToSelf func(ctx context.Context, eventID string) (bool, error)
 
 	Log zerolog.Logger
 	// Worker carries the role lines (write mode, EDU routing, what is left
@@ -101,6 +104,17 @@ type Inbound struct {
 	closers []func()
 	backoff *backoff.Limiter
 	locks   *inbound.Locks
+	proc    *inbound.Processor
+}
+
+// Backfiller is write mode's backfill for /messages, nil when it cannot
+// backfill (no write mode, missing events not fetched, or no visibility
+// filter).
+func (i *Inbound) Backfiller() *inbound.Processor {
+	if i == nil || !i.proc.CanBackfill() {
+		return nil
+	}
+	return i.proc
 }
 
 // Locks is write mode's lock store, shared by every part that takes
@@ -223,10 +237,11 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 		cfg.Worker.Warn().Err(err).Msg("Inbound: write mode unavailable; transactions with PDUs go to Synapse")
 	} else {
 		out.closers = append(out.closers, wdb.Close)
-		stop, l, locks, err := writeMode(ctx, cfg, wdb, repl, acls, &opts, &handler)
+		stop, l, locks, proc, err := writeMode(ctx, cfg, wdb, repl, acls, &opts, &handler)
 		if err != nil {
 			return fail(err)
 		}
+		out.proc = proc
 		limiter = l
 		out.backoff = l
 		out.locks = locks
@@ -259,12 +274,12 @@ func New(ctx context.Context, cfg Settings) (*Inbound, error) {
 // writeMode builds the PDU path and puts it into opts. It returns what stops
 // it, and the destination backoff its outbound requests are under.
 func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replication.Client,
-	acls *acl.Checker, opts *txn.Options, handler *atomic.Pointer[txn.Handler]) (func(), *backoff.Limiter, *inbound.Locks, error) {
+	acls *acl.Checker, opts *txn.Options, handler *atomic.Pointer[txn.Handler]) (func(), *backoff.Limiter, *inbound.Locks, *inbound.Processor, error) {
 	hs, log, ic := cfg.Synapse, cfg.Log, cfg.Inbound
 
 	pst, err := pdustore.OpenAs(ctx, cfg.DSN, "", "", orDefault(cfg.PDUMaxConns, 4))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("inbound: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("inbound: %w", err)
 	}
 	pv := pduverify.New(pst, stateres.Options{})
 	if cfg.States != nil {
@@ -273,7 +288,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	pc, err := pduverify.PushConfigFor(hs)
 	if err != nil {
 		pst.Close()
-		return nil, nil, nil, fmt.Errorf("inbound: push rules: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("inbound: push rules: %w", err)
 	}
 	pv.EnablePush(pc)
 
@@ -300,7 +315,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	if err != nil {
 		proc.Close()
 		pst.Close()
-		return nil, nil, nil, fmt.Errorf("inbound: signing key: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("inbound: signing key: %w", err)
 	}
 	// Policy servers decide soft-fail on receipt (MSC4284): without asking,
 	// spam Synapse soft-fails gets through.
@@ -308,7 +323,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	if err != nil {
 		proc.Close()
 		pst.Close()
-		return nil, nil, nil, fmt.Errorf("inbound: policy server client: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("inbound: policy server client: %w", err)
 	}
 	asker.Backoff = limiter
 
@@ -318,7 +333,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 		if err != nil {
 			proc.Close()
 			pst.Close()
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		fetcher := fedfetch.New(fc, pst, pv, asker, hs.ServerName, keys)
 		fetcher.Backoff = limiter
@@ -328,6 +343,9 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 			}
 		}
 		proc.EnableMissingEvents(&inbound.MissingDeps{Fetch: fetcher, Store: pst, Verifier: pv})
+		if cfg.VisibleToSelf != nil {
+			proc.EnableBackfill(&inbound.BackfillDeps{Fetch: fetcher, Store: pst, VisibleToSelf: cfg.VisibleToSelf})
+		}
 	}
 
 	fd := inbound.NewFrontDoor(inbound.FrontDoorDeps{
@@ -345,7 +363,7 @@ func writeMode(ctx context.Context, cfg Settings, wdb *inbound.DB, repl *replica
 	proc.Start()
 	cfg.Worker.Info().Str("instance", cfg.InstanceName).Bool("fetch_missing", ic.FetchesMissingEvents()).
 		Msg("Inbound: write mode on; PDUs are persisted here")
-	return func() { proc.Close(); pst.Close() }, limiter, proc.Locks(), nil
+	return func() { proc.Close(); pst.Close() }, limiter, proc.Locks(), proc, nil
 }
 
 func orDefault(v, def int32) int32 {

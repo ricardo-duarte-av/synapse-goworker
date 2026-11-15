@@ -94,6 +94,9 @@ type Deps struct {
 	// Fallback is Synapse's main process, for a request a handler finds it
 	// does not reproduce.
 	Fallback http.Handler
+	// Backfill is /messages' backfill, once inbound's write mode offers
+	// it.
+	Backfill *BackfillHook
 }
 
 // presenceEnabled is presence.enabled now; true when not wired.

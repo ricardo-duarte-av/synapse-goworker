@@ -313,9 +313,17 @@ func roomMessages(ctx context.Context, d Deps, verdict clientauth.Verdict, roomI
 		from = streamtoken.Token{Room: streamtoken.Historical(topo, cur.Room.Stream)}
 	}
 
+	// Backfill is ours when write mode can do it and has not lately left
+	// this room's to Synapse; otherwise a page that would backfill is
+	// Synapse's whole.
+	bf := d.Backfill.get()
+	if bf != nil && d.Backfill.handedBack(roomID) {
+		bf = nil
+	}
+	var currTopo int64
 	if req.backwards {
 		// The depth backfill is decided from, before any clamp.
-		currTopo := from.Room.Topological
+		currTopo = from.Room.Topological
 		if !from.Room.IsHistorical() || currTopo == 0 {
 			currTopo, err = d.Store.CurrentTopological(ctx, roomID, from.Room.Stream)
 			if err != nil {
@@ -337,12 +345,14 @@ func roomMessages(ctx context.Context, d Deps, verdict clientauth.Verdict, roomI
 			}
 		}
 
-		would, err := wouldBackfill(ctx, d, roomID, info.RoomVersion, currTopo, req.limit)
-		if err != nil {
-			return fail("backfill points", err)
-		}
-		if would {
-			return nil, 0, nil, "backfill"
+		if bf == nil {
+			would, err := wouldBackfill(ctx, d, roomID, info.RoomVersion, currTopo, req.limit)
+			if err != nil {
+				return fail("backfill points", err)
+			}
+			if would {
+				return nil, 0, nil, "backfill"
+			}
 		}
 	}
 
@@ -351,10 +361,48 @@ func roomMessages(ctx context.Context, d Deps, verdict clientauth.Verdict, roomI
 		k := req.to.Room
 		toKey = &k
 	}
-	page, nextKey, limited, err := d.Store.PaginateTopological(ctx, roomID, info.RoomVersion,
-		from.Room, toKey, req.backwards, req.limit, pageFilter(req.filter))
+	paginate := func() ([]store.PageEvent, streamtoken.RoomKey, bool, error) {
+		return d.Store.PaginateTopological(ctx, roomID, info.RoomVersion,
+			from.Room, toKey, req.backwards, req.limit, pageFilter(req.filter))
+	}
+	page, nextKey, limited, err := paginate()
 	if err != nil {
 		return fail("paginate", err)
+	}
+
+	if req.backwards && bf != nil {
+		depths := make([]int64, len(page))
+		for i, ev := range page {
+			depths[i] = ev.Depth
+		}
+		if backfillInForeground(depths, req.limit) {
+			did, err := bf.MaybeBackfill(ctx, roomID, currTopo, req.limit)
+			if err != nil {
+				// Left to Synapse (or failed here): Synapse backfills and
+				// answers, and has this room's backfills for a while.
+				d.Backfill.handBack(roomID)
+				if !errors.Is(err, ErrBackfillHandBack) {
+					d.Log.Warn().Err(err).Str("room_id", roomID).Msg("backfill failed here; the request is handed back")
+				}
+				return nil, 0, nil, "backfill"
+			}
+			if did {
+				if page, nextKey, limited, err = paginate(); err != nil {
+					return fail("paginate", err)
+				}
+			}
+		} else {
+			// maybe_backfill_in_the_background.
+			go func() {
+				_, err := bf.MaybeBackfill(context.WithoutCancel(ctx), roomID, currTopo, req.limit)
+				if err != nil {
+					d.Backfill.handBack(roomID)
+					if !errors.Is(err, ErrBackfillHandBack) {
+						d.Log.Warn().Err(err).Str("room_id", roomID).Msg("background backfill failed here; the room's next ones are handed back")
+					}
+				}
+			}()
+		}
 	}
 	next := from.WithRoomKey(nextKey)
 

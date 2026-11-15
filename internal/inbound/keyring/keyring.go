@@ -113,17 +113,34 @@ func (k *Keyring) fetch(ctx context.Context, server string, keyIDs []string, min
 	return found, nil
 }
 
-// fromNotaries is PerspectivesKeyFetcher: every notary at once, results
-// merged. A notary's own signature is not checked: trusted_key_servers here
-// names no verify_keys, so Synapse does not check it either.
+// fromNotaries is PerspectivesKeyFetcher for one server's keys.
 func (k *Keyring) fromNotaries(ctx context.Context, server string, keyIDs []string, minValid int64) map[string]pdu.VerifyKey {
-	crit := map[id.KeyID]federation.QueryKeysCriteria{}
+	want := map[string]map[string]int64{server: {}}
 	for _, kid := range keyIDs {
-		crit[id.KeyID(kid)] = federation.QueryKeysCriteria{MinimumValidUntilTS: msTime(minValid)}
+		want[server][kid] = minValid
 	}
-	req := &federation.ReqQueryKeys{ServerKeys: map[string]map[id.KeyID]federation.QueryKeysCriteria{server: crit}}
+	return k.queryNotaries(ctx, want)[server]
+}
+
+// queryNotaries is PerspectivesKeyFetcher._fetch_keys: one /key/v2/query to
+// every notary at once, naming every server and key wanted with the time
+// each must be valid until, results merged (the longest-valid key of each
+// ID). A notary's own signature is not checked: trusted_key_servers here
+// names no verify_keys, so Synapse does not check it either. A response
+// naming a server_name that is not a string fails the notary's whole
+// answer, as get_server_verify_key_v2_indirect raises on it; any other bad
+// entry is skipped.
+func (k *Keyring) queryNotaries(ctx context.Context, want map[string]map[string]int64) map[string]map[string]pdu.VerifyKey {
+	req := &federation.ReqQueryKeys{ServerKeys: map[string]map[id.KeyID]federation.QueryKeysCriteria{}}
+	for server, kids := range want {
+		crit := map[id.KeyID]federation.QueryKeysCriteria{}
+		for kid, minValid := range kids {
+			crit[id.KeyID(kid)] = federation.QueryKeysCriteria{MinimumValidUntilTS: msTime(minValid)}
+		}
+		req.ServerKeys[server] = crit
+	}
 	var mu sync.Mutex
-	out := map[string]pdu.VerifyKey{}
+	out := map[string]map[string]pdu.VerifyKey{}
 	var wg sync.WaitGroup
 	for _, notary := range k.notaries {
 		if notary == k.server {
@@ -149,24 +166,167 @@ func (k *Keyring) fromNotaries(ctx context.Context, server string, keyIDs []stri
 			if err != nil {
 				return
 			}
+			got := map[string]map[string]pdu.VerifyKey{}
 			for _, raw := range resp.ServerKeys {
-				keys, err := k.processV2(raw, server)
+				var head struct {
+					ServerName any `json:"server_name"`
+				}
+				if err := json.Unmarshal(raw, &head); err != nil {
+					continue
+				}
+				name, ok := head.ServerName.(string)
+				if !ok {
+					return // KeyLookupError: this notary's answer is dropped
+				}
+				keys, err := k.processV2(raw, name)
 				if err != nil {
 					continue
 				}
-				mu.Lock()
+				if got[name] == nil {
+					got[name] = map[string]pdu.VerifyKey{}
+				}
 				for kid, key := range keys {
-					if cur, ok := out[kid]; !ok || key.ValidUntilMS >= cur.ValidUntilMS {
-						out[kid] = key
+					got[name][kid] = key
+				}
+			}
+			mu.Lock()
+			for name, keys := range got {
+				if out[name] == nil {
+					out[name] = map[string]pdu.VerifyKey{}
+				}
+				for kid, key := range keys {
+					if cur, ok := out[name][kid]; !ok || key.ValidUntilMS >= cur.ValidUntilMS {
+						out[name][kid] = key
 					}
 				}
-				mu.Unlock()
 			}
+			mu.Unlock()
 		}()
 	}
 	wg.Wait()
-	k.remember(server, out)
+	for server, keys := range out {
+		k.remember(server, keys)
+	}
 	return out
+}
+
+// KeyRequest is a _FetchKeyRequest.
+type KeyRequest = pdu.KeyRequest
+
+// Batch looks up, as one batch of Synapse's Keyring does, every key the
+// requests need: deduplicated to each key's latest required validity
+// (_inner_fetch_key_requests), then what Synapse holds, then one query to
+// each notary for everything still missing, then each server still
+// missing a key, its servers at once. It returns a lookup that answers
+// from what the batch found and asks nobody again, as every signature
+// check of a batch waits on the one fetch in Synapse: a key nobody had is
+// not looked for once per event.
+func (k *Keyring) Batch(ctx context.Context, reqs []KeyRequest) pdu.KeyFetch {
+	want := map[string]map[string]int64{}
+	for _, r := range reqs {
+		if want[r.Server] == nil {
+			want[r.Server] = map[string]int64{}
+		}
+		for _, kid := range r.KeyIDs {
+			if cur, ok := want[r.Server][kid]; !ok || r.MinValidMS > cur {
+				want[r.Server][kid] = r.MinValidMS
+			}
+		}
+	}
+	found := map[string]map[string]pdu.VerifyKey{}
+	var lookupErr error
+	merge := func(server string, keys map[string]pdu.VerifyKey) {
+		if found[server] == nil {
+			found[server] = map[string]pdu.VerifyKey{}
+		}
+		for kid, key := range keys {
+			if _, asked := want[server][kid]; !asked {
+				continue
+			}
+			if cur, ok := found[server][kid]; !ok || key.ValidUntilMS > cur.ValidUntilMS {
+				found[server][kid] = key
+			}
+		}
+	}
+	missing := func(server string) map[string]int64 {
+		out := map[string]int64{}
+		for kid, minValid := range want[server] {
+			if key, ok := found[server][kid]; !ok || key.ValidUntilMS < minValid {
+				out[kid] = minValid
+			}
+		}
+		return out
+	}
+
+	for server, kids := range want {
+		ids := make([]string, 0, len(kids))
+		for kid := range kids {
+			ids = append(ids, kid)
+		}
+		held, err := k.db(ctx, server, ids)
+		if err != nil {
+			lookupErr = err
+			break
+		}
+		merge(server, held)
+		k.mu.Lock()
+		merge(server, k.mem[server])
+		k.mu.Unlock()
+	}
+	if lookupErr == nil {
+		ask := map[string]map[string]int64{}
+		for server := range want {
+			if server == k.server {
+				continue
+			}
+			if m := missing(server); len(m) > 0 {
+				ask[server] = m
+			}
+		}
+		if len(ask) > 0 {
+			for server, keys := range k.queryNotaries(ctx, ask) {
+				if _, asked := want[server]; asked {
+					merge(server, keys)
+				}
+			}
+		}
+		var direct []string
+		for server := range ask {
+			if len(missing(server)) > 0 {
+				direct = append(direct, server)
+			}
+		}
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for _, server := range direct {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				keys := k.direct(ctx, server)
+				mu.Lock()
+				merge(server, keys)
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+	}
+
+	return func(server string, keyIDs []string, minValid int64) (map[string]pdu.VerifyKey, error) {
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		out := map[string]pdu.VerifyKey{}
+		for _, kid := range keyIDs {
+			if key, ok := found[server][kid]; ok {
+				out[kid] = key
+			}
+		}
+		if _, asked := want[server]; !asked {
+			// Not in the batch: looked up on its own.
+			return k.fetch(ctx, server, keyIDs, minValid)
+		}
+		return out, nil
+	}
 }
 
 // direct is ServerKeyFetcher: GET /_matrix/key/v2/server with

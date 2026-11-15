@@ -43,6 +43,8 @@ var Tables = []string{
 	"profiles", "blocked_rooms", "ratelimit_override", "users",
 	// Appservice device masquerading.
 	"devices",
+	// Backfill: its points and their backoff.
+	"event_backward_extremities", "event_failed_pull_attempts",
 }
 
 const qAccountData = `SELECT content FROM account_data WHERE user_id = $1 AND account_data_type = $2`

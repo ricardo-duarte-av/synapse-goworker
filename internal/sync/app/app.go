@@ -80,6 +80,7 @@ type Sync struct {
 	db  *store.Store
 	// presenceHook is the presence writer in this process, once set.
 	presenceHook *handlers.PresenceHook
+	backfillHook *handlers.BackfillHook
 	inbox        *deviceinbox.Deleter
 	sliding      *slidingstore.Store
 	sub          *replication.Subscriber
@@ -99,13 +100,17 @@ func (s *Sync) Presence() *presence.Client { return s.presence }
 // directly (user_syncing on the writer), rather than relay to it.
 func (s *Sync) SetPresenceWriter(f handlers.PresenceSyncing) { s.presenceHook.Set(f) }
 
+// SetBackfiller gives /messages write mode's backfill; until then, a page
+// that would backfill is Synapse's.
+func (s *Sync) SetBackfiller(b handlers.Backfiller) { s.backfillHook.Set(b) }
+
 // New connects and assembles the sync path.
 func New(ctx context.Context, cfg Settings) (*Sync, error) {
 	if err := cfg.Sync.Validate(); err != nil {
 		return nil, err
 	}
 	log, c := cfg.Log, cfg.Sync.Caches
-	s := &Sync{cfg: cfg, log: log, presenceHook: &handlers.PresenceHook{}}
+	s := &Sync{cfg: cfg, log: log, presenceHook: &handlers.PresenceHook{}, backfillHook: &handlers.BackfillHook{}}
 	metrics.BuildInfo.WithLabelValues(cfg.Tag).Set(1)
 
 	openCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout+20*time.Second)
@@ -224,6 +229,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Inbox:                s.inbox,
 		Presence:             presenceClient,
 		PresenceWriter:       s.presenceHook,
+		Backfill:             s.backfillHook,
 		// Server announcement rooms (Synapse 1.165), as homeserver.yaml
 		// configures them now.
 		Announcements:   func() synapsecfg.Announcements { return cfg.Synapse.Current().Announcements },

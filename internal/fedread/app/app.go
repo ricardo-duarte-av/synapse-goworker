@@ -172,6 +172,12 @@ func (f *FedRead) EventVisibleToServer(ctx context.Context, eventID, server stri
 	return f.resolver.EventVisibleToServer(ctx, eventID, server, f.server)
 }
 
+// EventVisibleToSelf is filter_events_for_server for our own server, as
+// backfill asks it of the events after a backfill point.
+func (f *FedRead) EventVisibleToSelf(ctx context.Context, eventID string) (bool, error) {
+	return f.resolver.EventVisibleToSelf(ctx, eventID, f.server)
+}
+
 // Handler serves the read endpoints. Paths it does not route are answered
 // 404; the worker's router only hands it the four it serves (fedapi.Match).
 //

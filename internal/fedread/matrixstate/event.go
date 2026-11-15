@@ -115,6 +115,22 @@ func (r *Resolver) EventVisibleToServer(ctx context.Context, eventID, targetServ
 	return r.eventVisibleInRoom(ctx, ev, targetServer, localServer, false)
 }
 
+// EventVisibleToSelf is filter_events_for_server as _maybe_backfill_inner
+// asks it of a backfill point's successors: the target our own server,
+// redact=False, filter_out_erased_senders=False,
+// filter_out_remote_partial_state_events=False. An event we do not hold is
+// not visible.
+func (r *Resolver) EventVisibleToSelf(ctx context.Context, eventID, localServer string) (bool, error) {
+	ev, err := r.db.GetEvent(ctx, eventID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return r.eventVisibleWith(ctx, ev, localServer, localServer, false, false)
+}
+
 // eventVisibleInRoom is eventVisible with the room's partial-state status
 // supplied, for the one endpoint that permits such rooms.
 //
@@ -124,14 +140,22 @@ func (r *Resolver) EventVisibleToServer(ctx context.Context, eventID, targetServ
 // partial-stated *and* its sender is not local -- we have not yet resolved
 // enough state to judge a remote sender's event.
 func (r *Resolver) eventVisibleInRoom(ctx context.Context, ev *store.Event, targetServer, localServer string, partialStateRoom bool) (bool, error) {
+	return r.eventVisibleWith(ctx, ev, targetServer, localServer, partialStateRoom, true)
+}
+
+// eventVisibleWith is eventVisibleInRoom with filter_out_erased_senders
+// as given.
+func (r *Resolver) eventVisibleWith(ctx context.Context, ev *store.Event, targetServer, localServer string, partialStateRoom, filterErased bool) (bool, error) {
 	sender, err := senderOf(ev.JSON)
 	if err != nil {
 		return false, err
 	}
 
-	erased, err := r.db.AreUsersErased(ctx, []string{sender})
-	if err != nil {
-		return false, fmt.Errorf("erased users: %w", err)
+	erased := map[string]bool{}
+	if filterErased {
+		if erased, err = r.db.AreUsersErased(ctx, []string{sender}); err != nil {
+			return false, fmt.Errorf("erased users: %w", err)
+		}
 	}
 
 	partialStateInvisible := partialStateRoom && domainOf(sender) != localServer

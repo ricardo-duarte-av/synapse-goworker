@@ -47,8 +47,11 @@ type Processor struct {
 	read    Reading
 	cache   *pduverify.StateCache
 	missing *MissingDeps
-	server  string
-	log     zerolog.Logger
+	// backfill, when set, is /messages' backfill; backfills its room queue.
+	backfill  *BackfillDeps
+	backfills roomQueue
+	server    string
+	log       zerolog.Logger
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -494,7 +497,7 @@ decided:
 		return outcomeDone
 	}
 
-	if err := p.write(ctx, room, s, d); err != nil {
+	if err := p.write(ctx, room, s, d, false); err != nil {
 		if errors.Is(err, replication.ErrPartialStateConflict) {
 			if !retried {
 				// on_receive_pdu's PartialStateConflictError: the room was
@@ -532,8 +535,9 @@ decided:
 
 // write stores the event's state groups and push rows and sends it to the
 // persister: calculate_context_info, UnpersistedEventContext.persist,
-// _run_push_actions_and_persist_event.
-func (p *Processor) write(ctx context.Context, room string, s *Staged, d *pduverify.Decision) error {
+// _run_push_actions_and_persist_event; backfilled persists it as
+// backfilled (a negative stream ordering, no notification).
+func (p *Processor) write(ctx context.Context, room string, s *Staged, d *pduverify.Decision, backfilled bool) error {
 	before, after, err := p.storeGroups(ctx, room, s.EventID, d)
 	if err != nil {
 		return err
@@ -551,7 +555,7 @@ func (p *Processor) write(ctx context.Context, room string, s *Staged, d *pduver
 		_ = p.db.UnstagePush(ctx, s.EventID)
 		return err
 	}
-	if err := p.persist.SendEvents(ctx, room, []json.RawMessage{entry}, false); err != nil {
+	if err := p.persist.SendEvents(ctx, room, []json.RawMessage{entry}, backfilled); err != nil {
 		if uerr := p.db.UnstagePush(ctx, s.EventID); uerr != nil {
 			p.log.Warn().Err(uerr).Msg("Error removing push actions after event persistence failure")
 		}

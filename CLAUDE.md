@@ -380,33 +380,46 @@ Still per component, on purpose:
   PDUs included. `TLSClientConfig.NextProtos` and an empty `TLSNextProto`
   are what keep it HTTP/1.1 (0204544); TestWellKnownClientAgainstHTTP2Server
   holds it. Any transport turned to HTTP/1.1 needs the same.
-- **/messages is native, backfill is main's** (2026-11-15,
-  `handlers/messages.go`). get_messages calls maybe_backfill on every
-  backwards page (foreground or background); goworker runs the database
-  half of `_maybe_backfill_inner` (purge lock, backfill points near the
-  page outside their failed-pull backoff, the later points it would try
-  at MAX_DEPTH, the `2 * limit` distance) and hands the whole request to
-  main whenever Synapse would go further, so Synapse decides visibility,
-  fetches and answers as before, and every backfill of a room stays in
-  one process. What started it: gomuks re-sent a /messages in a newly
-  joined 662-server room every minute for half an hour, each one a
-  backfill on main asking 7 notaries for ~450 unsatisfiable keys. The
-  filter is applied in SQL as `filter_to_clause` writes it (a `*`
+- **/messages is native, backfill included** (2026-11-15,
+  `sync/handlers/messages.go`, `inbound/inbound/backfill.go`). What
+  started it: gomuks re-sent a /messages in a newly joined 662-server room
+  every minute for half an hour, each one a backfill on main asking 7
+  notaries for ~450 unsatisfiable keys. get_messages is ported in sync:
+  the filter applied in SQL as `filter_to_clause` writes it (a `*`
   anywhere becomes LIKE's `%`, `_` stays LIKE's wildcard, empty lists add
-  no clause, `contains_url` only when true), then by the filter's check:
-  different pages from /sync's filtering, which is all in Python. Handed
-  back: queries Python reads its own way (`limit=+5`, a filter value of
-  the wrong type, a null `not_*`, repeated keys), tokens with an instance
-  map, partial-state rooms, erased senders. Lazy-loaded `state` comes from
-  a frozenset in Synapse, so its order differs between Synapse processes;
-  goworker sorts by user. Checked against a throwaway Synapse 1.165.0
-  main: 210 requests (every filter field, both directions, `to`, chains
-  to the end, a departed user, a forgotten room, peeking, joined
-  visibility, ignored users, edits, reactions, threads, labels,
-  redactions, malformed queries) identical, 183 of them served natively;
-  and planted backward extremities handed back exactly when Synapse would
-  backfill. Not covered there: a room with backfilled (negative stream)
-  history, which needs a second server.
+  no clause, `contains_url` only when true), then by the filter's check,
+  which pages differently from /sync's all-Python filtering; Synapse's
+  gap test picks backfill before answering or after (`backfillInForeground`).
+  Backfill is inbound write mode's (`Processor.MaybeBackfill`, reached
+  through `handlers.BackfillHook`): maybe_backfill whole (the room's
+  queue, the purge lock's read side, backfill points and their backoff,
+  successors judged by fedread's `EventVisibleToSelf`, hosts by join
+  depth, try_backfill's five 4xx), `/backfill` through fedfetch, and
+  `_process_pulled_events(backfilled=True)`, which the decider runs
+  without soft-fail, push actions, guest kicks or device resyncs
+  (`DecideInput.Backfilled`). Anything it does not reproduce hands the
+  request (and that room's backfills for 10 minutes) to main; without
+  write mode's missing-events fetch, every page that would backfill is
+  main's. Pulled batches check their signatures with one key fetch
+  (`keyring.Batch`: one /key/v2/query per notary for every server of the
+  batch, as Synapse's fetcher queues do, not one per server). Two
+  pre-existing fedfetch divergences surfaced and are fixed: a remotely
+  redacted copy is not "tampered with" (Synapse records that only when
+  pruning changes the keys), and /state PDUs keep `unsigned` as received
+  (Synapse's streaming parser uses make_event_from_dict, so a later
+  de-outliered event keeps the remote's age_ts and replaces_state).
+  Handed back besides: queries Python reads its own way (`limit=+5`, a
+  filter value of the wrong type, a null `not_*`, repeated keys), tokens
+  with an instance map, partial-state rooms, erased senders. Lazy-loaded
+  `state` comes from a frozenset in Synapse, so its order differs between
+  Synapse processes; goworker sorts by user. Checked against throwaway
+  Synapse 1.165.0 mains: 210 single-server requests identical (183
+  native); and with a second, federating server holding 324 events,
+  pagination to the end through main and through goworker (each from the
+  same database copy) gave identical pages, tokens (stream orderings
+  included) and rows (events, JSON, edges, extremities, auth, state at
+  every event, rejections, failed pulls, relations, labels), all native,
+  also with the remote down.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 
