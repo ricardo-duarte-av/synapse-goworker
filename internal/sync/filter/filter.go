@@ -670,3 +670,53 @@ func parseRoomIDList(v gjson.Result, path string, dst *[]string, opts parseOpts)
 	}
 	return nil
 }
+
+// ErrNotReproduced is a filter whose meaning Synapse gives it by Python's
+// semantics on a value of the wrong type, which this package does not
+// follow: the caller hands the request to Synapse.
+var ErrNotReproduced = fmt.Errorf("filter: not reproduced")
+
+// ParseRoomEventFilter reads the `filter` query parameter of /messages:
+// Synapse's Filter(hs, filter_json), never validated. It also returns the
+// document's `event_format`. A document of a shape Python reads by its own
+// rules (a value of the wrong type, a null where a list is iterated) is
+// ErrNotReproduced.
+func ParseRoomEventFilter(doc []byte, feat Features) (Filter, string, error) {
+	v := gjson.ParseBytes(doc)
+	if !v.IsObject() {
+		return Filter{}, "", ErrNotReproduced
+	}
+	// A repeated key: Python keeps the last, gjson reads the first.
+	seen := map[string]bool{}
+	dup := false
+	v.ForEach(func(k, _ gjson.Result) bool {
+		dup = seen[k.Str]
+		seen[k.Str] = true
+		return !dup
+	})
+	if dup {
+		return Filter{}, "", ErrNotReproduced
+	}
+	// Lists Synapse iterates without a None check.
+	notLists := []string{"not_types", "not_rooms", "not_senders", "org\\.matrix\\.not_labels"}
+	if feat.MSC3874 {
+		notLists = append(notLists, "org\\.matrix\\.msc3874\\.not_rel_types")
+	}
+	for _, k := range notLists {
+		if f := v.Get(k); f.Exists() && f.Type == gjson.Null {
+			return Filter{}, "", ErrNotReproduced
+		}
+	}
+	f, err := parseFilter(v, "filter", parseOpts{feat: feat})
+	if err != nil {
+		return Filter{}, "", ErrNotReproduced
+	}
+	format := "client"
+	if ef := v.Get("event_format"); ef.Exists() {
+		if ef.Type != gjson.String {
+			return Filter{}, "", ErrNotReproduced
+		}
+		format = ef.Str
+	}
+	return f, format, nil
+}

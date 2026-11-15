@@ -42,7 +42,7 @@ The approved plan is in
 |---|---|
 | `cmd/goworker` | main: one config, five components, one socket, the metrics listener, homeserver.yaml re-read on REPLICATE/SIGHUP |
 | `internal/platform` | shared: `bus` (the one Redis subscription, a queue per part), `ratelimit` (Synapse's Ratelimiter, per process), `clientauth` (access tokens, as Synapse's InternalAuth checks them; /whoami for the rest), `statecache` (the one state cache), `fedauth` (X-Matrix verification and the one cache of other servers' keys), `cache` (the byte-bounded LRU), `config` (goworker.yaml), `synapsecfg` (homeserver.yaml: the one reader, `Source` the one copy), `proxy` (to main), `httpserve` (listener, router), `replserver` (the replication listener: what other Synapse processes call at our `instance_map` address, and the tracker of their stream positions), `fedproxy` (the outbound federation proxy in front of it), `streamwriter` (publishing the streams we write: RDATA, POSITION, the REPLICATE answer, get_repl_stream_updates), `streamid` (MultiWriterIdGenerator for a stream we write alone), `cachestream` (the caches stream: one writer per process, so every part's rows reach the bus in ID order; started at the table's greatest ID and announced on REPLICATE, as Synapse does), `pyjson` (Python's json: dict semantics on read, Synapse's json_encoder on write), `clientreq` (what every native client endpoint does as Synapse's servlets do), `roomhosts`, `userid`, `limits`; and what inbound and the creator both use: `pdu` (event format and auth rules, the union of both copies), `pdustore` (reading events and state), `stateres`, `push` (rules), `pushcheck` (the push evaluator), `e2ekeys` (local users' end-to-end keys, for client and federation key queries), `acl`, `appservice`, `fedclient`, `replication` (HTTP, to the stream writers and main; each part keeps its metrics) |
-| `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go`, `roomevent.go`, `profile.go`, `keysquery.go`), which hand back to main what they do not reproduce, a federation query included (`Deps.Fallback`) |
+| `internal/sync` | gosync, as `app.New` + `Register`; also the client reads (C: `handlers/roomstate.go`, `roomevent.go`, `messages.go`, `profile.go`, `keysquery.go`), which hand back to main what they do not reproduce, a federation query included (`Deps.Fallback`) |
 | `internal/fedread` | gopro, as `app.New` + `Handler` |
 | `internal/inbound` | goinbound, as `app.New` + `Handler` |
 | `internal/sender` | gofederation, as `app.New` + `Run`, gated by `SetSynapse` |
@@ -380,6 +380,33 @@ Still per component, on purpose:
   PDUs included. `TLSClientConfig.NextProtos` and an empty `TLSNextProto`
   are what keep it HTTP/1.1 (0204544); TestWellKnownClientAgainstHTTP2Server
   holds it. Any transport turned to HTTP/1.1 needs the same.
+- **/messages is native, backfill is main's** (2026-11-15,
+  `handlers/messages.go`). get_messages calls maybe_backfill on every
+  backwards page (foreground or background); goworker runs the database
+  half of `_maybe_backfill_inner` (purge lock, backfill points near the
+  page outside their failed-pull backoff, the later points it would try
+  at MAX_DEPTH, the `2 * limit` distance) and hands the whole request to
+  main whenever Synapse would go further, so Synapse decides visibility,
+  fetches and answers as before, and every backfill of a room stays in
+  one process. What started it: gomuks re-sent a /messages in a newly
+  joined 662-server room every minute for half an hour, each one a
+  backfill on main asking 7 notaries for ~450 unsatisfiable keys. The
+  filter is applied in SQL as `filter_to_clause` writes it (a `*`
+  anywhere becomes LIKE's `%`, `_` stays LIKE's wildcard, empty lists add
+  no clause, `contains_url` only when true), then by the filter's check:
+  different pages from /sync's filtering, which is all in Python. Handed
+  back: queries Python reads its own way (`limit=+5`, a filter value of
+  the wrong type, a null `not_*`, repeated keys), tokens with an instance
+  map, partial-state rooms, erased senders. Lazy-loaded `state` comes from
+  a frozenset in Synapse, so its order differs between Synapse processes;
+  goworker sorts by user. Checked against a throwaway Synapse 1.165.0
+  main: 210 requests (every filter field, both directions, `to`, chains
+  to the end, a departed user, a forgotten room, peeking, joined
+  visibility, ignored users, edits, reactions, threads, labels,
+  redactions, malformed queries) identical, 183 of them served natively;
+  and planted backward extremities handed back exactly when Synapse would
+  backfill. Not covered there: a room with backfilled (negative stream)
+  history, which needs a second server.
 - **A sender without a cursor starts at MIN(federation_stream_position)**,
   as Synapse does, not at the tip. The tip would drop events at a rename.
 

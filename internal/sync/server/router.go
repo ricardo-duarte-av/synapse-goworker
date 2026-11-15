@@ -38,6 +38,8 @@ type Routes struct {
 	RoomState http.Handler
 	// RoomEvent serves GET /rooms/{roomId}/event/{eventId}.
 	RoomEvent http.Handler
+	// RoomMessages serves GET /rooms/{roomId}/messages.
+	RoomMessages http.Handler
 	// Profile serves GET /profile/{userId}[/{field}]; PUT and DELETE are
 	// the event creator's.
 	Profile http.Handler
@@ -106,6 +108,12 @@ func Register(mux *http.ServeMux, routes Routes, wrap func(http.Handler) http.Ha
 	if routes.RoomEvent != nil {
 		for _, v := range legacyVersions {
 			handle("GET", "/_matrix/client/"+v+"/rooms/{roomId}/event/{rest...}", routes.RoomEvent)
+		}
+	}
+	if routes.RoomMessages != nil {
+		for _, v := range legacyVersions {
+			// The handler matches the raw path as Synapse does.
+			handle("GET", "/_matrix/client/"+v+"/rooms/{roomId}/messages", routes.RoomMessages)
 		}
 	}
 	if routes.Profile != nil {

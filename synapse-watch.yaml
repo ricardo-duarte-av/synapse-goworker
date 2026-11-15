@@ -92,12 +92,15 @@ components:
   sync:
     code: internal/sync
     synapse:
+      - synapse/api/auth/base.py
       - synapse/api/filtering.py
       - synapse/api/ratelimiting.py
       - synapse/events/utils.py
       - synapse/handlers/e2e_keys.py
       - synapse/handlers/events.py
+      - synapse/handlers/federation.py
       - synapse/handlers/initial_sync.py
+      - synapse/handlers/pagination.py
       - synapse/handlers/profile.py
       - synapse/handlers/receipts.py
       - synapse/handlers/relations.py
@@ -116,7 +119,9 @@ components:
       - synapse/storage/databases/main/deviceinbox.py
       - synapse/storage/databases/main/devices.py
       - synapse/storage/databases/main/end_to_end_keys.py
+      - synapse/storage/databases/main/event_federation.py
       - synapse/storage/databases/main/events.py
+      - synapse/storage/databases/main/lock.py
       - synapse/storage/databases/main/profile.py
       - synapse/storage/databases/main/receipts.py
       - synapse/storage/databases/main/relations.py
@@ -127,6 +132,8 @@ components:
       - synapse/storage/databases/main/stream.py
       - synapse/storage/databases/main/tags.py
       - synapse/storage/databases/main/transactions.py
+      - synapse/streams/config.py
+      - synapse/streams/events.py
       - synapse/util/retryutils.py
       - synapse/types/handlers/sliding_sync.py
       - synapse/types/rest/client/__init__.py

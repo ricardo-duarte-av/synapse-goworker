@@ -246,6 +246,7 @@ func New(ctx context.Context, cfg Settings) (*Sync, error) {
 		Sync:            initialSyncGate(cfg.InitialSyncs, handlers.Sync(deps)),
 		RoomState:       handlers.RoomState(deps),
 		RoomEvent:       handlers.RoomEvent(deps),
+		RoomMessages:    handlers.RoomMessages(deps),
 		Profile: handlers.Profile(deps, handlers.ProfileDeps{
 			Settings:       cfg.Synapse.Current().Profile,
 			Limiter:        ratelimit.New(cfg.Synapse.Current().Profile.Rc, nil),
